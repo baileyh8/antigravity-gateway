@@ -396,6 +396,25 @@ test('Chat Completions and Responses preserve exact client model IDs', async (t)
   assert.equal(responses.headers.get('x-antigravity-model'), 'claude-opus-4-6-thinking');
 });
 
+test('Chat SSE finish and usage frames retain cache and reasoning details', async (t) => {
+  const base = await withServer(t);
+  const response = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-test-high', messages: [{ role: 'user', content: 'stream usage regression' }], stream: true, stream_options: { include_usage: true } })
+  });
+  assert.equal(response.status, 200);
+  const text = await response.text();
+  const chunks = text.split('\n').filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]').map((line) => JSON.parse(line.slice(6)));
+  const expected = {
+    prompt_tokens: 100, completion_tokens: 12, total_tokens: 112,
+    prompt_tokens_details: { cached_tokens: 3 },
+    completion_tokens_details: { reasoning_tokens: 2 }
+  };
+  assert.deepEqual(chunks.find((chunk) => chunk.choices?.[0]?.finish_reason)?.usage, expected);
+  assert.deepEqual(chunks.find((chunk) => chunk.choices?.length === 0)?.usage, expected);
+  assert.ok(text.includes('data: [DONE]'));
+});
+
 test('models missing from the local catalog are still sent upstream unchanged', async (t) => {
   const base = await withServer(t);
   const response = await fetch(`${base}/v1/messages`, {

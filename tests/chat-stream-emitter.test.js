@@ -4,6 +4,32 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createChatTextEmitter } = require('../antigravity-gateway');
+const { chatResponse } = require('../src/protocol');
+
+for (const withTools of [false, true]) {
+  test(`chat streaming preserves cache and reasoning usage with tools=${withTools}`, () => {
+    const { res, parse } = capture();
+    const emitter = createChatTextEmitter(res, 'gemini-test-high');
+    emitter.onDelta('Checking');
+    emitter.finish(chatResponse('gemini-test-high', {
+      text: 'Checking',
+      toolCalls: withTools ? [{ id: 'call_1', name: 'read', arguments: { path: '/fixture' } }] : [],
+      usage: { input_tokens: 100, output_tokens: 10, thinking_tokens: 2, cache_read_tokens: 80, total_tokens: 112 }
+    }));
+    const chunks = parse();
+    const expected = {
+      prompt_tokens: 100, completion_tokens: 12, total_tokens: 112,
+      prompt_tokens_details: { cached_tokens: 80 },
+      completion_tokens_details: { reasoning_tokens: 2 }
+    };
+    assert.deepEqual(chunks.at(-2).usage, expected);
+    assert.deepEqual(chunks.at(-1).usage, expected);
+    assert.deepEqual(chunks.at(-1).choices, []);
+    assert.equal(chunks.at(-2).choices[0].finish_reason, withTools ? 'tool_calls' : 'stop');
+    assert.equal(contentOf(chunks), 'Checking');
+    assert.equal(res.ended, true);
+  });
+}
 
 /**
  * Capture the SSE frames one emitter writes into an in-memory response.
