@@ -112,3 +112,15 @@ test('the contract can create a system instruction the client never sent', () =>
     assert.equal(built.request.systemInstruction, undefined);
   });
 });
+
+
+test('native image tool injection alone does not activate client tool narration', () => {
+  const { prepareNativeMultimodal } = require('../src/protocol');
+  withSwitch('1', () => {
+    const plain = prepareNativeMultimodal(normalized({ tools: [] })).normalized;
+    assert.ok(plain.tools.length > 0);
+    assert.equal(toolNarrationInstruction(plain), '');
+    const clientTools = prepareNativeMultimodal(normalized()).normalized;
+    assert.ok(toolNarrationInstruction(clientTools));
+  });
+});

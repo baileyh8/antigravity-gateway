@@ -16,6 +16,7 @@ process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'agy';
 
 const {
   claudeConfigBody,
+  clientSessionIdentity,
   clientSessionScope,
   codexModelInfo,
   createServer,
@@ -46,14 +47,28 @@ test('malformed Host is rejected without terminating the server', async (t) => {
   assert.equal((await fetch(`${base}/api/hello`)).status, 200);
 });
 
-test('account routing session identity distinguishes client metadata and honors parent sessions', () => {
-  const req = { headers: { authorization: 'Bearer local-key' }, socket: { remoteAddress: '127.0.0.1' } };
+test('session identity isolates clients and separates child state from inherited account affinity', () => {
+  const request = (client) => ({ headers: { authorization: 'Bearer local-key', 'x-client-id': client }, socket: { remoteAddress: '127.0.0.1' } });
   const normalized = { model: 'gemini-test-high', messages: [{ role: 'user', text: 'same prompt' }] };
-  const first = clientSessionScope(req, { metadata: { user_id: 'session-a' } }, normalized);
-  const second = clientSessionScope(req, { metadata: { user_id: 'session-b' } }, normalized);
-  const child = clientSessionScope(req, { metadata: { user_id: 'child', parent_session_id: 'session-a' } }, normalized);
-  assert.notEqual(first, second);
-  assert.equal(first, child);
+  const parent = clientSessionIdentity(request('pi'), { metadata: { session_id: 'session-a' } }, normalized);
+  const repeat = clientSessionIdentity(request('pi'), { metadata: { session_id: 'session-a' } }, normalized);
+  const sibling = clientSessionIdentity(request('pi'), { metadata: { session_id: 'session-b' } }, normalized);
+  const child = clientSessionIdentity(request('pi'), { metadata: { session_id: 'child', parent_session_id: 'session-a' } }, normalized);
+  const otherAgent = clientSessionIdentity(request('hermes'), { metadata: { session_id: 'session-a' } }, normalized);
+  assert.equal(parent.sessionId, repeat.sessionId);
+  assert.equal(parent.routingKey, repeat.routingKey);
+  assert.notEqual(parent.sessionId, sibling.sessionId);
+  assert.notEqual(parent.routingKey, sibling.routingKey);
+  assert.notEqual(parent.sessionId, child.sessionId);
+  assert.equal(parent.routingKey, child.routingKey);
+  assert.notEqual(parent.sessionId, otherAgent.sessionId);
+  assert.notEqual(parent.routingKey, otherAgent.routingKey);
+  assert.equal(clientSessionScope(request('pi'), { metadata: { session_id: 'session-a' } }, normalized), parent.sessionId);
+
+  const inferredPi = clientSessionIdentity({ headers: { authorization: 'Bearer shared', 'user-agent': 'pi/0.87' }, socket: { remoteAddress: '127.0.0.1' } }, {}, normalized);
+  const inferredHermes = clientSessionIdentity({ headers: { authorization: 'Bearer shared', 'user-agent': 'hermes/1.0' }, socket: { remoteAddress: '127.0.0.1' } }, {}, normalized);
+  assert.notEqual(inferredPi.sessionId, inferredHermes.sessionId);
+  assert.notEqual(inferredPi.routingKey, inferredHermes.routingKey);
 });
 
 test('untrusted browser origins are rejected including text/plain and preflight', async (t) => {
@@ -297,6 +312,34 @@ test('Responses previous_response_id is bound to the client session scope', asyn
   });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error.code, 'previous_response_not_found');
+});
+
+test('Files API keeps uploads reusable across sessions while metadata remains credential scoped', async (t) => {
+  const base = await withServer(t);
+  const uploaded = await fetch(`${base}/v1/files`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-session-id': 'upload-session' },
+    body: JSON.stringify({ filename: 'sample.png', media_type: 'image/png', data: Buffer.from('png-bytes').toString('base64') })
+  }).then((response) => response.json());
+  assert.match(uploaded.id, /^file_[a-f0-9]{32}$/);
+
+  const metadata = await fetch(`${base}/v1/files/${uploaded.id}`, { headers: { 'x-session-id': 'different-session' } });
+  assert.equal(metadata.status, 200);
+  assert.equal((await metadata.json()).mediaType, 'image/png');
+
+  const content = await fetch(`${base}/v1/files/${uploaded.id}/content`);
+  assert.equal(content.status, 200);
+  assert.equal(Buffer.from(await content.arrayBuffer()).toString(), 'png-bytes');
+
+  const head = await fetch(`${base}/v1/files/${uploaded.id}/content`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-type'), 'image/png');
+  assert.equal(head.headers.get('content-length'), String(Buffer.byteLength('png-bytes')));
+  assert.equal((await head.arrayBuffer()).byteLength, 0);
+
+  const removed = await fetch(`${base}/v1/files/${uploaded.id}`, { method: 'DELETE', headers: { 'x-session-id': 'different-session' } });
+  assert.equal(removed.status, 200);
+  assert.equal((await fetch(`${base}/v1/files/${uploaded.id}/content`)).status, 404);
 });
 
 test('Responses exposes projected client tools as function_call items', async (t) => {

@@ -10,7 +10,7 @@ Antigravity Gateway 是一个本地 Anthropic/OpenAI 兼容网关。它复用官
 
 > 非 Google 官方项目，仅用于学习、兼容性研究与个人测试。模型权限、额度、地区限制和服务条款均以上游为准。
 
-当前版本：`v0.8.3`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v0.9.1`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 主要功能
 
@@ -21,6 +21,8 @@ Antigravity Gateway 是一个本地 Anthropic/OpenAI 兼容网关。它复用官
 - 多账号之间轮询；同一会话保持账号一致，限流、认证或额度异常时自动尝试其他账号。
 - 启动界面显示账号状态、历史用量、Token、缓存命中率和最近24小时图表。
 - 支持客户端工具调用、SSE、Claude Code Auto Mode 和结构化输出。
+- 支持图片生成、参考图编辑，以及图片、视频、音频、PDF 和普通文件理解。
+- 支持 OpenAI Images/Files 接口，并让远程客户端先上传文件再在对话中引用。
 
 ### 使用条件
 
@@ -298,6 +300,51 @@ curl http://127.0.0.1:9897/v1/models
 
 模型取决于账号、套餐、地区和 Antigravity CLI 版本。模型目录只用于展示和诊断，不会阻止客户端把其他模型 ID 发给上游。
 
+### 图片生成与多媒体理解
+
+普通对话不依赖关键词判断。网关把文本和附件一并交给客户端指定的 Gemini 模型：模型认为附件只是资料时直接理解并回答；只有用户明确要求产出新图片或编辑参考图时，模型才会调用内置的原生生图工具。客户端自己的工具名、`tool_choice` 和工具执行流程不会被替换。
+
+原生生图直接使用 agy 同款的 Antigravity 私有图片请求和账号池凭据，不会为每次请求启动本机 agy。新版本通过 `add` 授权的账号会同时保存后续刷新所需的 OAuth 客户端元数据；把完整账号 JSON 复制到服务器账号池后，即使服务器没有安装 agy，该账号也能刷新并参与对话和生图。旧版已保存但不含这些字段的账号仍按原有方式从本机 agy 安装中发现刷新配置。
+
+OpenAI 标准文生图：
+
+```bash
+curl http://127.0.0.1:9897/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"白色背景中央的黑色六边形","size":"1024x1024","response_format":"url"}'
+```
+
+参考图编辑，最多 3 张参考图：
+
+```bash
+curl http://127.0.0.1:9897/v1/images/edits \
+  -F 'image=@reference.png' \
+  -F 'prompt=只把主体颜色改为紫色，其他内容不变' \
+  -F 'response_format=url'
+```
+
+远程服务器或不能直接传本地路径的客户端，可以先上传文件：
+
+```bash
+curl http://127.0.0.1:9897/v1/files \
+  -F 'file=@recording.mp4;type=video/mp4' \
+  -F 'purpose=assistants'
+```
+
+返回的 `file_...` 可放进 Anthropic `source.file_id`、Chat Completions 的 `file_id`/`input_image`/`input_video`，或 Responses 的 `input_file`/`input_image`/`input_video`。协议转换器也接受 Base64/Data URL、HTTP(S) URL 和网关本机绝对路径；生成图片的 URL 可以直接作为后续参考图再次使用。上传与生成文件保存在 `~/.antigravity-gateway/media/`。
+
+生图响应会同时提供普通文本回执、Markdown、可访问 URL、网关主机上的绝对路径，以及各协议中的 `artifacts` 结构化元数据；不识别扩展字段的客户端仍可从正文取得交付地址。文件内容接口同时支持 `GET` 和 `HEAD`。
+
+如果 Agent 本身不会把本地视频转换成多媒体请求，可以使用随包附带的 `skills/antigravity-video-understanding`。该 Skill 的 Python 脚本会通过现有 Files API 上传本地视频，再以原生 `input_video` 调用 Chat Completions；本地或远程网关均使用同一流程：
+
+```bash
+python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
+  "/absolute/path/recording.mp4" \
+  --prompt "分析这段视频并回答我的问题"
+```
+
+网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性；账号认证、额度或网络异常时仍会自动故障转移。支持客户端显式发送 `x-client-id`/`x-agent-id`、`x-session-id`/`x-conversation-id`、`x-parent-session-id` 和 `x-routing-affinity-id`；未提供时继续兼容现有 Claude、Codex、OpenAI 和 Anthropic 客户端字段。所有原始标识仅用于本地路由，提交上游的会话值是不可逆哈希，不会写入模型提示词。日志中的 request、client、session 和 affinity 短标识可用于区分并发链路；映射设置容量和一小时过期清理。
+
 ### 用量和额度
 
 启动界面显示：
@@ -401,6 +448,9 @@ export NO_PROXY=127.0.0.1,localhost
 | `ANTIGRAVITY_GATEWAY_CORS_ORIGIN` | 空 | 允许访问本地网关的浏览器 Origin |
 | `ANTIGRAVITY_GATEWAY_DEBUG` | 空 | 设置为 `1` 输出更多诊断信息 |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | 空（关闭） | 设置为 `1` 后，要求模型按工作阶段说明进度；阶段内不逐工具解说，阶段切换时简短交代 |
+| `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | 原生图片请求使用的 Antigravity 图片模型 |
+| `ANTIGRAVITY_GATEWAY_MEDIA_LIMIT` | `100663296` | 单个多媒体文件内存/解析上限，单位字节 |
+| `ANTIGRAVITY_GATEWAY_TOTAL_MEDIA_LIMIT` | `201326592` | 单次对话解析的多媒体总上限，单位字节 |
 
 非必要情况下不建议手动设置 access token、refresh token、project ID 或上游地址。普通用户使用本地 agy 登录态和账号池即可。
 
@@ -434,6 +484,12 @@ antigravity-gateway service restart
 ```text
 GET  /
 GET  /v1/models
+POST /v1/files
+GET  /v1/files/:id
+GET  /v1/files/:id/content
+DELETE /v1/files/:id
+POST /v1/images/generations
+POST /v1/images/edits
 POST /v1/messages
 POST /v1/messages/count_tokens
 POST /v1/responses
@@ -442,13 +498,14 @@ POST /v1/chat/completions
 
 ### 工作原理
 
-客户端请求先进入本地兼容接口，网关完成 Anthropic/OpenAI 与 Cloud Code 之间的格式转换，再使用本地账号池凭据请求上游，最后把结果转换回客户端协议。工具由 Claude Code、Codex 等客户端执行，网关只负责传递工具定义、调用和结果。
+客户端请求先进入本地兼容接口，网关完成 Anthropic/OpenAI 与 Cloud Code 之间的格式转换，再使用本地账号池凭据请求上游，最后把结果转换回客户端协议。普通客户端工具仍由 Claude Code、Codex 等客户端执行；只有网关私有的原生生图工具由网关拦截，并直接调用 Antigravity 图片接口。
 
 ### 已知限制
 
 - 直连使用的是非公开 Cloud Code 内部接口，上游升级后可能需要同步适配。
 - 可用模型和额度取决于账号；本项目不会绕过上游限制。
 - 工具调用、Auto Mode 和结构化输出请求可能需要先完整校验，再向客户端返回。
+- 私有生图和多媒体协议并非公开稳定接口，上游格式或权限发生变化时可能需要同步适配。
 - 本地账号文件是普通 JSON，由使用者自行保管。
 
 ### License
@@ -465,7 +522,7 @@ The default `direct` transport calls Cloud Code without the agy Agent wrapper pr
 
 > Unofficial and intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional restrictions, and terms still apply.
 
-Current version: `v0.8.3`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current version: `v0.9.1`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ### Features
 
@@ -476,6 +533,8 @@ Current version: `v0.8.3`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 - Sticky-session account rotation and failover on authentication, quota, or rate-limit failures.
 - Request, token, cache, account, quota, and 24-hour usage displays.
 - Client-side tools, SSE, Claude Code Auto Mode, and structured output support.
+- Native image generation/reference editing and multimodal understanding for images, video, audio, PDFs, and files.
+- OpenAI-compatible Images and Files endpoints for local and remote clients.
 
 ### Requirements
 
@@ -662,6 +721,42 @@ antigravity-gateway --models
 curl http://127.0.0.1:9897/v1/models
 ```
 
+### Images and multimodal input
+
+Normal conversation has no keyword router. The selected Gemini model receives both the text and attachments, understands them as context by default, and invokes a private native image tool only when the requested deliverable is a new or edited image. Existing client tools and `tool_choice` semantics are preserved.
+
+The image path mirrors agy's private Antigravity image request and uses the managed account pool directly; it does not launch agy for each image. Accounts newly authorized with `add` retain the OAuth client metadata needed for token refresh if the complete account JSON is later moved to a server without agy.
+
+```bash
+# Text to image
+curl http://127.0.0.1:9897/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a black hexagon on white","size":"1024x1024","response_format":"url"}'
+
+# Reference-image edit (up to three images)
+curl http://127.0.0.1:9897/v1/images/edits \
+  -F 'image=@reference.png' \
+  -F 'prompt=change only the subject to purple' \
+  -F 'response_format=url'
+
+# Upload media for a remote client
+curl http://127.0.0.1:9897/v1/files \
+  -F 'file=@recording.mp4;type=video/mp4' \
+  -F 'purpose=assistants'
+```
+
+Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata.
+
+Generated-image responses include a readable text receipt, Markdown, an accessible URL, the absolute path on the gateway host, and structured `artifacts` metadata for each protocol. Clients that ignore extension fields can still obtain the delivery address from the assistant text. File content supports both `GET` and `HEAD`.
+
+For agents that cannot construct video inputs themselves, the bundled `skills/antigravity-video-understanding` package uploads a local video through the existing Files API and submits it as native `input_video` through Chat Completions:
+
+```bash
+python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
+  "/absolute/path/recording.mp4" \
+  --prompt "Analyze this video and answer my question."
+```
+
 ### Usage, update, and troubleshooting
 
 Token usage and cache accounting:
@@ -702,16 +797,20 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_TIMEOUT_MS` | `300000` | Request timeout in milliseconds |
 | `ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY` | `4` | Maximum concurrent requests |
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `32` | Maximum queued requests |
+| `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | Native Antigravity image model |
+| `ANTIGRAVITY_GATEWAY_MEDIA_LIMIT` | `100663296` | Maximum bytes per media item |
+| `ANTIGRAVITY_GATEWAY_TOTAL_MEDIA_LIMIT` | `201326592` | Maximum resolved media bytes per request |
 
 ### How it works
 
-Clients call the local Anthropic/OpenAI endpoints. The gateway converts requests to the Cloud Code protocol, selects a local pool account, sends the upstream request, and converts the result back. Tools are executed by Claude Code, Codex, or another client; the gateway only transports tool definitions, calls, and results.
+Clients call the local Anthropic/OpenAI endpoints. The gateway converts requests to the Cloud Code protocol, selects a pool account, sends the upstream request, and converts the result back. Normal tools remain client-executed. Only the private native image tool is intercepted and sent directly to the Antigravity image endpoint.
 
 ### Limitations
 
 - Direct transport uses an undocumented Cloud Code internal API and may require updates after upstream changes.
 - Available models and quotas depend on the account and upstream service.
 - Tool, Auto Mode, and structured-output requests may be buffered for validation.
+- Private image and multimodal protocols are undocumented upstream interfaces and may require compatibility updates.
 - Account credentials are ordinary local JSON files and remain the user's responsibility.
 
 ### License

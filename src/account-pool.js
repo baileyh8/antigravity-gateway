@@ -174,7 +174,8 @@ class AccountPool {
       return result;
     }
 
-    const candidates = this.orderedCandidates(model, options.sessionId);
+    const routingKey = options.routingKey || options.sessionId;
+    const candidates = this.orderedCandidates(model, routingKey);
     if (!candidates.length) {
       throw new DirectProviderError(`当前没有可用于模型 ${model} 的 Antigravity 账号。`, {
         code: 'account_pool_unavailable', status: 429
@@ -202,7 +203,7 @@ class AccountPool {
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
         entry.lastSuccessAt = new Date().toISOString();
         entry.lastError = '';
-        if (options.sessionId) this.sessions.set(options.sessionId, { accountId: entry.account.id, at: Date.now() });
+        if (routingKey && options.bindRouting !== false) this.sessions.set(routingKey, { accountId: entry.account.id, at: Date.now() });
         return { ...result, accountId: entry.account.id };
       } catch (error) {
         lastError = error;
@@ -217,7 +218,67 @@ class AccountPool {
         }
         else if (category === 'auth') entry.cooldownUntil = Date.now() + 5 * 60_000;
         else entry.cooldownUntil = Date.now() + 15_000;
-        if (options.sessionId) this.sessions.delete(options.sessionId);
+        if (routingKey) this.sessions.delete(routingKey);
+      }
+    }
+    throw lastError;
+  }
+
+  async generateImage(request, options = {}) {
+    const model = 'gemini-3.1-flash-image';
+    if (!this.hasManagedAccounts()) {
+      options.onAccountSelected?.({ accountId: 'local-agy-session', email: '', source: 'local-agy-session', attempt: 1 });
+      let responseSeen = false;
+      const result = await this.fallbackProvider.generateImage(request, {
+        ...options,
+        onUpstreamAttempt: (event) => {
+          if (event.phase === 'response') {
+            responseSeen = true;
+            this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
+          }
+        }
+      });
+      if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
+      this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
+      return { ...result, accountId: 'local-agy-session' };
+    }
+
+    const routingKey = options.routingKey || options.sessionId;
+    const preferred = options.accountId ? this.entries.get(options.accountId) : null;
+    const candidates = preferred && preferred.account.enabled !== false
+      ? [preferred, ...this.orderedCandidates(model, routingKey).filter((entry) => entry !== preferred)]
+      : this.orderedCandidates(model, routingKey);
+    if (!candidates.length) throw new DirectProviderError('当前没有可用于生图的 Antigravity 账号。', { code: 'account_pool_unavailable', status: 429 });
+
+    let lastError;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const entry = candidates[index];
+      options.onAccountSelected?.({ accountId: entry.account.id, email: entry.account.email, source: entry.account.source || 'managed-account', attempt: index + 1 });
+      let responseSeen = false;
+      try {
+        const result = await entry.provider.generateImage(request, {
+          ...options,
+          onUpstreamAttempt: (event) => {
+            if (event.phase === 'response') responseSeen = true;
+            this.attemptReporter(entry.account.id, model)(event);
+          }
+        });
+        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: true, count: true });
+        this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
+        entry.lastSuccessAt = new Date().toISOString();
+        entry.lastError = '';
+        if (routingKey && options.bindRouting !== false) this.sessions.set(routingKey, { accountId: entry.account.id, at: Date.now() });
+        return { ...result, accountId: entry.account.id };
+      } catch (error) {
+        lastError = error;
+        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
+        entry.lastFailureAt = new Date().toISOString();
+        entry.lastError = String(error.message || error);
+        const category = errorCategory(error);
+        if (category === 'request') throw error;
+        if (category === 'quota') entry.modelCooldowns.set(model, Date.now() + retryDelay(error.details || error.message));
+        else if (category === 'auth') entry.cooldownUntil = Date.now() + 5 * 60_000;
+        else entry.cooldownUntil = Date.now() + 15_000;
       }
     }
     throw lastError;

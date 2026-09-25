@@ -33,17 +33,24 @@ test('account store persists ordinary JSON and replaces refreshed credentials', 
 
 test('managed account refresh writes the new tokens back to its JSON record', async (t) => {
   const store = tempStore(t);
-  const saved = store.save({ ...account('refresh@example.com'), expiresAt: '2020-01-01T00:00:00.000Z' });
+  const saved = store.save({
+    ...account('refresh@example.com'),
+    expiresAt: '2020-01-01T00:00:00.000Z',
+    clientId: 'client',
+    clientSecret: 'secret'
+  });
   const auth = new ManagedAccountAuthProvider({
     account: saved,
     store,
     fetchImpl: async () => new Response(JSON.stringify({ access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 }), { status: 200 })
   });
-  auth.provider.clientCredentials = [{ clientId: 'client', clientSecret: 'secret' }];
+  assert.deepEqual(auth.provider.clientCredentials, [{ clientId: 'client', clientSecret: 'secret' }]);
   const record = await auth.get();
   assert.equal(record.accessToken, 'access-new');
   assert.equal(store.list()[0].accessToken, 'access-new');
   assert.equal(store.list()[0].refreshToken, 'refresh-new');
+  assert.equal(store.list()[0].clientId, 'client');
+  assert.equal(store.list()[0].clientSecret, 'secret');
 });
 
 test('account pool rotates new sessions but keeps one session on one account', async (t) => {
@@ -70,6 +77,70 @@ test('account pool rotates new sessions but keeps one session on one account', a
   assert.notEqual(calls[0][0], calls[2][0]);
   assert.deepEqual(calls.map((item) => item[1]), ['claude-sonnet-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-6']);
   assert.deepEqual(new Set(calls.map((item) => item[0])), new Set([first.id, second.id]));
+});
+
+test('account affinity is shared by parent and child conversations without sharing upstream session IDs', async (t) => {
+  const store = tempStore(t);
+  store.save(account('one@example.com'));
+  store.save(account('two@example.com'));
+  const calls = [];
+  const pool = new AccountPool({
+    store,
+    fallbackProvider: {},
+    providerFactory: (record) => ({
+      send: async (_normalized, _model, options) => {
+        calls.push({ accountId: record.id, sessionId: options.sessionId });
+        return { text: record.email, toolCalls: [], usage: {} };
+      },
+      generateImage: async () => ({ data: Buffer.from('image').toString('base64'), mimeType: 'image/jpeg', usage: {} }),
+      listModels: async () => ['gemini-3.8-flash-high'],
+      modelInfo: () => null
+    })
+  });
+  const parent = await pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'parent-session', routingKey: 'family-affinity' });
+  const child = await pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'child-session', routingKey: 'family-affinity' });
+  const image = await pool.generateImage({ prompt: 'draw it' }, {
+    sessionId: 'child-session', routingKey: 'family-affinity', accountId: parent.accountId
+  });
+  assert.equal(parent.accountId, child.accountId);
+  assert.equal(parent.accountId, image.accountId);
+  assert.deepEqual(calls.map((call) => call.sessionId), ['parent-session', 'child-session']);
+});
+
+test('an auxiliary image fallback does not migrate the parent text conversation', async (t) => {
+  const store = tempStore(t);
+  store.save(account('one@example.com'));
+  store.save(account('two@example.com'));
+  let primaryAccount = '';
+  const textAccounts = [];
+  const pool = new AccountPool({
+    store,
+    fallbackProvider: {},
+    providerFactory: (record) => ({
+      send: async () => {
+        textAccounts.push(record.id);
+        return { text: record.email, toolCalls: [], usage: {} };
+      },
+      generateImage: async () => {
+        if (record.id === primaryAccount) {
+          const error = new Error('image quota exhausted');
+          error.status = 429;
+          throw error;
+        }
+        return { data: Buffer.from('image').toString('base64'), mimeType: 'image/jpeg', usage: {} };
+      },
+      listModels: async () => ['gemini-3.8-flash-high'],
+      modelInfo: () => null
+    })
+  });
+  const first = await pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'parent', routingKey: 'family' });
+  primaryAccount = first.accountId;
+  const image = await pool.generateImage({ prompt: 'draw it' }, {
+    sessionId: 'parent', routingKey: 'family', accountId: primaryAccount, bindRouting: false
+  });
+  assert.notEqual(image.accountId, primaryAccount);
+  await pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'parent', routingKey: 'family' });
+  assert.deepEqual(textAccounts, [primaryAccount, primaryAccount]);
 });
 
 test('account pool reports the actual account selected for each upstream attempt', async (t) => {

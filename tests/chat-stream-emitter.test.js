@@ -133,3 +133,22 @@ test('chat live emitter sends only the unseen tail when the answer grew after th
   const chunks = parse();
   assert.equal(contentOf(chunks), '前半段加尾');
 });
+
+
+test('chat live emitter preserves image receipts alongside tools and usage without replay', () => {
+  const { res, parse } = capture();
+  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const response = body('Ready: image receipt', SHELL_CALL);
+  response.choices[0].message.images = [{ url: 'http://localhost/image.png' }];
+  response.choices[0].message.artifacts = [{ id: 'image_1', mime_type: 'image/png' }];
+  emitter.onDelta('Ready: ');
+  emitter.finish(response);
+  const chunks = parse();
+  assert.equal(contentOf(chunks), 'Ready: image receipt');
+  assert.equal(toolCallsOf(chunks).length, 1);
+  const media = chunks.find((chunk) => chunk.choices?.[0]?.delta?.artifacts);
+  assert.deepEqual(media.choices[0].delta.images, response.choices[0].message.images);
+  assert.deepEqual(media.choices[0].delta.artifacts, response.choices[0].message.artifacts);
+  assert.deepEqual(chunks.at(-1).usage, response.usage);
+  assert.equal(res.ended, true);
+});
