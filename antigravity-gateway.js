@@ -10,7 +10,8 @@ const path = require('node:path');
 const { AgyError, AgyWorker, getVersion, listModels, resolveAgyCommand } = require('./src/agy-worker');
 const { AccountPool } = require('./src/account-pool');
 const { AccountStore } = require('./src/account-store');
-const { artifactReceipt, imageArtifact, imageArtifacts, streamTextRemainder } = require('./src/artifacts');
+const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemainder } = require('./src/artifacts');
+const { createDashboardAccessPolicy } = require('./src/dashboard-access');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
 const { checkDashboard, dashboardAsset, dashboardData, dashboardHtml, openBrowser } = require('./src/dashboard');
 const { LocalAccountImporter } = require('./src/local-account-importer');
@@ -127,6 +128,11 @@ function gatewayLog(message) { return TERMINAL ? TERMINAL.log(message) : console
 function gatewayWarn(message) { return TERMINAL ? TERMINAL.log(message, 'warn') : console.warn(message); }
 function gatewayError(message) { return TERMINAL ? TERMINAL.log(message, 'error') : console.error(message); }
 
+const DASHBOARD_ACCESS = createDashboardAccessPolicy(
+  process.env.ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW,
+  { warn: (message) => gatewayWarn(`[Antigravity Gateway Warning] ${message}`) }
+);
+
 const activeWorkers = new Set();
 let modelCache = { at: 0, models: [], error: null };
 let versionCache = null;
@@ -177,11 +183,6 @@ const uploadSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
 
 function isLoopbackHost(host) {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(host).toLowerCase());
-}
-
-function isLoopbackAddress(address) {
-  const value = String(address || '').toLowerCase();
-  return value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1';
 }
 
 function dashboardUrl() {
@@ -781,6 +782,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           prompt: args.Prompt,
           name: args.ImageName || 'generated_image'
         };
+        const internalResult = internalImageToolResult(image);
         const continuation = {
           ...prepared.normalized,
           stream: false,
@@ -793,8 +795,8 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
             { role: 'assistant', text: '', parts: [{ type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments, thoughtSignature: call.thoughtSignature }] },
             { role: 'user', text: '', parts: [{
               type: 'tool_result', id: call.id, name: call.name,
-              content: `${artifactReceipt([image])}\nThe image is already saved and available at this URL. Deliver it directly; do not search for the file ID or generate it again.`,
-              response: { output: `${artifactReceipt([image])}\nThe image is already saved and available at this URL. Deliver it directly; do not search for the file ID or generate it again.` },
+              content: JSON.stringify(internalResult),
+              response: { output: internalResult },
               media: [{ type: 'media', id: saved.id, mediaType: generated.mimeType, data: generated.data, filename: saved.filename }]
             }] }
           ]
@@ -1266,9 +1268,9 @@ async function requestHandler(req, res) {
     res.end();
     return;
   }
-  if (route === '/dashboard' || route === '/dashboard/data' || route.startsWith('/dashboard/assets/')) {
-    if (!isLoopbackAddress(req.socket?.remoteAddress)) {
-      sendJson(res, 403, { error: { type: 'dashboard_local_only', message: 'Token 看板仅允许从网关所在设备访问。' } });
+  if (route === '/dashboard' || route === '/dashboard/data' || route.startsWith('/dashboard/assets/') || route.startsWith('/dashboard/accounts/')) {
+    if (!DASHBOARD_ACCESS.allows(req.socket?.remoteAddress)) {
+      sendJson(res, 403, { error: { type: 'dashboard_local_only', message: 'Token 看板仅允许从网关所在设备或 ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW 所列来源访问。' } });
       return;
     }
     if (req.method === 'GET' && route === '/dashboard') {
@@ -1291,6 +1293,31 @@ async function requestHandler(req, res) {
       }), { 'Cache-Control': 'no-store' });
       return;
     }
+    const accountRecheckMatch = route.match(/^\/dashboard\/accounts\/([^/]+)\/recheck$/);
+    const accountDeleteMatch = route.match(/^\/dashboard\/accounts\/([^/]+)$/);
+    if (req.method === 'POST' && accountRecheckMatch) {
+      try {
+        const accountId = decodeURIComponent(accountRecheckMatch[1]);
+        const result = await ACCOUNT_POOL.recheckAccount(accountId, { signal: AbortSignal.timeout(15_000) });
+        sendJson(res, 200, result, { 'Cache-Control': 'no-store' });
+      } catch (error) {
+        sendJson(res, Number(error?.status) || 502, {
+          error: { type: error?.code || 'account_recheck_failed', message: error?.message || '账号重新检测失败。' }
+        }, { 'Cache-Control': 'no-store' });
+      }
+      return;
+    }
+    if (req.method === 'DELETE' && accountDeleteMatch) {
+      try {
+        const accountId = decodeURIComponent(accountDeleteMatch[1]);
+        sendJson(res, 200, ACCOUNT_POOL.removeAccount(accountId), { 'Cache-Control': 'no-store' });
+      } catch (error) {
+        sendJson(res, Number(error?.status) || 500, {
+          error: { type: error?.code || 'account_delete_failed', message: error?.message || '账号删除失败。' }
+        }, { 'Cache-Control': 'no-store' });
+      }
+      return;
+    }
     if (route.startsWith('/dashboard/assets/')) {
       if (req.method !== 'GET') {
         sendJson(res, 405, { error: { type: 'method_not_allowed', message: '看板资源只支持 GET。' } });
@@ -1310,7 +1337,7 @@ async function requestHandler(req, res) {
       res.end(asset.body);
       return;
     }
-    sendJson(res, 405, { error: { type: 'method_not_allowed', message: '看板接口只支持 GET。' } });
+    sendJson(res, 405, { error: { type: 'method_not_allowed', message: '看板请求方法不受支持。' } });
     return;
   }
   const publicFileMatch = route.match(/^\/v1\/files\/(file_[a-f0-9]{32})\/content$/);
@@ -1505,6 +1532,7 @@ if (require.main === module) {
     TERMINAL?.stop();
     QUOTA_MANAGER.stop();
     USAGE_STORE.stop();
+    ACCOUNT_POOL.stop();
     await new Promise((resolve) => server.close(resolve));
     await Promise.allSettled([...activeWorkers].map((worker) => worker.close()));
   };
@@ -1539,6 +1567,7 @@ if (require.main === module) {
   server.requestTimeout = REQUEST_TIMEOUT + 10000;
   server.headersTimeout = 30000;
   server.listen(PORT, HOST, async () => {
+    gatewayLog(`[Antigravity Gateway] 看板来源：${DASHBOARD_ACCESS.description}`);
     let models = [];
     let modelError = '';
     let localAccountImport = null;
@@ -1568,6 +1597,8 @@ if (require.main === module) {
       gatewayLog(`[Antigravity Gateway] ✅ 已将本地 agy 新账号加入账号池：${localAccountImport.account.email || localAccountImport.account.id}`);
     } else if (localAccountImport?.status === 'existing') {
       gatewayLog(`[Antigravity Gateway] 本地 agy 账号已在账号池，未重复导入：${localAccountImport.account.email || localAccountImport.account.id}`);
+    } else if (localAccountImport?.status === 'removed') {
+      gatewayLog(`[Antigravity Gateway] 本地 agy 账号已按用户删除设置从账号池排除：${localAccountImport.identity.email || localAccountImport.identity.subjectId}`);
     } else if (localAccountImport?.status === 'error') {
       gatewayWarn(`[Antigravity Gateway] 本地 agy 账号自动导入未完成：${localAccountImport.message}（不影响已有账号池和原有登录态）`);
     }
@@ -1579,6 +1610,7 @@ if (require.main === module) {
     else gatewayError(`[Antigravity Gateway Error] ${error.message}`);
     QUOTA_MANAGER.stop();
     USAGE_STORE.stop();
+    ACCOUNT_POOL.stop();
     process.exitCode = 1;
   });
   process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });

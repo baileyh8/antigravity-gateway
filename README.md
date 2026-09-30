@@ -10,7 +10,7 @@ Antigravity Gateway 是一个本地 Anthropic/OpenAI 兼容网关。它复用官
 
 > 非 Google 官方项目，仅用于学习、兼容性研究与个人测试。模型权限、额度、地区限制和服务条款均以上游为准。
 
-当前版本：`v0.9.1`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v1.0.0`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 主要功能
 
@@ -343,7 +343,7 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
   --prompt "分析这段视频并回答我的问题"
 ```
 
-网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性；账号认证、额度或网络异常时仍会自动故障转移。支持客户端显式发送 `x-client-id`/`x-agent-id`、`x-session-id`/`x-conversation-id`、`x-parent-session-id` 和 `x-routing-affinity-id`；未提供时继续兼容现有 Claude、Codex、OpenAI 和 Anthropic 客户端字段。所有原始标识仅用于本地路由，提交上游的会话值是不可逆哈希，不会写入模型提示词。日志中的 request、client、session 和 affinity 短标识可用于区分并发链路；映射设置容量和一小时过期清理。
+网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性。软黏性映射会在本地保存 72 小时，网关重启后仍会优先恢复最近成功账号；账号额度耗尽、网络异常、凭据失效、访问受限或 Google 要求安全核验时仍会立即故障转移，不会形成不可切换的硬绑定。认证和账号风控会把账号标记为异常并停止继续尝试；重新授权导致凭据变化时自动恢复，也可以在看板中点击“重新检测”，以不生成内容、不消耗模型 Token 的轻量鉴权确认核验结果。网络瞬态故障仍由直连传输重试，失败后只进入短暂冷却。首次选择账号或故障转移时，会在健康且可用的账号中优先使用 Gemini 模型组 5 小时额度最早重置的账号，无论当前请求使用 Gemini、Claude 还是 GPT；重置时间相同或未知时继续采用原有加权轮询。支持客户端显式发送 `x-client-id`/`x-agent-id`、`x-session-id`/`x-conversation-id`、`x-parent-session-id` 和 `x-routing-affinity-id`；未提供时继续兼容现有 Claude、Codex、OpenAI 和 Anthropic 客户端字段。所有原始标识仅用于本地路由，提交上游的会话值是不可逆哈希，不会写入模型提示词。日志中的 request、client、session 和 affinity 短标识可用于区分并发链路。
 
 ### 用量和额度
 
@@ -366,14 +366,15 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
 antigravity-gateway stats
 ```
 
-看板提供历史与所选时段 Token、请求和上游调用、输入/输出/思考/缓存、失败率、账号额度、小时热力图、模型趋势和模型消耗占比；支持最近1天、3天、7天、30天及按账号筛选。账号列表只来自当前账号池；额度与 agy `/usage` 保持一致，按账号分别展示 Gemini 模型组、Claude/GPT 模型组共享的每周额度和 5 小时额度。具体模型的调用次数与 Token 只按真实请求的模型 ID 统计，不再把模型目录中的单项余额误写成账号总额度。点击“生成图片”会在浏览器本地生成账号脱敏的高清 PNG，桌面端直接下载，移动端提供长按保存预览；该过程不依赖第三方服务，也不会增加网关后端截图负担。网页每分钟读取一次本地聚合数据，关闭页面后不会继续轮询，也不保存提示词或模型回复。账号与模型的小时细分从 v0.8.0 起累计。
+看板提供历史与所选时段 Token、请求和上游调用、输入/输出/思考/缓存、失败率、账号额度、小时热力图、模型趋势和模型消耗占比；支持最近1天、3天、7天、30天及按账号筛选，浏览器会记住上次选择的统计周期。账号列表只来自当前账号池；额度与 agy `/usage` 保持一致，默认按账号完整展示 Gemini 模型组、Claude/GPT 模型组共享的每周额度和 5 小时额度，也可切换为只看 Gemini 模型组的额度概览，浏览器同样会记住上次选择。异常账号提供一次性轻量鉴权的“重新检测”按钮；“删除账号”会移除账号凭据、健康状态、额度快照与会话黏性，并防止已主动删除的本地 agy 身份在重启时被自动导回。若账号池因此变空，网关不会绕过账号池退回该本地登录态；重新使用需通过 `add` 明确加入账号。具体模型的调用次数与 Token 只按真实请求的模型 ID 统计，不再把模型目录中的单项余额误写成账号总额度。点击“生成图片”会在浏览器本地生成账号脱敏的高清 PNG，桌面端直接下载，移动端提供长按保存预览；该过程不依赖第三方服务，也不会增加网关后端截图负担。网页每分钟读取一次本地聚合数据，关闭页面后不会继续轮询，也不保存提示词或模型回复。账号与模型的小时细分从 v0.8.0 起累计。
 
 ```text
+~/.antigravity-gateway/state/account-pool.json
 ~/.antigravity-gateway/state/quota.json
 ~/.antigravity-gateway/usage/usage-state.json
 ```
 
-统计只保存数字，不保存提示词和模型回复。
+`account-pool.json` 只保存账号 ID、不可逆会话路由标识、被主动删除身份的不可逆哈希、时间和账号健康状态，不保存提示词、模型回复或账号 Token；用量统计也只保存数字。
 
 ### 更新与卸载
 
@@ -400,7 +401,7 @@ npm uninstall --global antigravity-gateway
 
 #### `401 本地 agy 登录态刷新失败`
 
-先在官方 `agy` 中重新登录并完成一次正常对话，然后重启网关。输入 `acc` 检查账号池状态。
+先在官方 `agy` 中重新登录并完成一次正常对话，然后重启网关。输入 `acc` 检查账号池状态；若看板仍标记异常，可点击该账号的“重新检测”确认新凭据或安全核验已经生效。
 
 #### `429 Resource has been exhausted`
 
@@ -446,6 +447,7 @@ export NO_PROXY=127.0.0.1,localhost
 | `ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY` | `4` | 最大并发请求数 |
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `32` | 最大排队请求数 |
 | `ANTIGRAVITY_GATEWAY_CORS_ORIGIN` | 空 | 允许访问本地网关的浏览器 Origin |
+| `ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW` | 空 | 额外允许访问看板的 IP、CIDR 或 `*`，逗号分隔；默认仅本机 |
 | `ANTIGRAVITY_GATEWAY_DEBUG` | 空 | 设置为 `1` 输出更多诊断信息 |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | 空（关闭） | 设置为 `1` 后，要求模型按工作阶段说明进度；阶段内不逐工具解说，阶段切换时简短交代 |
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | 原生图片请求使用的 Antigravity 图片模型 |
@@ -478,6 +480,17 @@ antigravity-gateway service restart
 ```
 
 当前是否生效可以从健康接口读取：`curl -s http://127.0.0.1:9897/ | grep -o '"tool_narration":[a-z]*'`。
+
+跨设备查看看板时，需要同时把监听地址改为非回环地址并设置 API Key。例如只允许局域网 `192.168.1.0/24`：
+
+```bash
+export ANTIGRAVITY_GATEWAY_HOST=0.0.0.0
+export ANTIGRAVITY_GATEWAY_API_KEY=请设置自己的密钥
+export ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW=192.168.1.0/24
+antigravity-gateway
+```
+
+看板本身不校验 API Key，白名单来源可以看到账号邮箱、额度和用量；不建议在公网环境中使用 `*`。来源按真实 TCP 对端地址判断，不信任 `X-Forwarded-For`。使用后台模式时重新执行 `antigravity-gateway service start`，即可保存配置并重启服务。
 
 ### 接口
 
@@ -522,7 +535,7 @@ The default `direct` transport calls Cloud Code without the agy Agent wrapper pr
 
 > Unofficial and intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional restrictions, and terms still apply.
 
-Current version: `v0.9.1`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current version: `v1.0.0`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ### Features
 
@@ -745,7 +758,7 @@ curl http://127.0.0.1:9897/v1/files \
   -F 'purpose=assistants'
 ```
 
-Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata.
+Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for 72 hours and restored after gateway restarts, while unavailable accounts still fail over immediately. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown. For a new binding or failover, healthy accounts are always ordered by the earliest five-hour reset of the Gemini group, regardless of the requested model family, with the existing weighted rotation retained when reset times are equal or unavailable.
 
 Generated-image responses include a readable text receipt, Markdown, an accessible URL, the absolute path on the gateway host, and structured `artifacts` metadata for each protocol. Clients that ignore extension fields can still obtain the delivery address from the assistant text. File content supports both `GET` and `HEAD`.
 
@@ -764,7 +777,7 @@ Token usage and cache accounting:
 - **Anthropic Messages**: `input_tokens` excludes cache reads (`prompt - cache_read`) to avoid double-billing; cache reads are reported under `cache_read_input_tokens`.
 - **OpenAI Chat Completions**: `prompt_tokens` remains inclusive of the cached prefix, with cache hits reported under standard `prompt_tokens_details.cached_tokens` and reasoning tokens under `completion_tokens_details.reasoning_tokens`. This fully supports cache-hit and usage breakdowns in clients such as DeepSeek Harness (DSH) and Cursor.
 
-The browser dashboard shows lifetime and selected-period Tokens, requests, upstream calls, input/output/thinking/cache usage, failures, per-account quota, hourly heatmaps, model trends, and model consumption share. It supports 1/3/7/30-day windows and account filtering. Accounts come exclusively from the active account pool. Quota cards mirror agy `/usage`: each account shows the shared weekly and five-hour limits for the Gemini group and the Claude/GPT group. Per-model request and Token charts use the exact model IDs actually called instead of treating a model-catalog balance as the account's total quota. The Generate Image action creates an account-masked, high-resolution PNG entirely in the browser: desktop browsers download it directly, while mobile browsers show a long-press save preview. No third-party screenshot service or extra gateway-side rendering process is used. The page reads local aggregate data once per minute only while open; it never stores prompts or model responses. Hourly account/model breakdowns begin with v0.8.0. Type `usage` for terminal details or run `antigravity-gateway stats` while either foreground or background mode is active. Usage is persisted every five minutes; quota snapshots refresh asynchronously.
+The browser dashboard shows lifetime and selected-period Tokens, requests, upstream calls, input/output/thinking/cache usage, failures, per-account quota, hourly heatmaps, model trends, and model consumption share. It supports 1/3/7/30-day windows and account filtering, and remembers the last selected time window in the browser. Accounts come exclusively from the active account pool. Quota cards mirror agy `/usage`: by default each account shows the shared weekly and five-hour limits for both the Gemini and Claude/GPT groups, with a compact overview that shows only the Gemini group; the browser also remembers the last selected quota view. Unhealthy accounts expose a one-shot authentication recheck, while Delete Account removes the credential, health record, quota snapshot, and affinity bindings and prevents an explicitly removed local agy identity from being auto-imported or used as an implicit fallback again; use `add` to explicitly restore it. Per-model request and Token charts use the exact model IDs actually called instead of treating a model-catalog balance as the account's total quota. The Generate Image action creates an account-masked, high-resolution PNG entirely in the browser: desktop browsers download it directly, while mobile browsers show a long-press save preview. No third-party screenshot service or extra gateway-side rendering process is used. The page reads local aggregate data once per minute only while open; it never stores prompts or model responses. Hourly account/model breakdowns begin with v0.8.0. Type `usage` for terminal details or run `antigravity-gateway stats` while either foreground or background mode is active. Usage is persisted every five minutes; quota snapshots refresh asynchronously.
 
 Update:
 
@@ -797,9 +810,12 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_TIMEOUT_MS` | `300000` | Request timeout in milliseconds |
 | `ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY` | `4` | Maximum concurrent requests |
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `32` | Maximum queued requests |
+| `ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW` | empty | Extra IPs, CIDRs, or `*` allowed to open the dashboard; comma-separated and local-only by default |
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | Native Antigravity image model |
 | `ANTIGRAVITY_GATEWAY_MEDIA_LIMIT` | `100663296` | Maximum bytes per media item |
 | `ANTIGRAVITY_GATEWAY_TOTAL_MEDIA_LIMIT` | `201326592` | Maximum resolved media bytes per request |
+
+For remote dashboard access, bind the gateway to a non-loopback address, configure an API key, and allow only the required LAN address or CIDR. The dashboard itself does not validate the API key, so allowed sources can see account emails, quotas, and usage; avoid `*` on public networks. Matching uses the TCP peer address and does not trust `X-Forwarded-For`. Re-run `antigravity-gateway service start` to persist changed environment settings in background mode.
 
 ### How it works
 
