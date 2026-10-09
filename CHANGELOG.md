@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 - 2026-10-06
+
+- Added per-account model-capability routing: the gateway records each account's authoritative model catalog, filters out accounts that do not support the requested model, and then applies the existing affinity, health, cooldown, quota-pressure, five-hour reset, and weight rules unchanged among compatible accounts.
+- Added a bounded, redacted authentication diagnostic log for process lifecycle, sleep/resume gaps, token refreshes, account quarantine and recovery, manual rechecks, and upstream authentication probes. The JSONL log rotates at approximately 5 MB and retains one previous file without recording credentials, prompts, or model responses.
+
+## 1.1.0 - 2026-10-01
+
+- Replaced winner-take-all quota routing with weighted distribution across healthy accounts: Gemini weekly pressure bands set the main weight, the nearest Gemini five-hour reset receives an in-band boost, and lower-ranked accounts retain traffic instead of starving.
+- Changed persisted soft affinity from a sliding 72-hour lifetime to a fixed five-hour window; healthy continuations now use an O(1) local-state fast path and quota ranking runs only for new, expired, or failed bindings.
+- Raised the default direct-transport concurrency from 4 to 12 while retaining 4 for explicit local `agy` subprocess transport; environment overrides remain supported.
+
+## 1.0.1 - 2026-09-30
+
+- Added Gemini-only weekly pressure bands (`floor(log2(remainingFraction / hoursUntilReset))`) before the existing Gemini five-hour reset priority for new bindings and account failover, while retaining soft affinity for conversation and image continuations.
+- Corrected weighted rotation so only a real account selection changes weights; unused fallback candidates no longer distort load distribution.
+- Added asynchronous per-account quota-summary refreshes with five-minute throttling, request coalescing and bounded concurrency; tracked summary freshness separately from model/plan queries and rejected obsolete results after deletion or credential replacement.
+
 ## 1.0.0 - 2026-09-29
 
 - Persisted soft account affinity for 72 hours across restarts, while preserving immediate failover for unavailable accounts.
