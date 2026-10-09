@@ -142,13 +142,21 @@ async function assertPublicUrl(input) {
   return url;
 }
 
-async function responseBuffer(response, limit) {
-  if (!response.ok) throw new MultimediaError(`下载多媒体失败：HTTP ${response.status}`, { code: 'media_download_failed', status: 400 });
+async function responseBuffer(response, limit, reserveBytes = () => {}) {
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new MultimediaError(`下载多媒体失败：HTTP ${response.status}`, { code: 'media_download_failed', status: 400 });
+  }
   const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > limit) throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+  if (declared > limit) {
+    await response.body?.cancel().catch(() => {});
+    throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+  }
   const chunks = [];
   let size = 0;
   if (!response.body?.getReader) {
+    // Non-streaming adapters cannot reserve chunk by chunk; reserve the full cap.
+    reserveBytes(limit);
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.length > limit) throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
     return buffer;
@@ -160,6 +168,7 @@ async function responseBuffer(response, limit) {
       if (done) break;
       size += value.byteLength;
       if (size > limit) throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+      reserveBytes(value.byteLength);
       chunks.push(Buffer.from(value));
     }
   } finally {
@@ -215,6 +224,8 @@ class MediaStore {
   async getAsync(id, options = {}) {
     const metadata = await this.metadata(id, options);
     if (!metadata) return null;
+    if (metadata.bytes > this.maxBytes) throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+    options.reserveBytes?.(metadata.bytes);
     try { return { metadata, buffer: await this.fs.promises.readFile(this.contentPath(id)) }; }
     catch { return null; }
   }
@@ -289,14 +300,17 @@ class MediaStore {
     return true;
   }
 
-  async resolve(part, { scope = '', signal } = {}) {
+  async resolve(part, { scope = '', signal, reserveBytes = () => {} } = {}) {
     if (part.data) {
+      const size = Buffer.byteLength(String(part.data), 'base64');
+      if (size > this.maxBytes) throw new MultimediaError('多媒体文件超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+      reserveBytes(size);
       const buffer = Buffer.from(String(part.data), 'base64');
       if (!buffer.length || buffer.length > this.maxBytes) throw new MultimediaError('Base64 多媒体为空或超过单文件传输上限。', { code: 'media_too_large', status: 413 });
       return { ...part, data: buffer.toString('base64'), bytes: buffer.length };
     }
     if (part.fileId) {
-      const item = await this.getAsync(part.fileId, { scope });
+      const item = await this.getAsync(part.fileId, { scope, reserveBytes });
       if (!item) throw new MultimediaError(`找不到多媒体文件: ${part.fileId}`, { code: 'media_file_not_found', status: 404 });
       return { ...part, mediaType: normalizeMime(usefulMime(part.mediaType) || item.metadata.mediaType, item.metadata.filename), data: item.buffer.toString('base64'), bytes: item.buffer.length, filename: part.filename || item.metadata.filename };
     }
@@ -305,6 +319,7 @@ class MediaStore {
       let stat;
       try { stat = await this.fs.promises.stat(target); } catch { throw new MultimediaError(`找不到本地多媒体文件: ${target}`, { code: 'media_file_not_found', status: 404 }); }
       if (!stat.isFile() || stat.size > this.maxBytes) throw new MultimediaError('本地多媒体不是文件或超过单文件传输上限。', { code: 'media_too_large', status: 413 });
+      reserveBytes(stat.size);
       const buffer = await this.fs.promises.readFile(target);
       return { ...part, mediaType: normalizeMime(usefulMime(part.mediaType), target), data: buffer.toString('base64'), bytes: buffer.length, filename: part.filename || path.basename(target) };
     }
@@ -313,7 +328,7 @@ class MediaStore {
         const linked = new URL(part.url);
         const storedId = linked.pathname.match(/^\/v1\/files\/(file_[a-f0-9]{32})\/content$/)?.[1];
         if (storedId) {
-          const item = await this.getAsync(storedId, { scope });
+          const item = await this.getAsync(storedId, { scope, reserveBytes });
           if (!item) throw new MultimediaError(`找不到多媒体文件: ${storedId}`, { code: 'media_file_not_found', status: 404 });
           return { ...part, fileId: storedId, mediaType: normalizeMime(usefulMime(part.mediaType) || item.metadata.mediaType, item.metadata.filename), data: item.buffer.toString('base64'), bytes: item.buffer.length, filename: part.filename || item.metadata.filename };
         }
@@ -327,11 +342,12 @@ class MediaStore {
           response = await this.fetchImpl(url, { signal, redirect: 'manual', headers: { accept: 'image/*,video/*,audio/*,application/pdf,text/plain,*/*;q=0.1' } });
           if (![301, 302, 303, 307, 308].includes(response.status)) break;
           const location = response.headers.get('location');
+          await response.body?.cancel().catch(() => {});
           if (!location) break;
           url = await assertPublicUrl(new URL(location, url).toString());
         }
       } catch (error) { throw new MultimediaError('远程多媒体下载失败。', { code: 'media_download_failed', details: error.message, cause: error }); }
-      const buffer = await responseBuffer(response, this.maxBytes);
+      const buffer = await responseBuffer(response, this.maxBytes, reserveBytes);
       return { ...part, mediaType: normalizeMime(response.headers.get('content-type') || part.mediaType, url.pathname), data: buffer.toString('base64'), bytes: buffer.length, filename: part.filename || path.basename(url.pathname) };
     }
     throw new MultimediaError('多媒体内容缺少 data、URL、file_id 或本地路径。');

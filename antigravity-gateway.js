@@ -220,9 +220,19 @@ class Semaphore {
 const requestSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
 // Admit uploads before allocating/normalizing complete request bodies.
 const uploadSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
-const mediaSlots = new Semaphore(Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY || 2)), MAX_QUEUE);
+const mediaSlots = new Semaphore(Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY || 4)), MAX_QUEUE);
+const imageSlots = new Semaphore(Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_IMAGE_CONCURRENCY || 4)), MAX_QUEUE);
+const resolvedMediaBudget = new ByteBudget(Number(process.env.ANTIGRAVITY_GATEWAY_RESOLVED_MEDIA_MEMORY_BYTES || 512 * 1024 * 1024));
 const bodyBudget = new ByteBudget(Number(process.env.ANTIGRAVITY_GATEWAY_REQUEST_MEMORY_BYTES || 384 * 1024 * 1024));
 const bodyReservations = new WeakMap();
+
+function concurrencySnapshot() {
+  const snapshot = pool => ({ active: pool.active, limit: pool.limit, queued: pool.waiters.length });
+  return {
+    requests: snapshot(requestSlots), media: snapshot(mediaSlots), images: snapshot(imageSlots),
+    memory: { body: { used: bodyBudget.used, limit: bodyBudget.limit }, resolvedMedia: { used: resolvedMediaBudget.used, limit: resolvedMediaBudget.limit } }
+  };
+}
 
 function isLoopbackHost(host) {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(host).toLowerCase());
@@ -771,13 +781,17 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
   const releaseRequest = await requestSlots.acquire(signal);
   let releaseMedia;
   try {
-    if ((normalized.messages || []).some(m => (m.parts || []).some(p => p.type === 'media' || p.media?.length))
-      || (normalized.tools || []).some(t => t.name === NATIVE_IMAGE_TOOL_NAME)) releaseMedia = await mediaSlots.acquire(signal);
+    if ((normalized.messages || []).some(m => (m.parts || []).some(p => p.type === 'media' || p.media?.length))) releaseMedia = await mediaSlots.acquire(signal);
   } catch (error) { releaseRequest(); throw error; }
-  const release = () => { releaseMedia?.(); releaseRequest(); };
+  const mediaReservations = [];
+  const reserveBytes = bytes => {
+    try { mediaReservations.push(resolvedMediaBudget.acquire(bytes * 4)); }
+    catch (error) { throw new MultimediaError(error.message, { code: error.code, status: error.status }); }
+  };
+  const release = () => { mediaReservations.splice(0).forEach(f => f()); releaseMedia?.(); releaseRequest(); };
   if (usesDirectTransport()) {
     try {
-      const resolved = await MEDIA_STORE.resolveNormalized(normalized, { scope: mediaScope, signal });
+      const resolved = await MEDIA_STORE.resolveNormalized(normalized, { scope: mediaScope, signal, reserveBytes });
       const prepared = prepareNativeMultimodal(resolved);
       const trace = identityTrace({ sessionId, routingKey, requestId, clientId, clientLabel });
       const onAccountSelected = ({ accountId, email, source, attempt }) => {
@@ -805,27 +819,30 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         if ((args.ImagePaths || []).length !== references.length) {
           throw new GatewayError('生图工具引用了不存在或非图片类型的附件。', { code: 'invalid_image_reference', status: 400 });
         }
-        if (!releaseMedia) releaseMedia = await mediaSlots.acquire(signal);
-        const generated = await ACCOUNT_POOL.generateImage({
-          prompt: args.Prompt,
-          aspectRatio: args.AspectRatio || '1:1',
-          images: references
-        }, {
-          signal,
-          sessionId,
-          routingKey,
-          bindRouting: false,
-          accountId: raw.accountId,
-          onAccountSelected: ({ accountId, email, source, attempt }) => {
-            gatewayLog(`[Antigravity Gateway] 生图账号=${email || accountId} source=${source} model=gemini-3.1-flash-image attempt=${attempt} ${trace}`);
-          }
-        });
-        const saved = await MEDIA_STORE.saveAsync(Buffer.from(generated.data, 'base64'), {
-          mediaType: generated.mimeType,
-          filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.jpg`,
-          purpose: 'generated',
-          scope: mediaScope
-        });
+        const releaseImage = await imageSlots.acquire(signal);
+        let generated, saved;
+        try {
+          generated = await ACCOUNT_POOL.generateImage({
+            prompt: args.Prompt,
+            aspectRatio: args.AspectRatio || '1:1',
+            images: references
+          }, {
+            signal,
+            sessionId,
+            routingKey,
+            bindRouting: false,
+            accountId: raw.accountId,
+            onAccountSelected: ({ accountId, email, source, attempt }) => {
+              gatewayLog(`[Antigravity Gateway] 生图账号=${email || accountId} source=${source} model=gemini-3.1-flash-image attempt=${attempt} ${trace}`);
+            }
+          });
+          saved = await MEDIA_STORE.saveAsync(Buffer.from(generated.data, 'base64'), {
+            mediaType: generated.mimeType,
+            filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.jpg`,
+            purpose: 'generated',
+            scope: mediaScope
+          });
+        } finally { releaseImage(); }
         const image = {
           id: saved.id,
           mimeType: generated.mimeType,
@@ -1342,13 +1359,13 @@ async function requestHandler(req, res) {
       return;
     }
     if (req.method === 'GET' && route === '/dashboard/data') {
-      sendJson(res, 200, dashboardData({
+      sendJson(res, 200, { ...dashboardData({
         usageStore: USAGE_STORE,
         accountPool: ACCOUNT_POOL,
         quotaManager: QUOTA_MANAGER,
         proxyManager: PROXY_MANAGER,
         version: GATEWAY_VERSION
-      }), { 'Cache-Control': 'no-store' });
+      }), concurrency: concurrencySnapshot() }, { 'Cache-Control': 'no-store' });
       return;
     }
     if (route === '/dashboard/proxies' || route.startsWith('/dashboard/proxies/') || /^\/dashboard\/accounts\/[^/]+\/proxy$/.test(route)) {
@@ -1443,7 +1460,7 @@ async function requestHandler(req, res) {
   const controller = new AbortController();
   activeControllers.add(controller);
   let timedOut = false;
-  let releaseUpload;
+  let releaseUpload, releaseRoute;
   const deadline = setTimeout(() => {
     timedOut = true;
     controller.abort(new GatewayError('网关请求超时。', { code: 'request_timeout', status: 504 }));
@@ -1458,11 +1475,10 @@ async function requestHandler(req, res) {
   res.on('close', () => { if (!res.writableEnded) controller.abort(); });
   let protocol = route === '/v1/messages' || route === '/v1/messages/count_tokens' ? 'anthropic' : 'openai';
   try {
+    // Wait for the dedicated pool before holding a body-admission slot.
+    if (req.method === 'POST' && route.startsWith('/v1/images/')) releaseRoute = await imageSlots.acquire(controller.signal);
+    if (req.method === 'POST' && route === '/v1/files') releaseRoute = await mediaSlots.acquire(controller.signal);
     if (req.method === 'POST') releaseUpload = await uploadSlots.acquire(controller.signal);
-    if (req.method === 'POST' && (route.startsWith('/v1/images/') || route === '/v1/files')) {
-      const releaseMedia = await mediaSlots.acquire(controller.signal), releaseBody = releaseUpload;
-      releaseUpload = () => { releaseMedia(); releaseBody?.(); };
-    }
     // Claude Code probes custom providers with this lightweight endpoint.
     // Treat it as a connectivity check instead of logging a false 404 error.
     if (route === '/api/hello' && ['GET', 'POST', 'HEAD'].includes(req.method)) {
@@ -1562,6 +1578,7 @@ async function requestHandler(req, res) {
     clearTimeout(deadline);
     activeControllers.delete(controller);
     releaseUpload?.();
+    releaseRoute?.();
   }
 }
 
@@ -1746,6 +1763,7 @@ module.exports = {
   codexCatalogPath,
   codexModelInfo,
   createServer,
+  concurrencySnapshot,
   createChatTextEmitter,
   createAnthropicTextEmitter,
   displayModels,

@@ -884,17 +884,21 @@ MIT. See [LICENSE](LICENSE).
 - Discarded 401 responses are cancelled before token refresh and retry, including image requests. Proxy in-flight counts therefore return to zero after retry completion.
 - Usage write errors retain unsaved counters, report a redacted error code, and retry with bounded backoff (5–30 minutes). Shutdown stops new work, drains requests, then flushes usage and closes proxy transports. A failed final save gives a nonzero exit status.
 - HTTP bodies share an estimated memory budget (three times received bytes to allow for parsing copies). Exhaustion returns retryable HTTP 503; the per-request context limit remains unchanged.
-- Media input and native image generation have a separate semaphore. File downloads stream with backpressure; HEAD, metadata queries and deletion do not load binary contents. Runtime saves use asynchronous temporary files and atomic renames.
+- Media input/uploads and image generation use two independent pools (four requests each). The generation pool covers both image APIs and the internal native image tool; declaring a tool alone does not occupy either pool. A request with both media input and image generation uses both pools during generation. Each image API request produces its `n` images sequentially. File downloads stream with backpressure; HEAD, metadata queries and deletion do not load binary contents. Runtime saves use asynchronous temporary files and atomic renames.
 - Response history has a retained-byte budget and LRU eviction in addition to its TTL/count limit. Oversized records and requests with `store:false` are not retained; `/v1/responses` reports `store:false`. Send full context if a previous response was evicted, or explicitly increase the cache budget.
 - Live direct SSE waits for downstream drain. Buffered final events are bounded; an overloaded or stalled client is disconnected instead of allowing unbounded memory growth. Existing content/tool event order and final completion markers are retained.
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `ANTIGRAVITY_GATEWAY_REQUEST_MEMORY_BYTES` | 402653184 (384 MiB) | Shared estimated HTTP body budget; not an RSS limit |
-| `ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY` | 2 | Concurrent media turns/uploads and image generation |
+| `ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY` | 4 | Shared pool for image/video/file input turns and file uploads |
+| `ANTIGRAVITY_GATEWAY_IMAGE_CONCURRENCY` | 4 | Independent pool for image generation/edit requests and native image tool calls |
+| `ANTIGRAVITY_GATEWAY_RESOLVED_MEDIA_MEMORY_BYTES` | 536870912 (512 MiB) | Shared resolved-input budget, estimated at four times binary size for binary/base64/wire copies; exhaustion returns 503 |
 | `ANTIGRAVITY_GATEWAY_SESSION_CACHE_BYTES` | 67108864 (64 MiB) | Retained response-history byte budget |
 | `ANTIGRAVITY_GATEWAY_SSE_BUFFER_BYTES` | 8388608 (8 MiB) | Per-client SSE queued/native write budget |
 | `ANTIGRAVITY_GATEWAY_MEDIA_DISK_BYTES` | 0 (disabled) | Optional managed-media directory ceiling; rejects new saves with 507, never automatically deletes history |
 | `ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS` | 30000 | Drain window before cancelling remaining requests |
 
 Configure positive finite values for byte/concurrency/time limits. These bounds reduce overload risk but are not a substitute for measuring RSS under representative traffic. The media disk accounting assumes this process is the sole writer; restart after external file changes to refresh the cached directory total. The synchronous MediaStore API remains available for compatibility, while HTTP request handling uses its async methods. Statistics remain a small atomic JSON snapshot rather than introducing a database.
+
+The authenticated dashboard data includes `concurrency` with active, limit and queued counts for each pool and current byte reservations. Media turns also count toward the existing request limit (12 by default). Remote URLs and stored/local file inputs reserve memory before buffering; large simultaneous files can receive 503 even when pool slots remain available. This budget is released when a turn completes, fails or is cancelled.
