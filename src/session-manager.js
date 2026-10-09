@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { retainedBytes } = require('./resource-budget');
 
 const DEFAULT_TTL_MS = 60 * 60_000;
 const DEFAULT_CAPACITY = 2000;
@@ -115,19 +116,28 @@ function fallbackSeed(payload = {}, normalized = {}) {
 }
 
 class SessionManager {
-  constructor({ ttlMs = DEFAULT_TTL_MS, capacity = DEFAULT_CAPACITY } = {}) {
+  constructor({ ttlMs = DEFAULT_TTL_MS, capacity = DEFAULT_CAPACITY, maxBytes = Number(process.env.ANTIGRAVITY_GATEWAY_SESSION_CACHE_BYTES || 64 * 1024 * 1024) } = {}) {
     this.ttlMs = Math.max(60_000, Number(ttlMs) || DEFAULT_TTL_MS);
     this.capacity = Math.max(100, Number(capacity) || DEFAULT_CAPACITY);
+    this.maxBytes = Math.max(1024, Number(maxBytes) || 64 * 1024 * 1024);
+    this.bytes = 0;
+    this.responseBytes = new Map();
     this.responses = new Map();
     this.aliases = new Map();
   }
 
   cleanup() {
     const cutoff = Date.now() - this.ttlMs;
-    for (const [id, value] of this.responses) if (value.at < cutoff) this.responses.delete(id);
+    for (const [id, value] of this.responses) if (value.at < cutoff) this.deleteResponse(id);
     for (const [id, value] of this.aliases) if (value.at < cutoff) this.aliases.delete(id);
-    while (this.responses.size > this.capacity) this.responses.delete(this.responses.keys().next().value);
+    while (this.responses.size > this.capacity || this.bytes > this.maxBytes) this.deleteResponse(this.responses.keys().next().value);
     while (this.aliases.size > this.capacity * 2) this.aliases.delete(this.aliases.keys().next().value);
+  }
+
+  deleteResponse(id) {
+    this.bytes -= this.responseBytes.get(id) || 0;
+    this.responseBytes.delete(id);
+    this.responses.delete(id);
   }
 
   alias(kind, scope, raw) {
@@ -169,6 +179,8 @@ class SessionManager {
     const response = this.responses.get(String(id || ''));
     if (!response || response.scope !== responseScope(req, payload)) return null;
     response.at = Date.now();
+    this.responses.delete(String(id));
+    this.responses.set(String(id), response);
     return response;
   }
 
@@ -179,7 +191,14 @@ class SessionManager {
 
   bindResponse(id, req, value, payload = {}) {
     this.cleanup();
-    this.responses.set(id, { ...value, scope: responseScope(req, payload), at: Date.now() });
+    this.deleteResponse(id);
+    const entry = { ...value, scope: responseScope(req, payload), at: Date.now() };
+    const bytes = retainedBytes(entry);
+    if (payload.store === false || bytes > this.maxBytes) return false;
+    this.responses.set(id, entry);
+    this.responseBytes.set(id, bytes); this.bytes += bytes;
+    this.cleanup();
+    return true;
   }
 }
 

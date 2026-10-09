@@ -47,7 +47,7 @@ function normalizedState(raw = {}) {
 }
 
 class UsageStore {
-  constructor({ configDir, fsImpl = fs, now = () => Date.now() } = {}) {
+  constructor({ configDir, fsImpl = fs, now = () => Date.now(), onSaveError = () => {} } = {}) {
     if (!configDir) throw new Error('UsageStore requires configDir');
     this.fs = fsImpl;
     this.now = now;
@@ -56,6 +56,10 @@ class UsageStore {
     this.state = this.load();
     this.dirty = false;
     this.timer = null;
+    this.onSaveError = onSaveError;
+    this.saveFailures = 0;
+    this.nextSaveAt = 0;
+    this.lastSaveError = null;
     this.refreshDashboard(true);
   }
 
@@ -70,10 +74,11 @@ class UsageStore {
     this.timer.unref?.();
   }
 
-  stop() {
+  stop({ flush = true } = {}) {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    if (this.dirty) this.save();
+    if (flush && this.dirty) return this.safeSave();
+    return true;
   }
 
   recordClientRequest() {
@@ -159,15 +164,34 @@ class UsageStore {
 
   tick() {
     this.refreshDashboard();
-    if (this.dirty) this.save();
+    if (this.dirty && this.now() >= this.nextSaveAt) this.safeSave();
+  }
+
+  safeSave() {
+    try {
+      this.save();
+      this.saveFailures = 0; this.nextSaveAt = 0; this.lastSaveError = null;
+      return true;
+    } catch (error) {
+      this.dirty = true;
+      this.saveFailures += 1;
+      this.nextSaveAt = this.now() + Math.min(30 * 60_000, SAVE_INTERVAL_MS * 2 ** Math.min(3, this.saveFailures - 1));
+      this.lastSaveError = { code: error.code || 'save_failed', at: new Date(this.now()).toISOString() };
+      try { this.onSaveError(this.lastSaveError); } catch { /* reporting must not crash the timer */ }
+      return false;
+    }
   }
 
   save() {
     this.fs.mkdirSync(this.directory, { recursive: true });
     this.state.savedAt = new Date(this.now()).toISOString();
     const temporary = `${this.file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    this.fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`);
-    this.fs.renameSync(temporary, this.file);
+    try {
+      this.fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`);
+      this.fs.renameSync(temporary, this.file);
+    } finally {
+      try { this.fs.rmSync(temporary, { force: true }); } catch { /* retain original write error */ }
+    }
     this.dirty = false;
   }
 

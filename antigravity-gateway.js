@@ -9,6 +9,10 @@ const path = require('node:path');
 
 const { AgyError, AgyWorker, getVersion, listModels, resolveAgyCommand } = require('./src/agy-worker');
 const { AccountPool } = require('./src/account-pool');
+const { writeStream, streamReady, endStream } = require('./src/sse-writer');
+const { pipeline } = require('node:stream/promises');
+const { ByteBudget } = require('./src/resource-budget');
+const { gracefulShutdown } = require('./src/graceful-shutdown');
 const { ProxyManager } = require('./src/proxy-manager');
 const { AccountStore } = require('./src/account-store');
 const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemainder } = require('./src/artifacts');
@@ -113,7 +117,7 @@ const diagnosticReporter = (event, fields) => {
 const DIRECT_PROVIDER = new DirectAntigravityProvider({ diagnosticReporter });
 DIRECT_PROVIDER.localAuth.agyPath = AGY_PATH;
 const ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR });
-const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR });
+const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR, onSaveError: (error) => gatewayWarn(`[Antigravity Gateway] 用量保存失败，将重试 (${error.code})`) });
 const PROXY_MANAGER = new ProxyManager({ configDir: CONFIG_DIR });
 const ACCOUNT_POOL = new AccountPool({
   proxyManager: PROXY_MANAGER,
@@ -168,6 +172,8 @@ const DASHBOARD_ACCESS = createDashboardAccessPolicy(
 );
 
 const activeWorkers = new Set();
+const activeControllers = new Set();
+const activeRequests = new Set();
 let modelCache = { at: 0, models: [], error: null };
 let versionCache = null;
 
@@ -214,6 +220,9 @@ class Semaphore {
 const requestSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
 // Admit uploads before allocating/normalizing complete request bodies.
 const uploadSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
+const mediaSlots = new Semaphore(Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY || 2)), MAX_QUEUE);
+const bodyBudget = new ByteBudget(Number(process.env.ANTIGRAVITY_GATEWAY_REQUEST_MEMORY_BYTES || 384 * 1024 * 1024));
+const bodyReservations = new WeakMap();
 
 function isLoopbackHost(host) {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(host).toLowerCase());
@@ -606,8 +615,7 @@ function sendJson(res, status, body, headers = {}) {
 }
 
 function sendSse(res, event, data) {
-  if (event) res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  writeStream(res, `${event ? `event: ${event}\n` : ''}data: ${JSON.stringify(data)}\n\n`);
 }
 
 function setCors(req, res) {
@@ -659,11 +667,17 @@ function authorized(req) {
 async function readBuffer(req) {
   const chunks = [];
   let size = 0;
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     size += chunk.length;
     if (size > REQUEST_LIMIT) throw new GatewayError('请求体过大。', { code: 'request_too_large', status: 413 });
+    let release;
+    try { release = bodyBudget.acquire(chunk.length * 3); }
+    catch (error) { throw new GatewayError(error.message, { code: error.code, status: error.status }); }
+    const reservations = bodyReservations.get(req) || [];
+    reservations.push(release); bodyReservations.set(req, reservations);
     chunks.push(chunk);
   }
+  req.bodyBytes = size;
   return Buffer.concat(chunks);
 }
 
@@ -754,7 +768,13 @@ function artifactUrl(base, id) {
 }
 
 async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, onDelta, mediaScope = '', publicBaseUrl = '' } = {}) {
-  const release = await requestSlots.acquire(signal);
+  const releaseRequest = await requestSlots.acquire(signal);
+  let releaseMedia;
+  try {
+    if ((normalized.messages || []).some(m => (m.parts || []).some(p => p.type === 'media' || p.media?.length))
+      || (normalized.tools || []).some(t => t.name === NATIVE_IMAGE_TOOL_NAME)) releaseMedia = await mediaSlots.acquire(signal);
+  } catch (error) { releaseRequest(); throw error; }
+  const release = () => { releaseMedia?.(); releaseRequest(); };
   if (usesDirectTransport()) {
     try {
       const resolved = await MEDIA_STORE.resolveNormalized(normalized, { scope: mediaScope, signal });
@@ -785,6 +805,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         if ((args.ImagePaths || []).length !== references.length) {
           throw new GatewayError('生图工具引用了不存在或非图片类型的附件。', { code: 'invalid_image_reference', status: 400 });
         }
+        if (!releaseMedia) releaseMedia = await mediaSlots.acquire(signal);
         const generated = await ACCOUNT_POOL.generateImage({
           prompt: args.Prompt,
           aspectRatio: args.AspectRatio || '1:1',
@@ -799,7 +820,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
             gatewayLog(`[Antigravity Gateway] 生图账号=${email || accountId} source=${source} model=gemini-3.1-flash-image attempt=${attempt} ${trace}`);
           }
         });
-        const saved = MEDIA_STORE.save(Buffer.from(generated.data, 'base64'), {
+        const saved = await MEDIA_STORE.saveAsync(Buffer.from(generated.data, 'base64'), {
           mediaType: generated.mimeType,
           filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.jpg`,
           purpose: 'generated',
@@ -925,9 +946,9 @@ function beginSse(res) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders?.();
   }
-  res.write(': antigravity-gateway keep-alive\n\n');
+  writeStream(res, ': antigravity-gateway keep-alive\n\n');
   const timer = setInterval(() => {
-    if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n');
+    if (!res.destroyed && !res.writableEnded) { try { writeStream(res, ': keep-alive\n\n'); } catch { res.destroy(); } }
   }, 15000);
   timer.unref?.();
   return () => clearInterval(timer);
@@ -965,7 +986,7 @@ function createAnthropicTextEmitter(res, model) {
     sendSse(res, 'content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
   };
   return {
-    onDelta: (text) => emitText(text),
+    onDelta: (text) => { emitText(text); return streamReady(res); },
     finish: (body) => {
       start();
       const finalText = body.content?.find((block) => block.type === 'text')?.text || '';
@@ -979,7 +1000,7 @@ function createAnthropicTextEmitter(res, model) {
         ...(body.artifacts ? { artifacts: body.artifacts } : {})
       });
       sendSse(res, 'message_stop', { type: 'message_stop' });
-      res.end();
+      endStream(res);
     }
   };
 }
@@ -992,7 +1013,7 @@ function createChatTextEmitter(res, model) {
   const start = () => {
     if (started) return;
     started = true;
-    res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] })}\n\n`);
+    writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] })}\n\n`);
   };
   return {
     onDelta: (text) => {
@@ -1000,7 +1021,8 @@ function createChatTextEmitter(res, model) {
       if (!text) return;
       start();
       emittedText += text;
-      res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`);
+      writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`);
+      return streamReady(res);
     },
     finish: (body) => {
       start();
@@ -1008,26 +1030,26 @@ function createChatTextEmitter(res, model) {
       const finalText = firstChoice?.message?.content || '';
       const remainder = streamTextRemainder(emittedText, finalText);
       if (remainder) {
-        res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: remainder }, finish_reason: null }] })}\n\n`);
+        writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: remainder }, finish_reason: null }] })}\n\n`);
       }
       const finalMessage = body.choices?.[0]?.message || {};
       if (finalMessage.images || finalMessage.artifacts) {
         const delta = {};
         if (finalMessage.images) delta.images = finalMessage.images;
         if (finalMessage.artifacts) delta.artifacts = finalMessage.artifacts;
-        res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+        writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
       }
       const toolCalls = firstChoice?.message?.tool_calls;
       if (toolCalls?.length) {
-        res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { tool_calls: toolCalls.map((call, index) => ({ index, ...call })) }, finish_reason: null }] })}\n\n`);
+        writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { tool_calls: toolCalls.map((call, index) => ({ index, ...call })) }, finish_reason: null }] })}\n\n`);
       }
       const finishReason = firstChoice?.finish_reason || 'stop';
-      res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], ...(body.usage ? { usage: body.usage } : {}) })}\n\n`);
+      writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: finishReason }], ...(body.usage ? { usage: body.usage } : {}) })}\n\n`);
       if (body.usage) {
-        res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [], usage: body.usage })}\n\n`);
+        writeStream(res, `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [], usage: body.usage })}\n\n`);
       }
-      res.write('data: [DONE]\n\n');
-      res.end();
+      writeStream(res, 'data: [DONE]\n\n');
+      endStream(res);
     }
   };
 }
@@ -1060,7 +1082,7 @@ function emitAnthropicStream(res, body) {
     ...(body.artifacts ? { artifacts: body.artifacts } : {})
   });
   sendSse(res, 'message_stop', { type: 'message_stop' });
-  res.end();
+  endStream(res);
 }
 
 function emitChatStream(res, body) {
@@ -1071,13 +1093,13 @@ function emitChatStream(res, body) {
   if (choice.message.tool_calls) first.tool_calls = choice.message.tool_calls.map((call, index) => ({ index, ...call }));
   if (choice.message.images) first.images = choice.message.images;
   if (choice.message.artifacts) first.artifacts = choice.message.artifacts;
-  res.write(`data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [{ index: 0, delta: first, finish_reason: null }] })}\n\n`);
-  res.write(`data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason }], ...(body.usage ? { usage: body.usage } : {}) })}\n\n`);
+  writeStream(res, `data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [{ index: 0, delta: first, finish_reason: null }] })}\n\n`);
+  writeStream(res, `data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: choice.finish_reason }], ...(body.usage ? { usage: body.usage } : {}) })}\n\n`);
   if (body.usage) {
-    res.write(`data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [], usage: body.usage })}\n\n`);
+    writeStream(res, `data: ${JSON.stringify({ id: body.id, object: 'chat.completion.chunk', created: body.created, model: body.model, choices: [], usage: body.usage })}\n\n`);
   }
-  res.write('data: [DONE]\n\n');
-  res.end();
+  writeStream(res, 'data: [DONE]\n\n');
+  endStream(res);
 }
 
 function emitResponsesStream(res, body) {
@@ -1099,8 +1121,8 @@ function emitResponsesStream(res, body) {
     sendSse(res, null, { type: 'response.output_item.done', sequence_number: sequence++, output_index: outputIndex, item });
   });
   sendSse(res, null, { type: 'response.completed', sequence_number: sequence++, response: body });
-  res.write('data: [DONE]\n\n');
-  res.end();
+  writeStream(res, 'data: [DONE]\n\n');
+  endStream(res);
 }
 
 function aspectRatioFromSize(size, fallback = '1:1') {
@@ -1132,7 +1154,7 @@ async function generateImages(payload, req, signal, references = []) {
       }
     });
     accountId = result.accountId;
-    const saved = MEDIA_STORE.save(Buffer.from(result.data, 'base64'), {
+    const saved = await MEDIA_STORE.saveAsync(Buffer.from(result.data, 'base64'), {
       mediaType: result.mimeType,
       filename: `generated_${Date.now()}_${index + 1}.jpg`, purpose: 'generated', scope
     });
@@ -1209,7 +1231,7 @@ async function handleFileUpload(req, res) {
     buffer = Buffer.from(match ? match[2] : encoded, 'base64');
     if (match?.[1]) mediaType = match[1];
   }
-  const saved = MEDIA_STORE.save(buffer, { filename, mediaType, purpose, scope });
+  const saved = await MEDIA_STORE.saveAsync(buffer, { filename, mediaType, purpose, scope });
   sendJson(res, 200, saved);
 }
 
@@ -1219,7 +1241,7 @@ async function handleAnthropic(payload, req, res, signal) {
   const model = await resolveModel(normalized.model, { preferFast: normalized.autoMode });
   const requestClass = normalized.autoMode ? 'auto-mode' : 'client';
   const identity = clientSessionIdentity(req, payload, normalized);
-  gatewayLog(`[Antigravity Gateway] /v1/messages model=${model} requested=${normalized.model || '-'} class=${requestClass} chars=${JSON.stringify(payload).length} tools=${normalized.tools.length} maxOut=${normalized.generationConfig?.maxOutputTokens || '-'} stream=${normalized.stream} ${identityTrace(identity)}`);
+  gatewayLog(`[Antigravity Gateway] /v1/messages model=${model} requested=${normalized.model || '-'} class=${requestClass} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} maxOut=${normalized.generationConfig?.maxOutputTokens || '-'} stream=${normalized.stream} ${identityTrace(identity)}`);
   const stopHeartbeat = normalized.stream ? beginSse(res) : null;
   const liveEmitter = textStreamingAllowed(normalized) ? createAnthropicTextEmitter(res, normalized.model || model) : null;
   let result;
@@ -1234,7 +1256,7 @@ async function handleChat(payload, req, res, signal) {
   const normalized = normalizeChat(payload);
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized);
-  gatewayLog(`[Antigravity Gateway] /v1/chat/completions model=${model} requested=${normalized.model || '-'} chars=${JSON.stringify(payload).length} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
+  gatewayLog(`[Antigravity Gateway] /v1/chat/completions model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
   const stopHeartbeat = normalized.stream ? beginSse(res) : null;
   const liveEmitter = textStreamingAllowed(normalized) ? createChatTextEmitter(res, normalized.model || model) : null;
   let result;
@@ -1254,7 +1276,7 @@ async function handleResponses(payload, req, res, signal) {
   const normalized = normalizeResponses(payload, previous);
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, previous);
-  gatewayLog(`[Antigravity Gateway] /v1/responses model=${model} requested=${normalized.model || '-'} chars=${JSON.stringify(payload).length} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
+  gatewayLog(`[Antigravity Gateway] /v1/responses model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
   if (process.env.ANTIGRAVITY_GATEWAY_DEBUG === '1') {
     const customTools = (payload.tools || []).filter((tool) => tool?.type === 'custom');
     if (customTools.length) gatewayLog(`[Antigravity Gateway Debug] custom-tools=${JSON.stringify(customTools).slice(0, 4000)}`);
@@ -1265,7 +1287,7 @@ async function handleResponses(payload, req, res, signal) {
   try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req) }); } finally { stopHeartbeat?.(); }
   const responseId = `resp_${crypto.randomUUID().replaceAll('-', '')}`;
   const body = responsesResponse(normalized.model || model, result, responseId);
-  SESSION_MANAGER.bindResponse(responseId, req, {
+  const stored = SESSION_MANAGER.bindResponse(responseId, req, {
     sessionId,
     routingKey: identity.routingKey,
     system: normalized.system,
@@ -1285,6 +1307,7 @@ async function handleResponses(payload, req, res, signal) {
       ]
     }]
   }, payload);
+  body.store = stored;
   if (normalized.stream) emitResponsesStream(res, body); else sendJson(res, 200, body, { 'x-antigravity-model': model });
 }
 
@@ -1403,20 +1426,22 @@ async function requestHandler(req, res) {
   }
   const publicFileMatch = route.match(/^\/v1\/files\/(file_[a-f0-9]{32})\/content$/);
   if (['GET', 'HEAD'].includes(req.method) && publicFileMatch) {
-    const item = MEDIA_STORE.get(publicFileMatch[1], { allowPublic: true });
-    if (!item) { sendJson(res, 404, { error: { type: 'file_not_found', message: '文件不存在。' } }); return; }
+    const metadata = await MEDIA_STORE.metadata(publicFileMatch[1], { allowPublic: true });
+    if (!metadata) { sendJson(res, 404, { error: { type: 'file_not_found', message: '文件不存在。' } }); return; }
     res.writeHead(200, {
-      'Content-Type': item.metadata.mediaType || 'application/octet-stream',
-      'Content-Length': item.buffer.length,
-      'Content-Disposition': `inline; filename="${String(item.metadata.filename || item.metadata.id).replace(/["\r\n]/g, '_')}"`,
+      'Content-Type': metadata.mediaType || 'application/octet-stream',
+      'Content-Length': metadata.bytes,
+      'Content-Disposition': `inline; filename="${String(metadata.filename || metadata.id).replace(/["\r\n]/g, '_')}"`,
       'Cache-Control': 'private, max-age=3600',
       'X-Content-Type-Options': 'nosniff'
     });
-    res.end(req.method === 'HEAD' ? undefined : item.buffer);
+    if (req.method === 'HEAD') res.end();
+    else await pipeline(fs.createReadStream(MEDIA_STORE.contentPath(metadata.id)), res);
     return;
   }
   if (!authorized(req)) { sendJson(res, 401, errorBody(new GatewayError('API key 无效。', { code: 'authentication_error', status: 401 }), route.includes('messages') ? 'anthropic' : 'openai')); return; }
   const controller = new AbortController();
+  activeControllers.add(controller);
   let timedOut = false;
   let releaseUpload;
   const deadline = setTimeout(() => {
@@ -1424,7 +1449,7 @@ async function requestHandler(req, res) {
     controller.abort(new GatewayError('网关请求超时。', { code: 'request_timeout', status: 504 }));
     // Uploads may be stalled; aborting upstream alone does not end readJson.
     if (!res.headersSent) sendJson(res, 504, errorBody(controller.signal.reason, protocol));
-    else { sendSse(res, 'error', errorBody(controller.signal.reason, protocol)); res.end(); }
+    else if (!res.destroyed) { try { sendSse(res, 'error', errorBody(controller.signal.reason, protocol)); endStream(res); } catch { res.destroy(); } }
   }, REQUEST_TIMEOUT);
   deadline.unref();
   res.on('finish', () => { if (timedOut) req.destroy(); });
@@ -1434,6 +1459,10 @@ async function requestHandler(req, res) {
   let protocol = route === '/v1/messages' || route === '/v1/messages/count_tokens' ? 'anthropic' : 'openai';
   try {
     if (req.method === 'POST') releaseUpload = await uploadSlots.acquire(controller.signal);
+    if (req.method === 'POST' && (route.startsWith('/v1/images/') || route === '/v1/files')) {
+      const releaseMedia = await mediaSlots.acquire(controller.signal), releaseBody = releaseUpload;
+      releaseUpload = () => { releaseMedia(); releaseBody?.(); };
+    }
     // Claude Code probes custom providers with this lightweight endpoint.
     // Treat it as a connectivity check instead of logging a false 404 error.
     if (route === '/api/hello' && ['GET', 'POST', 'HEAD'].includes(req.method)) {
@@ -1481,13 +1510,13 @@ async function requestHandler(req, res) {
     if (req.method === 'POST' && route === '/v1/files') return await handleFileUpload(req, res);
     const fileMatch = route.match(/^\/v1\/files\/(file_[a-f0-9]{32})$/);
     if (req.method === 'GET' && fileMatch) {
-      const item = MEDIA_STORE.get(fileMatch[1], { scope: clientScope(req) });
-      if (!item) throw new GatewayError('文件不存在。', { code: 'file_not_found', status: 404 });
-      sendJson(res, 200, item.metadata);
+      const metadata = await MEDIA_STORE.metadata(fileMatch[1], { scope: clientScope(req) });
+      if (!metadata) throw new GatewayError('文件不存在。', { code: 'file_not_found', status: 404 });
+      sendJson(res, 200, metadata);
       return;
     }
     if (req.method === 'DELETE' && fileMatch) {
-      if (!MEDIA_STORE.delete(fileMatch[1], { scope: clientScope(req) })) throw new GatewayError('文件不存在。', { code: 'file_not_found', status: 404 });
+      if (!await MEDIA_STORE.deleteAsync(fileMatch[1], { scope: clientScope(req) })) throw new GatewayError('文件不存在。', { code: 'file_not_found', status: 404 });
       sendJson(res, 200, { id: fileMatch[1], object: 'file', deleted: true });
       return;
     }
@@ -1517,24 +1546,34 @@ async function requestHandler(req, res) {
     }
     const diagnostic = process.env.ANTIGRAVITY_GATEWAY_DEBUG === '1' && error.details ? ` (${error.details})` : '';
     gatewayError(`[Antigravity Gateway Error] ${error.message}${diagnostic}`);
-    if (!res.headersSent) sendJson(res, error.status || 500, errorBody(error, protocol));
+    if (!res.headersSent) {
+      if (['memory_budget_exceeded', 'request_too_large'].includes(error.code)) {
+        res.setHeader('Connection', 'close');
+        res.once('finish', () => req.destroy());
+      }
+      sendJson(res, error.status || 500, errorBody(error, protocol));
+    }
     else {
       if (protocol === 'anthropic') sendSse(res, 'error', errorBody(error, protocol));
       else sendSse(res, null, { type: route === '/v1/responses' ? 'response.failed' : 'error', error: errorBody(error, protocol).error });
-      res.end();
+      endStream(res);
     }
   } finally {
     clearTimeout(deadline);
+    activeControllers.delete(controller);
     releaseUpload?.();
   }
 }
 
 function createServer() {
   return http.createServer((req, res) => {
-    void requestHandler(req, res).catch(() => {
+    const pending = requestHandler(req, res).catch(() => {
       if (!res.headersSent && !res.destroyed) sendJson(res, 500, { error: { message: 'Antigravity Gateway 内部错误。' } });
       else res.destroy();
     });
+    void pending.finally(() => { for (const release of bodyReservations.get(req) || []) release(); bodyReservations.delete(req); });
+    activeRequests.add(pending);
+    void pending.finally(() => activeRequests.delete(pending));
   });
 }
 
@@ -1594,11 +1633,9 @@ if (require.main === module) {
     TERMINAL?.stop();
     stopDiagnosticHeartbeat();
     diagnosticReporter('gateway_process_stopping', { pid: process.pid });
-    QUOTA_MANAGER.stop();
-    USAGE_STORE.stop();
-    ACCOUNT_POOL.stop();
-    await new Promise((resolve) => server.close(resolve));
-    await Promise.allSettled([...activeWorkers].map((worker) => worker.close()));
+    await gracefulShutdown({ server, controllers: activeControllers, requests: activeRequests, usageStore: USAGE_STORE,
+      accountPool: ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
+      workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
   };
   TERMINAL = new TerminalConsole({
     usageStore: USAGE_STORE,
@@ -1695,8 +1732,8 @@ if (require.main === module) {
     });
     process.exitCode = 1;
   });
-  process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });
-  process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
+  process.once('SIGINT', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
+  process.once('SIGTERM', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
 }
 
 module.exports = {

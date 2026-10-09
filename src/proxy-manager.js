@@ -148,7 +148,7 @@ class ProxyManager {
     return result;
   }
 
-  async close() { await Promise.allSettled([...this.agents.values()].map((agent) => agent.close())); this.agents.clear(); }
+  async close({ force = false } = {}) { await Promise.allSettled([...this.agents.values()].map((agent) => force && agent.destroy ? agent.destroy() : agent.close())); this.agents.clear(); }
 }
 
 module.exports = { ProxyManager };

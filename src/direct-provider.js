@@ -495,7 +495,7 @@ function imageFromResponse(value) {
   };
 }
 
-function consumeUpstreamValue(value, state, onDelta) {
+async function consumeUpstreamValue(value, state, onDelta) {
   if (!value || typeof value !== 'object') return;
   if (value.error) throw new DirectProviderError('Antigravity 直连上游返回错误。', {
     code: 'direct_upstream_error', status: Number(value.error.code) || 502, details: redact(value.error.message || compact(value.error))
@@ -503,7 +503,7 @@ function consumeUpstreamValue(value, state, onDelta) {
   for (const part of partsFrom(value)) {
     if (typeof part.text === 'string') {
       state.text += part.text;
-      onDelta?.(part.text, part);
+      await onDelta?.(part.text, part);
     }
     const call = part.functionCall || part.function_call;
     if (call?.name) appendUpstreamToolCall(state, call, part);
@@ -873,7 +873,10 @@ class DirectAntigravityProvider {
         let response;
         try {
           response = await attempt(base);
-          if (response.status === 401) response = await attempt(base, true);
+          if (response.status === 401) {
+            await response.body?.cancel().catch(() => {});
+            response = await attempt(base, true);
+          }
         } catch (error) {
           lastFailure = { error };
           continue;
@@ -939,7 +942,10 @@ class DirectAntigravityProvider {
         let candidate;
         try {
           candidate = await attempt(base, false);
-          if (candidate.status === 401 && this.refreshToken) candidate = await attempt(base, true);
+          if (candidate.status === 401 && this.refreshToken) {
+            await candidate.body?.cancel().catch(() => {});
+            candidate = await attempt(base, true);
+          }
         } catch (error) {
           lastFailure = { error };
           continue;
@@ -990,18 +996,18 @@ class DirectAntigravityProvider {
         buffer = lines.pop() || '';
         for (const line of lines) {
           const parsed = jsonFromSseLine(line);
-          if (parsed) consumeUpstreamValue(parsed, state, onDelta);
+          if (parsed) await consumeUpstreamValue(parsed, state, onDelta);
         }
       }
       const tail = jsonFromSseLine(buffer);
-      if (tail) consumeUpstreamValue(tail, state, onDelta);
+      if (tail) await consumeUpstreamValue(tail, state, onDelta);
       } finally {
         // Release the upstream body on parser errors and downstream cancellation.
         await reader.cancel().catch(() => {});
         reader.releaseLock();
       }
     } else {
-      this._parseJson(await readBody(response), state, onDelta);
+      await this._parseJson(await readBody(response), state, onDelta);
     }
     if (state.calls.length) {
       for (const call of state.calls) if (!call.id) call.id = `call_${crypto.randomUUID().replaceAll('-', '')}`;
@@ -1017,10 +1023,10 @@ class DirectAntigravityProvider {
     };
   }
 
-  _parseJson(text, state, onDelta) {
+  async _parseJson(text, state, onDelta) {
     let body;
     try { body = JSON.parse(text || '{}'); } catch (error) { throw new DirectProviderError('Antigravity 直连响应不是 JSON。', { code: 'direct_response_invalid', status: 502, details: redact(text), cause: error }); }
-    consumeUpstreamValue(body, state, onDelta);
+    await consumeUpstreamValue(body, state, onDelta);
     return state;
   }
 }

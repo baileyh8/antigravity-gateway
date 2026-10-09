@@ -876,3 +876,25 @@ MIT. See [LICENSE](LICENSE).
 | POST | `/dashboard/accounts/:id/proxy` | 绑定 `{proxyId}`；`null` 解除绑定 |
 
 请通过管理接口修改运行中的配置；直接编辑 `proxies.json` 后需要重启 Gateway。代理地址只支持 HTTP/HTTPS CONNECT，不支持 SOCKS。
+
+## Bailey fork maintenance line
+
+`baileyh8/antigravity-gateway` maintains the `codex/bailey-stability` branch independently. It includes the local narration, streaming, usage and image-delivery repairs, account proxy management, and the following resource safeguards. These changes are not submitted to the upstream repository.
+
+- Discarded 401 responses are cancelled before token refresh and retry, including image requests. Proxy in-flight counts therefore return to zero after retry completion.
+- Usage write errors retain unsaved counters, report a redacted error code, and retry with bounded backoff (5–30 minutes). Shutdown stops new work, drains requests, then flushes usage and closes proxy transports. A failed final save gives a nonzero exit status.
+- HTTP bodies share an estimated memory budget (three times received bytes to allow for parsing copies). Exhaustion returns retryable HTTP 503; the per-request context limit remains unchanged.
+- Media input and native image generation have a separate semaphore. File downloads stream with backpressure; HEAD, metadata queries and deletion do not load binary contents. Runtime saves use asynchronous temporary files and atomic renames.
+- Response history has a retained-byte budget and LRU eviction in addition to its TTL/count limit. Oversized records and requests with `store:false` are not retained; `/v1/responses` reports `store:false`. Send full context if a previous response was evicted, or explicitly increase the cache budget.
+- Live direct SSE waits for downstream drain. Buffered final events are bounded; an overloaded or stalled client is disconnected instead of allowing unbounded memory growth. Existing content/tool event order and final completion markers are retained.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTIGRAVITY_GATEWAY_REQUEST_MEMORY_BYTES` | 402653184 (384 MiB) | Shared estimated HTTP body budget; not an RSS limit |
+| `ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY` | 2 | Concurrent media turns/uploads and image generation |
+| `ANTIGRAVITY_GATEWAY_SESSION_CACHE_BYTES` | 67108864 (64 MiB) | Retained response-history byte budget |
+| `ANTIGRAVITY_GATEWAY_SSE_BUFFER_BYTES` | 8388608 (8 MiB) | Per-client SSE queued/native write budget |
+| `ANTIGRAVITY_GATEWAY_MEDIA_DISK_BYTES` | 0 (disabled) | Optional managed-media directory ceiling; rejects new saves with 507, never automatically deletes history |
+| `ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS` | 30000 | Drain window before cancelling remaining requests |
+
+Configure positive finite values for byte/concurrency/time limits. These bounds reduce overload risk but are not a substitute for measuring RSS under representative traffic. The media disk accounting assumes this process is the sole writer; restart after external file changes to refresh the cached directory total. The synchronous MediaStore API remains available for compatibility, while HTTP request handling uses its async methods. Statistics remain a small atomic JSON snapshot rather than introducing a database.

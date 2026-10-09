@@ -176,6 +176,9 @@ class MediaStore {
     this.fs = fsImpl;
     this.fetchImpl = fetchImpl;
     this.maxBytes = Math.max(1024, Number(maxBytes) || DEFAULT_MEDIA_LIMIT);
+    this.diskLimit = Math.max(0, Number(process.env.ANTIGRAVITY_GATEWAY_MEDIA_DISK_BYTES || 0));
+    this.diskBytes = null;
+    this.writeChain = Promise.resolve();
     this.maxTotalBytes = Math.max(this.maxBytes, Number(maxTotalBytes) || DEFAULT_TOTAL_MEDIA_LIMIT);
   }
 
@@ -196,6 +199,76 @@ class MediaStore {
     this.fs.writeFileSync(this.contentPath(id), content);
     this.fs.writeFileSync(this.metadataPath(id), `${JSON.stringify(metadata)}\n`);
     return metadata;
+  }
+
+  async metadata(id, { scope = '', allowPublic = false } = {}) {
+    if (!MEDIA_ID.test(String(id || ''))) return null;
+    try {
+      const metadata = JSON.parse(await this.fs.promises.readFile(this.metadataPath(id), 'utf8'));
+      if (!allowPublic && metadata.scope && metadata.scope !== scope) return null;
+      const stat = await this.fs.promises.stat(this.contentPath(id));
+      if (!stat.isFile() || stat.size !== metadata.bytes) return null;
+      return metadata;
+    } catch { return null; }
+  }
+
+  async getAsync(id, options = {}) {
+    const metadata = await this.metadata(id, options);
+    if (!metadata) return null;
+    try { return { metadata, buffer: await this.fs.promises.readFile(this.contentPath(id)) }; }
+    catch { return null; }
+  }
+
+  serializeWrite(operation) {
+    const pending = this.writeChain.then(operation);
+    this.writeChain = pending.catch(() => {});
+    return pending;
+  }
+
+  async measureDisk() {
+    if (this.diskBytes !== null) return this.diskBytes;
+    let total = 0;
+    for (const name of await this.fs.promises.readdir(this.directory)) {
+      if (!/^file_[a-f0-9]{32}\.(bin|json)$/.test(name)) continue;
+      try { total += (await this.fs.promises.stat(path.join(this.directory, name))).size; } catch { /* removed file */ }
+    }
+    this.diskBytes = total;
+    return total;
+  }
+
+  saveAsync(buffer, { mediaType, filename = '', purpose = 'assistants', scope = '' } = {}) {
+    const content = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+    if (!content.length || content.length > this.maxBytes) return Promise.reject(new MultimediaError('多媒体为空或超过单文件传输上限。', { code: 'media_too_large', status: 413 }));
+    return this.serializeWrite(async () => {
+      await this.fs.promises.mkdir(this.directory, { recursive: true });
+      const id = `file_${crypto.randomBytes(16).toString('hex')}`;
+      const metadata = { id, object: 'file', bytes: content.length, created_at: Math.floor(Date.now() / 1000), filename: filename || `${id}.bin`, purpose, mediaType: normalizeMime(mediaType, filename), scope };
+      const json = JSON.stringify(metadata) + '\n', bytes = content.length + Buffer.byteLength(json);
+      if (this.diskLimit && await this.measureDisk() + bytes > this.diskLimit) throw new MultimediaError('媒体目录容量已达上限，请清理不再需要的文件。', { code: 'media_storage_full', status: 507 });
+      const dataTmp = this.contentPath(id) + '.tmp', metaTmp = this.metadataPath(id) + '.tmp';
+      try {
+        await this.fs.promises.writeFile(dataTmp, content, { mode: 0o600 });
+        await this.fs.promises.writeFile(metaTmp, json, { mode: 0o600 });
+        await this.fs.promises.rename(dataTmp, this.contentPath(id));
+        await this.fs.promises.rename(metaTmp, this.metadataPath(id));
+        if (this.diskBytes !== null) this.diskBytes += bytes;
+        return metadata;
+      } catch (error) {
+        await Promise.allSettled([dataTmp, metaTmp, this.contentPath(id), this.metadataPath(id)].map(file => this.fs.promises.rm(file, { force: true })));
+        throw error;
+      }
+    });
+  }
+
+  deleteAsync(id, options = {}) {
+    return this.serializeWrite(async () => {
+      const metadata = await this.metadata(id, options);
+      if (!metadata) return false;
+      await this.fs.promises.unlink(this.contentPath(id));
+      await this.fs.promises.unlink(this.metadataPath(id));
+      this.diskBytes = null;
+      return true;
+    });
   }
 
   get(id, { scope = '', allowPublic = false } = {}) {
@@ -223,16 +296,16 @@ class MediaStore {
       return { ...part, data: buffer.toString('base64'), bytes: buffer.length };
     }
     if (part.fileId) {
-      const item = this.get(part.fileId, { scope });
+      const item = await this.getAsync(part.fileId, { scope });
       if (!item) throw new MultimediaError(`找不到多媒体文件: ${part.fileId}`, { code: 'media_file_not_found', status: 404 });
       return { ...part, mediaType: normalizeMime(usefulMime(part.mediaType) || item.metadata.mediaType, item.metadata.filename), data: item.buffer.toString('base64'), bytes: item.buffer.length, filename: part.filename || item.metadata.filename };
     }
     if (part.filePath || String(part.url || '').startsWith('file://')) {
       const target = path.resolve(part.filePath || decodeURIComponent(new URL(part.url).pathname));
       let stat;
-      try { stat = this.fs.statSync(target); } catch { throw new MultimediaError(`找不到本地多媒体文件: ${target}`, { code: 'media_file_not_found', status: 404 }); }
+      try { stat = await this.fs.promises.stat(target); } catch { throw new MultimediaError(`找不到本地多媒体文件: ${target}`, { code: 'media_file_not_found', status: 404 }); }
       if (!stat.isFile() || stat.size > this.maxBytes) throw new MultimediaError('本地多媒体不是文件或超过单文件传输上限。', { code: 'media_too_large', status: 413 });
-      const buffer = this.fs.readFileSync(target);
+      const buffer = await this.fs.promises.readFile(target);
       return { ...part, mediaType: normalizeMime(usefulMime(part.mediaType), target), data: buffer.toString('base64'), bytes: buffer.length, filename: part.filename || path.basename(target) };
     }
     if (part.url) {
@@ -240,7 +313,7 @@ class MediaStore {
         const linked = new URL(part.url);
         const storedId = linked.pathname.match(/^\/v1\/files\/(file_[a-f0-9]{32})\/content$/)?.[1];
         if (storedId) {
-          const item = this.get(storedId, { scope });
+          const item = await this.getAsync(storedId, { scope });
           if (!item) throw new MultimediaError(`找不到多媒体文件: ${storedId}`, { code: 'media_file_not_found', status: 404 });
           return { ...part, fileId: storedId, mediaType: normalizeMime(usefulMime(part.mediaType) || item.metadata.mediaType, item.metadata.filename), data: item.buffer.toString('base64'), bytes: item.buffer.length, filename: part.filename || item.metadata.filename };
         }
