@@ -97,3 +97,8 @@ test('direct SSE parser pauses on async downstream callback',async()=>{
  const request=p.send(normalizeChat({messages:[{role:'user',content:'test'}],stream:true}),'gemini-test',{onDelta:async()=>{seen++;if(seen===1)await barrier}});
  await new Promise(r=>setImmediate(r));assert.equal(seen,1);unblock();assert.equal((await request).text,'AB');assert.equal(seen,2);
 });
+
+test('session aliases retain only digests even for oversized client identifiers',()=>{
+ const cache=new SessionManager(),raw='s'.repeat(1024*1024);const a=cache.alias('conversation','scope',raw);assert.equal(cache.alias('conversation','scope',raw),a);
+ assert([...cache.aliases.keys()].every(k=>k.length<=64));assert.equal(cache.aliases.size,1);
+});

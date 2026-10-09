@@ -141,10 +141,10 @@ class SessionManager {
   }
 
   alias(kind, scope, raw) {
-    const aliasKey = `${kind}\0${scope}\0${raw}`;
+    const aliasKey = digest(`${kind}\0${scope}\0${raw}`);
     let entry = this.aliases.get(aliasKey);
     if (!entry) {
-      entry = { id: digest(aliasKey), at: Date.now() };
+      entry = { id: aliasKey, at: Date.now() };
       this.aliases.set(aliasKey, entry);
     } else entry.at = Date.now();
     return entry.id;
