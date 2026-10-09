@@ -1,0 +1,27 @@
+name: CI
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+        env:
+          ANTIGRAVITY_GATEWAY_CONFIG_DIR: ${{ runner.temp }}/gateway-test-config
+      - run: npm pack --dry-run

@@ -1,7 +1,7 @@
 {
   "name": "antigravity-gateway",
   "version": "1.2.0-bailey.2",
-  "description": "Experimental local Anthropic/OpenAI compatibility gateway that reuses the official local Antigravity login state with native Cloud Code transport.",
+  "description": "Bailey-maintained Anthropic/OpenAI-compatible gateway with managed accounts, per-account proxies, multimodal APIs and bounded concurrency.",
   "license": "MIT",
   "type": "commonjs",
   "main": "antigravity-gateway.js",
@@ -38,5 +38,13 @@
     "claude-code",
     "codex-cli",
     "gateway"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baileyh8/antigravity-gateway.git"
+  },
+  "homepage": "https://github.com/baileyh8/antigravity-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/baileyh8/antigravity-gateway/issues"
+  }
 }

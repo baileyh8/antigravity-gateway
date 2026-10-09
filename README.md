@@ -1,16 +1,22 @@
-# Antigravity Gateway
+# Antigravity Gateway · Bailey Edition
+
+[![CI](https://github.com/baileyh8/antigravity-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/baileyh8/antigravity-gateway/actions/workflows/ci.yml)
+
+维护仓库 / Maintained repository: [baileyh8/antigravity-gateway](https://github.com/baileyh8/antigravity-gateway) · [更新记录 / Changelog](CHANGELOG.md) · [贡献与维护 / Contributing](CONTRIBUTING.md)
 
 [中文](#中文) · [English](#english)
 
 ## 中文
 
-Antigravity Gateway 是一个本地 Anthropic/OpenAI 兼容网关。它复用官方 Antigravity CLI（`agy`）的登录状态，让 Claude Code、Codex CLI、Trae 及其他兼容客户端通过本地接口调用当前账号可用的模型。
+Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容网关，让 Claude Code、Codex CLI、Trae、DSH、Hermes 及其他兼容客户端调用账号可用的模型。支持导入本地 Antigravity CLI（`agy`）登录态，也支持使用已授权的托管账号池。
+
+本仓库由 Bailey 独立维护，基于 [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway)，保留原项目 MIT 许可与历史。`main` 是本仓库的默认安装和维护分支；`codex/bailey-stability` 用于当前稳定性开发。问题和贡献请提交到[本仓库](https://github.com/baileyh8/antigravity-gateway)，本维护线不自动向原项目提交或合并。
 
 默认使用原生 Cloud Code 直连，不经过 `agy` Agent 的包装提示词。客户端选择什么模型，网关就把该模型 ID 原样发送给上游；只有 Claude Code Auto Mode 的分类请求使用独立的快速模型。
 
 > 非 Google 官方项目，仅用于学习、兼容性研究与个人测试。模型权限、额度、地区限制和服务条款均以上游为准。
 
-当前版本：`v1.2.0`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v1.2.0-bailey.2`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 主要功能
 
@@ -23,17 +29,19 @@ Antigravity Gateway 是一个本地 Anthropic/OpenAI 兼容网关。它复用官
 - 支持客户端工具调用、SSE、Claude Code Auto Mode 和结构化输出。
 - 支持图片生成、参考图编辑，以及图片、视频、音频、PDF 和普通文件理解。
 - 支持 OpenAI Images/Files 接口，并让远程客户端先上传文件再在对话中引用。
+- 看板管理账号独立 HTTP/HTTPS 代理，认证刷新、额度和模型请求使用账号绑定出口。
+- 生图与多媒体输入/上传各有独立 4 路并发池，并提供内存预算、异步文件 I/O、SSE 背压及停机排空。
 
 ### 使用条件
 
 | 条件 | 说明 |
 |---|---|
 | Node.js | 20 或更高版本；npm 随 Node.js 一起安装 |
-| Antigravity CLI | 已安装 `agy`，并至少完成一次登录和正常对话 |
+| 账号与授权 | 已登录的本地 `agy`，或含有效刷新凭据与 OAuth 客户端配置的托管账号池 |
 | 操作系统 | macOS、Linux 或 Windows，ARM64/x64 |
 | 网络 | 当前电脑能够正常访问 Antigravity/Google 上游服务 |
 
-安装器会自动检查 Node.js 版本、操作系统、CPU 架构和临时目录，并由 npm 处理项目依赖。`agy` 及其登录账号是使用前提，不由本项目自动安装或注册。
+安装器会自动检查 Node.js 版本、操作系统、CPU 架构和临时目录，并由 npm 处理项目依赖。本项目不自动安装 `agy` 或注册账号。默认 `direct` 传输在具备有效托管账号和 OAuth 客户端配置时不依赖服务器安装 `agy`；使用本地登录态发现或显式 `agy` 子进程传输时才需要 CLI。首次授权仍需可用的 OAuth 客户端配置，不能只复制不完整的旧账号文件。
 
 没有 Node.js 时，可使用以下任一方式安装：
 
@@ -64,7 +72,7 @@ winget install --exact --id OpenJS.NodeJS.LTS
 一条命令全局安装，不需要克隆仓库，也不需要进入项目目录：
 
 ```bash
-npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/LeeFeee/antigravity-gateway/archive/refs/heads/main.tar.gz
+npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/baileyh8/antigravity-gateway/archive/refs/heads/main.tar.gz
 ```
 
 验证版本：
@@ -382,12 +390,50 @@ antigravity-gateway stats
 
 `account-pool.json` 只保存账号 ID、不可逆会话路由标识、被主动删除身份的不可逆哈希、时间和账号健康状态，不保存提示词、模型回复或账号 Token；用量统计也只保存数字。
 
+### 账号独立代理
+
+在 `/dashboard` 的「代理管理」中新增 HTTP/HTTPS 代理，然后为账号选择出口并点击「应用」。支持编辑、删除及 Google HTTPS 连通性检测；检测结果仅代表当次网络探测，不代表账号授权或模型额度正常。代理节点由外部代理软件或供应商提供，Gateway 不包含订阅管理或保证静态公网 IP。
+
+- 已绑定账号的聊天、模型列表、图片请求、OAuth Token 刷新及额度查询使用同一个代理。代理失败会返回错误，不回退进程默认代理或直连；账号池仍可按原策略尝试其他账号。
+- 未绑定账号（包括新导入账号）继续使用原来的进程网络配置。解除绑定会恢复该行为。首次 OAuth 登录尚无账号绑定，仍走原进程网络。
+- 绑定保存在配置目录的 `proxies.json`（0600），与账号 Token 文件分离，刷新 Token 不会覆盖绑定。配置损坏时拒绝启动；绑定指向不存在的代理时该账号请求失败。
+- 修改立即作用于后续网络请求，无需重启。仍有响应体传输的代理不能编辑或解除绑定；已绑定代理不能删除。代理认证 URL 不在看板 API 中回显，也不进入分享图片；编辑 URL 留空保留旧值，输入新 URL 则完整替换。
+- 本功能用于 `direct` 多账号传输；`agy` CLI 传输和未管理的本地登录仍使用原网络设置。每日巡检和节点替换由外部运维任务负责，本功能不自动轮换节点。
+
+管理接口继承看板来源限制。反向代理部署时应对整个 `/dashboard` 前缀启用鉴权。HTTPS 反向代理需将看板的精确 Origin（如 `https://gateway.example.com`）加入 `ANTIGRAVITY_GATEWAY_CORS_ORIGIN`。写操作额外要求 `X-Gateway-Management: 1`，请求体使用 JSON：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/dashboard/proxies` | 脱敏代理列表、绑定、在途网络请求数及上次检测 |
+| POST | `/dashboard/proxies` | 新增或更新 `{id?, name, url?}`（支持 URL 用户名/密码） |
+| DELETE | `/dashboard/proxies/:id` | 删除未绑定、空闲代理 |
+| POST | `/dashboard/proxies/:id/check` | 检测固定 Google HTTPS 目标 |
+| POST | `/dashboard/accounts/:id/proxy` | 绑定 `{proxyId}`；`null` 解除绑定 |
+
+请通过管理接口修改运行中的配置；直接编辑 `proxies.json` 后需要重启 Gateway。代理地址只支持 HTTP/HTTPS CONNECT，不支持 SOCKS。
+
+### 并发与资源保护
+
+| 请求类别 | 默认并发 | 计数方式 |
+| --- | --- | --- |
+| 模型请求 | 12（direct） | 文本、工具与多媒体输入共用；显式 agy 子进程传输默认为 4 |
+| 生图、图片编辑 | 4 | Images API 与对话内部原生生图工具共用独立池 |
+| 多媒体输入、文件上传 | 4 | 图片、视频、音频、PDF/文件输入与 Files 上传合计，不是每类各 4 路 |
+
+生图池与输入/上传池可同时运行 4＋4；含媒体输入并触发生图的对话在生图阶段同时占用两个池。单次 Images 请求的 `n` 张图片仍顺序生成。模型账号选择保留会话黏性和额度策略，并发数不表示每账号分配固定名额，也不保证上游可用额度。
+
+请求正文共享 384 MiB 估算预算；解析后的媒体另有 512 MiB 预算，按二进制大小的四倍预留缓冲、Base64 与协议副本。超限返回 503，即使并发池仍有空位；排队满返回 429。预算不是进程 RSS 硬限制。Responses 历史缓存默认 64 MiB，SSE 缓冲默认每客户端 8 MiB；媒体磁盘限额默认关闭，可显式设置，超限拒绝新增而不删除历史文件。停机先排空请求，再保存用量。
+
+环境变量与完整机制见[资源配置表](#resource-limits-and-concurrency)。看板数据 `/dashboard/data` 的 `concurrency` 字段提供各池 active/limit/queued 与内存预算占用，不额外暴露账号凭据。
+
+2026-10-09 验证：Node 24 环境下本机和 Linux 候选各 252 项测试通过；真实 HTTPS 四路上传、四路生图与四路媒体输入（两张 PNG、两个一秒 MP4）通过，两个池同时达到 4 路。此结果不代表大文件持续压测或所有客户端 UI 均已验收。
+
 ### 更新与卸载
 
 更新：
 
 ```bash
-npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/LeeFeee/antigravity-gateway/archive/refs/heads/main.tar.gz
+npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/baileyh8/antigravity-gateway/archive/refs/heads/main.tar.gz
 ```
 
 更新后必须重启正在运行的网关。前台模式按 `Ctrl+C` 后重新运行；后台模式执行：
@@ -544,13 +590,15 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-Antigravity Gateway is a local Anthropic/OpenAI-compatible gateway. It reuses the official Antigravity CLI (`agy`) login state so Claude Code, Codex CLI, Trae, and other compatible clients can access models available to the current account through local HTTP endpoints.
+Antigravity Gateway is an Anthropic/OpenAI-compatible gateway for local or server deployment. Claude Code, Codex CLI, Trae, DSH, Hermes and other compatible clients can use available account models through imported Antigravity CLI (`agy`) credentials or an authorized managed account pool.
+
+This repository is independently maintained by Bailey, based on [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), with the original MIT license and history preserved. `main` is this repository’s default installation and maintenance branch; `codex/bailey-stability` is the current stability development branch. Submit issues and contributions to [this repository](https://github.com/baileyh8/antigravity-gateway). Changes on this line are not automatically submitted or merged upstream.
 
 The default `direct` transport calls Cloud Code without the agy Agent wrapper prompt. Normal requests preserve the exact model ID selected by the client. Only detected Claude Code Auto Mode classifier requests use a separate fast model.
 
 > Unofficial and intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional restrictions, and terms still apply.
 
-Current version: `v1.2.0`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current version: `v1.2.0-bailey.2`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ### Features
 
@@ -563,11 +611,13 @@ Current version: `v1.2.0`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 - Client-side tools, SSE, Claude Code Auto Mode, and structured output support.
 - Native image generation/reference editing and multimodal understanding for images, video, audio, PDFs, and files.
 - OpenAI-compatible Images and Files endpoints for local and remote clients.
+- Dashboard-managed per-account HTTP/HTTPS proxies for authentication refresh, quota and model requests.
+- Independent four-way image and media-input/upload pools, shared memory budgets, asynchronous file I/O, SSE backpressure and graceful shutdown.
 
 ### Requirements
 
 - Node.js 20 or newer with npm.
-- Official Antigravity CLI (`agy`) installed, signed in, and verified with one successful conversation.
+- Authorized accounts: a signed-in local Antigravity CLI (`agy`), or a managed account pool with valid refresh credentials and OAuth client metadata. The default `direct` transport does not require agy on the server when these are present. Local credential discovery and explicit `agy` subprocess transport require the CLI; first-time authorization still needs OAuth client configuration.
 - macOS, Linux, or Windows on ARM64/x64.
 - Network access to Antigravity/Google upstream services.
 
@@ -594,7 +644,7 @@ winget install --exact --id OpenJS.NodeJS.LTS
 Install globally from any directory:
 
 ```bash
-npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/LeeFeee/antigravity-gateway/archive/refs/heads/main.tar.gz
+npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/baileyh8/antigravity-gateway/archive/refs/heads/main.tar.gz
 ```
 
 Foreground mode:
@@ -803,7 +853,7 @@ Authentication diagnostics are written as timestamped JSON Lines to `~/.antigrav
 Update:
 
 ```bash
-npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/LeeFeee/antigravity-gateway/archive/refs/heads/main.tar.gz
+npm install --global --foreground-scripts --allow-scripts=antigravity-gateway https://github.com/baileyh8/antigravity-gateway/archive/refs/heads/main.tar.gz
 ```
 
 Restart the foreground process after updating, or run `antigravity-gateway service start` again for background mode.
@@ -855,31 +905,9 @@ Clients call the local Anthropic/OpenAI endpoints. The gateway converts requests
 
 MIT. See [LICENSE](LICENSE).
 
-### 账号独立代理
+### Resource limits and concurrency
 
-在 `/dashboard` 的「代理管理」中新增 HTTP/HTTPS 代理，然后为账号选择出口并点击「应用」。支持编辑、删除及 Google HTTPS 连通性检测；检测结果仅代表当次网络探测，不代表账号授权或模型额度正常。代理节点由外部代理软件或供应商提供，Gateway 不包含订阅管理或保证静态公网 IP。
-
-- 已绑定账号的聊天、模型列表、图片请求、OAuth Token 刷新及额度查询使用同一个代理。代理失败会返回错误，不回退进程默认代理或直连；账号池仍可按原策略尝试其他账号。
-- 未绑定账号（包括新导入账号）继续使用原来的进程网络配置。解除绑定会恢复该行为。首次 OAuth 登录尚无账号绑定，仍走原进程网络。
-- 绑定保存在配置目录的 `proxies.json`（0600），与账号 Token 文件分离，刷新 Token 不会覆盖绑定。配置损坏时拒绝启动；绑定指向不存在的代理时该账号请求失败。
-- 修改立即作用于后续网络请求，无需重启。仍有响应体传输的代理不能编辑或解除绑定；已绑定代理不能删除。代理认证 URL 不在看板 API 中回显，也不进入分享图片；编辑 URL 留空保留旧值，输入新 URL 则完整替换。
-- 本功能用于 `direct` 多账号传输；`agy` CLI 传输和未管理的本地登录仍使用原网络设置。每日巡检和节点替换由外部运维任务负责，本功能不自动轮换节点。
-
-管理接口继承看板来源限制。反向代理部署时应对整个 `/dashboard` 前缀启用鉴权。HTTPS 反向代理需将看板的精确 Origin（如 `https://gateway.example.com`）加入 `ANTIGRAVITY_GATEWAY_CORS_ORIGIN`。写操作额外要求 `X-Gateway-Management: 1`，请求体使用 JSON：
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| GET | `/dashboard/proxies` | 脱敏代理列表、绑定、在途网络请求数及上次检测 |
-| POST | `/dashboard/proxies` | 新增或更新 `{id?, name, url?}`（支持 URL 用户名/密码） |
-| DELETE | `/dashboard/proxies/:id` | 删除未绑定、空闲代理 |
-| POST | `/dashboard/proxies/:id/check` | 检测固定 Google HTTPS 目标 |
-| POST | `/dashboard/accounts/:id/proxy` | 绑定 `{proxyId}`；`null` 解除绑定 |
-
-请通过管理接口修改运行中的配置；直接编辑 `proxies.json` 后需要重启 Gateway。代理地址只支持 HTTP/HTTPS CONNECT，不支持 SOCKS。
-
-## Bailey fork maintenance line
-
-`baileyh8/antigravity-gateway` maintains the `codex/bailey-stability` branch independently. It includes the local narration, streaming, usage and image-delivery repairs, account proxy management, and the following resource safeguards. These changes are not submitted to the upstream repository.
+Bailey Edition includes progress narration, streaming, usage and image-delivery repairs, per-account proxy management, and the resource safeguards below. `main` is the maintained installation branch; development and validation requirements are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - Discarded 401 responses are cancelled before token refresh and retry, including image requests. Proxy in-flight counts therefore return to zero after retry completion.
 - Usage write errors retain unsaved counters, report a redacted error code, and retry with bounded backoff (5–30 minutes). Shutdown stops new work, drains requests, then flushes usage and closes proxy transports. A failed final save gives a nonzero exit status.
@@ -902,3 +930,13 @@ MIT. See [LICENSE](LICENSE).
 Configure positive finite values for byte/concurrency/time limits. These bounds reduce overload risk but are not a substitute for measuring RSS under representative traffic. The media disk accounting assumes this process is the sole writer; restart after external file changes to refresh the cached directory total. The synchronous MediaStore API remains available for compatibility, while HTTP request handling uses its async methods. Statistics remain a small atomic JSON snapshot rather than introducing a database.
 
 The authenticated dashboard data includes `concurrency` with active, limit and queued counts for each pool and current byte reservations. Media turns also count toward the existing request limit (12 by default). Remote URLs and stored/local file inputs reserve memory before buffering; large simultaneous files can receive 503 even when pool slots remain available. This budget is released when a turn completes, fails or is cancelled.
+
+### Per-account proxies
+
+Use **Proxy management** in `/dashboard` to create an HTTP/HTTPS CONNECT proxy and bind it to an account. Bound accounts use that proxy for chat/images, token refresh, quota and model discovery. Proxy failure does not fall back to the default proxy or direct access; account failover may still select another account. Unbound/new accounts and initial OAuth authorization use the process network configuration. Changes apply to subsequent requests; busy proxies cannot be edited or unbound, and bound proxies cannot be deleted. SOCKS and subscription/node rotation are not built in.
+
+Bindings are stored separately from tokens in `proxies.json` with mode 0600. The dashboard redacts proxy credentials and excludes proxy controls from shared images. Protect the entire `/dashboard` prefix with authentication when using a reverse proxy; add its exact HTTPS origin to `ANTIGRAVITY_GATEWAY_CORS_ORIGIN`. Management writes require `X-Gateway-Management: 1`. See the [management API table](#账号独立代理) for routes.
+
+### Validation scope
+
+On 2026-10-09, 252 tests passed locally and on the Linux deployment candidate with Node 24. Live HTTPS tests confirmed four simultaneous uploads and simultaneous four-way image generation plus four media inputs (two PNGs and two one-second MP4s). These are small-fixture acceptance tests, not sustained large-file benchmarks or certification of every client UI.

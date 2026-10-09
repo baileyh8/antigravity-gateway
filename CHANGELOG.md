@@ -1,5 +1,22 @@
 # Changelog
 
+Bailey Edition is maintained in [baileyh8/antigravity-gateway](https://github.com/baileyh8/antigravity-gateway). Entries before the Bailey versions retain the original project history.
+
+## 1.2.0-bailey.2 - 2026-10-09
+
+- Separate image generation/editing and native image-tool calls into a four-request pool; image/video/file input turns and uploads share an independent four-request pool. Existing direct model request concurrency remains 12.
+- Reserve shared memory before buffering resolved inline, remote or stored media; the default 512 MiB estimate returns 503 on exhaustion and releases reservations on completion or failure.
+- Expose pool activity, queues and memory reservations in authenticated dashboard data. Queued image/upload requests no longer hold body-admission slots while waiting for their dedicated pool.
+- Verified 252 tests locally and on Linux, four simultaneous uploads, and live four-way generation alongside four mixed image/video inputs.
+
+## 1.2.0-bailey.1 - 2026-10-09
+
+- Establish the independently maintained Bailey line based on upstream 1.2.0, retaining narration, streaming, usage and image-delivery compatibility repairs.
+- Add per-account HTTP/HTTPS proxy management, masked dashboard controls and persistent bindings used by token refresh, quota and model/image traffic.
+- Cancel discarded 401 response bodies before refresh/retry; preserve unsaved usage on write errors with bounded retry; drain requests before shutdown flush.
+- Add asynchronous media I/O, streamed downloads, SSE backpressure, HTTP-body and response-cache memory estimates, optional media disk ceilings, and hashed session alias keys.
+
+
 ## 1.2.0 - 2026-10-06
 
 - Added per-account model-capability routing: the gateway records each account's authoritative model catalog, filters out accounts that do not support the requested model, and then applies the existing affinity, health, cooldown, quota-pressure, five-hour reset, and weight rules unchanged among compatible accounts.

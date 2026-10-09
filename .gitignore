@@ -7,3 +7,6 @@ oauth_creds.json
 *.log
 .DS_Store
 .finesse/
+
+# Private local deployment/review evidence; publish sanitized docs separately.
+docs/reviews/
