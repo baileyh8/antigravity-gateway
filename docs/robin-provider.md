@@ -1,6 +1,6 @@
 # Gemini App / Robin Provider
 
-> Bailey 维护版适配说明：优先使用看板添加账号，流程、代理要求、资源默认值及验收边界以 [README](../README.md#gemini-app--argon开发中) 为准。以下客户端实测描述来自上游开发记录，不代表本维护版已在 VPS 重新实测。412 条款错误在本版已脱敏，不返回账号身份。
+> Bailey 维护版适配说明：优先使用看板添加账号，流程、代理要求、资源默认值及验收边界以 [README](../README.md#gemini-app--argon) 为准。本维护版已于 2026-10-16 通过 VPS 真实 OAuth、Chat SSE 及 Anthropic 工具往返验收；以下其他客户端实测描述来自上游开发记录，不代表已在本维护版重新实测。412 条款错误在本版已脱敏，不返回账号身份。
 
 Robin 是同一网关内部的独立上游，不是第二套后台。客户端仍使用原有端口及 Messages、Chat Completions、Responses 接口；明确请求 `gemini-4-argon` 才会进入 Robin 账号池。提示词内容不参与 Provider 选择。
 

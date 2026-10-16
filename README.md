@@ -16,7 +16,7 @@ Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容
 
 > 非 Google 官方项目，仅用于学习、兼容性研究与个人测试。模型权限、额度、地区限制和服务条款均以上游为准。
 
-当前版本：`v1.5.1-bailey.1`。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前发布版本：[v1.5.1-bailey.1](https://github.com/baileyh8/antigravity-gateway/releases/tag/v1.5.1-bailey.1)。本版已完成 VPS 部署及真实 Argon 文本、工具调用验收。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 主要功能
 
@@ -24,7 +24,7 @@ Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容
 - 支持 Claude Code、Codex CLI、Trae 和其他兼容客户端。
 - 支持前台运行，以及 macOS、Linux、Windows 后台保活和开机自启。
 - 支持自动导入本地 agy 账号，也可以输入 `add` 手动添加账号。
-- 支持通过独立的 `add-gemini` OAuth 账号池反代 Gemini App 的 `gemini-4-argon`，与原 Antigravity 凭据和调度完全隔离。
+- 支持在看板添加 Gemini App 账号并调用 `gemini-4-argon`；VPS 部署可在本地浏览器授权，与原 Antigravity 凭据和调度隔离。
 - 多账号之间轮询；同一会话保持账号一致，限流、认证或额度异常时自动尝试其他账号。
 - 启动界面显示账号状态、历史用量、Token、缓存命中率和最近24小时图表。
 - 支持客户端工具调用、SSE、Claude Code Auto Mode 和结构化输出。
@@ -176,20 +176,39 @@ acc
 
 账号池凭据以普通 JSON 保存，Token 刷新后会同步更新。请自行管理本机文件和账号使用风险。
 
-#### Gemini App / Argon（开发中）
+#### Gemini App / Argon
 
-推荐在受保护的看板「代理管理 → 添加 Gemini App / Argon 账号」中选择出口、打开授权页并在本地浏览器登录。VPS 部署时，浏览器最后跳到 `127.0.0.1` 显示无法连接属正常现象：将地址栏完整回调链接粘回看板即可，无需 SSH 转发或 agy-cli。回调状态不匹配会被拒绝，可取消、超时后重试；刷新看板可恢复等待中的流程。授权后自动保存账号、绑定所选出口并检查能力与额度。重复账号不会被添加流程覆盖。
+**服务运行在 VPS，授权在你自己的浏览器完成。** 无需在 VPS 安装浏览器或 agy-cli，也无需 SSH 转发。
+
+1. 打开网关的 HTTPS 看板 `/dashboard` 并登录，在「账号池与额度」点击「添加 Gemini 账号」。
+2. 在展开的添加区域选择已登记的账号代理，点击「开始添加」。服务端授权与后续模型请求使用这个出口。
+3. 打开授权链接，在本地浏览器选择要添加的 Google 账号并完成授权。
+4. 浏览器跳到 `127.0.0.1` 后若显示无法连接，复制地址栏里的**完整回调 URL**，粘回看板并提交。这时不需要重做登录。
+5. 等待看板保存账号、自动绑定代理并检查能力与额度。确认模型列表包含 `gemini-4-argon` 后，即可用原有网关 API Key 调用。
+
+等待授权时可以刷新看板继续，也可以取消后重新开始；服务重启后需重新发起授权。状态不匹配的回调会被拒绝，重复账号不会被覆盖。授权链接和回调 URL 不要分享给他人。
+
+客户端使用同一个网关地址和 API Key，只需把模型 ID 设为 `gemini-4-argon`。例如，以下 Chat Completions 请求使用占位域名；先将 `GATEWAY_API_KEY` 设置为你自己的网关密钥：
+
+```bash
+curl https://gateway.example.com/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gemini-4-argon","messages":[{"role":"user","content":"Compute 17 times 23."}],"stream":true}'
+```
+
+**本维护版验收（2026-10-16）**：已在 VPS 通过本地浏览器完成真实授权，并通过正式 HTTPS 接口验证 Chat Completions 流式回答正常结束、单个 `[DONE]`，以及 Anthropic Messages 工具调用与结果续答。账号代理出口另行核验通过。此轮没有覆盖 Argon 附件、长程并发或所有客户端；不会把上游测试记录当成本维护版的部署验收。
 
 也可在前台终端输入 `add-gemini`，但必须先将 `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID` 设为已登记代理 ID。凭据持久保存在 `~/.antigravity-gateway/robin-accounts/`，不与 Antigravity 账号混用。请求 `gemini-4-argon` 时进入 Robin 任务模式；仍使用同一网关、看板和 Messages / Chat Completions / Responses 接口，客户端工具仍由客户端执行。普通 Argon 请求不可用时明确报错，不降级到 Antigravity 的其他 Gemini 模型。唯一例外是实际携带视频的请求：Gemini App 依赖本地抽帧而不是可靠的 Argon 原生视频理解，因此网关沿用既有 Cloud Code 多媒体路径和 `ANTIGRAVITY_DEFAULT_MODEL`。现有 Antigravity 账号调度规则不变。
 
-上游记录了文本、客户端工具往返、会话隔离与重启续接、图片/音频/PDF/文本输入和原生额度查询的实测；本维护版的 VPS 实际 OAuth 与模型验收需另行完成。视频请求的回退路由已有回归覆盖；真实视频理解由原有 Cloud Code 路径负责。遇到尚未接受 Gemini 服务条款的账号时，网关返回脱敏的中文处理提示，不向 API 调用方暴露账号邮箱或 ID；不会自动切换账号。网关不从实验接口推导或提供 Gemini App 中不存在的思考档位，并忽略客户端的 reasoning 控制，不向 Argon 请求写入隐藏思考字段。原生 token 用量等仍未验证完成。授权、部署、兼容与验证边界见 [Robin Provider 开发说明](docs/robin-provider.md)。
+上游记录了文本、客户端工具往返、会话隔离与重启续接、图片/音频/PDF/文本输入和原生额度查询的实测；本维护版的真实验收范围见上文。视频请求的回退路由已有回归覆盖；真实视频理解由原有 Cloud Code 路径负责。遇到尚未接受 Gemini 服务条款的账号时，网关返回脱敏的中文处理提示，不向 API 调用方暴露账号邮箱或 ID；不会自动切换账号。网关不从实验接口推导或提供 Gemini App 中不存在的思考档位，并忽略客户端的 reasoning 控制，不向 Argon 请求写入隐藏思考字段。原生 token 用量等仍未验证完成。授权、部署、兼容与验证边界见 [Robin Provider 开发说明](docs/robin-provider.md)。
 
 ### 前台终端命令
 
 | 命令 | 作用 |
 |---|---|
 | `add` | 添加 Antigravity 账号 |
-| `add-gemini` | 独立授权 Gemini App 账号（开发中） |
+| `add-gemini` | 独立授权 Gemini App 账号（终端备用方式） |
 | `acc` | 查看账号池和账号状态 |
 | `models` | 查看当前发现的模型 |
 | `status` | 重新显示网关和统计状态 |
@@ -608,7 +627,7 @@ The default `direct` transport calls Cloud Code without the agy Agent wrapper pr
 
 > Unofficial and intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional restrictions, and terms still apply.
 
-Current version: `v1.5.1-bailey.1`. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Released version: [v1.5.1-bailey.1](https://github.com/baileyh8/antigravity-gateway/releases/tag/v1.5.1-bailey.1). This build has been deployed on a VPS and verified with real Argon text and tool roundtrips. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ### Features
 
@@ -616,7 +635,7 @@ Current version: `v1.5.1-bailey.1`. See [CHANGELOG.md](CHANGELOG.md) for release
 - Claude Code, Codex CLI, Trae, and other compatible clients.
 - Foreground mode and cross-platform background keepalive/autostart.
 - Automatic local agy account import plus interactive `add` authorization.
-- Gemini App `gemini-4-argon` proxying through an independent `add-gemini` OAuth account pool without changing Antigravity credentials or scheduling.
+- Dashboard onboarding for Gemini App `gemini-4-argon`, including local-browser authorization of a VPS deployment, with separate credentials and scheduling.
 - Sticky-session account rotation and failover on authentication, quota, or rate-limit failures.
 - Request, token, cache, account, quota, and 24-hour usage displays.
 - Client-side tools, SSE, Claude Code Auto Mode, and structured output support.
@@ -704,12 +723,35 @@ At startup, a usable official local agy identity is added to the pool only when 
 
 Run the gateway in foreground mode and type `add` to authorize another account. The complete OAuth URL is always printed. On a remote host, paste the final localhost callback URL back at `gateway>`.
 
-Use the protected dashboard to add a Gemini App account: select a registered proxy, open Google authorization in your local browser, and paste the complete final localhost callback URL back into the dashboard. On a VPS, a localhost connection error in your browser is expected; no SSH forwarding or agy-cli is required. State and callback address are validated, cancellation and retry are supported, and reloading the dashboard restores the pending flow. Successful authorization persists the account, binds its proxy and checks capabilities/quota. Existing accounts are not overwritten. The terminal `add-gemini` alternative requires `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`. Credentials persist separately in `robin-accounts/`. An explicit `gemini-4-argon` request enters native Robin task mode through the same gateway, dashboard, and three client protocols; client tools still execute on the client. Ordinary Argon failures never fall back to Cloud Code. Video-bearing Argon requests are the deliberate exception: Gemini App relies on local frame extraction rather than reliable native Argon video understanding, so the gateway keeps its established Cloud Code multimodal path and `ANTIGRAVITY_DEFAULT_MODEL`. Upstream reports exercising text, tool loops, isolation, restart resumption, attachments and native quota; live VPS OAuth/model acceptance for this maintenance build remains separate. If Gemini requires terms acceptance, the gateway returns sanitized action guidance without disclosing the account email or ID, and does not fail over. The gateway does not infer or expose thinking tiers that are absent from the Gemini App UI, and it ignores client reasoning controls instead of writing hidden thinking fields into Argon requests. Native token usage and remaining client coverage are not established. See [Robin Provider development notes](docs/robin-provider.md) for the current boundaries.
+#### Gemini App / Argon on a VPS
+
+**Run the gateway on your VPS and authorize in your local browser.** No VPS browser, agy-cli installation or SSH forwarding is required.
+
+1. Sign in to the gateway's HTTPS `/dashboard` and click “添加 Gemini 账号” (Add Gemini account) in the accounts card.
+2. Select a registered account proxy and click “开始添加” (Start). Server-side authorization and later model traffic use this proxy.
+3. Open the authorization link in your local browser and authorize the intended Google account.
+4. If the browser redirects to `127.0.0.1` and displays a connection error, copy the **complete callback URL** from the address bar and submit it in the dashboard. You do not need to repeat the login.
+5. Wait for the account to be saved, its proxy bound and capabilities/quota checked. Once `gemini-4-argon` appears in its model list, use your existing gateway API key to call it.
+
+Reloading the dashboard resumes a pending flow; cancellation and retry are supported. A gateway restart requires a new flow. Mismatched callbacks are rejected and existing accounts are not overwritten. Keep authorization and callback URLs private.
+
+Keep the same gateway address and API key in your client and select `gemini-4-argon`. Replace the example hostname below and set `GATEWAY_API_KEY` to your gateway key:
+
+```bash
+curl https://gateway.example.com/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gemini-4-argon","messages":[{"role":"user","content":"Compute 17 times 23."}],"stream":true}'
+```
+
+**Bailey build acceptance (2026-10-16):** local-browser OAuth for the VPS completed successfully. Real requests through the deployed HTTPS endpoint passed Chat Completions streaming with normal termination and one `[DONE]`, plus an Anthropic Messages tool call and result continuation. The bound proxy egress was checked separately. This run did not cover Argon attachments, long-running concurrency or every client; upstream results are not counted as this build's deployment acceptance.
+
+The terminal `add-gemini` alternative requires `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`. Credentials persist separately in `robin-accounts/`. An explicit `gemini-4-argon` request enters native Robin task mode through the same gateway, dashboard, and three client protocols; client tools still execute on the client. Ordinary Argon failures never fall back to Cloud Code. Video-bearing Argon requests are the deliberate exception: Gemini App relies on local frame extraction rather than reliable native Argon video understanding, so the gateway keeps its established Cloud Code multimodal path and `ANTIGRAVITY_DEFAULT_MODEL`. Upstream reports exercising text, tool loops, isolation, restart resumption, attachments and native quota; this maintenance build’s live acceptance scope is listed above. If Gemini requires terms acceptance, the gateway returns sanitized action guidance without disclosing the account email or ID, and does not fail over. The gateway does not infer or expose thinking tiers that are absent from the Gemini App UI, and it ignores client reasoning controls instead of writing hidden thinking fields into Argon requests. Native token usage and remaining client coverage are not established. See [Robin Provider development notes](docs/robin-provider.md) for the current boundaries.
 
 | Command | Purpose |
 |---|---|
 | `add` | Add an Antigravity account |
-| `add-gemini` | Authorize a Gemini App account independently (in development) |
+| `add-gemini` | Authorize a Gemini App account independently (terminal alternative) |
 | `acc` | Show pool and account state |
 | `models` | Show discovered models |
 | `status` | Refresh gateway and dashboard status |
