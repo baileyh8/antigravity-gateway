@@ -18,6 +18,10 @@ test('dashboard manages proxies and account bindings with credentials redacted a
   t.after(async()=>{await new Promise(r=>server.close(r));fs.rmSync(directory,{recursive:true,force:true})});
   const base='http://127.0.0.1:'+server.address().port;
   const call=(route,body,method='POST',extra={})=>fetch(base+route,{method,headers:{'content-type':'application/json','x-gateway-management':'1',...extra},body:body===undefined?undefined:JSON.stringify(body)});
+  assert.equal((await fetch(base+'/dashboard/robin/oauth')).status,200);
+  assert.equal((await fetch(base+'/dashboard/robin/oauth/start',{method:'POST',body:'{}'})).status,403);
+  assert.equal((await call('/dashboard/robin/oauth/start',{},'POST',{origin:'https://evil.example'})).status,403);
+  assert.equal((await call('/dashboard/robin/oauth/start',{proxyId:'missing'})).status,400);
   assert.equal((await fetch(base+'/dashboard/proxies',{method:'POST',body:'{}'})).status,403);
   assert.equal((await call('/dashboard/proxies',{},'POST',{origin:'https://evil.example'})).status,403);
   let r=await call('/dashboard/proxies',{id:'test',name:'US',url:'http://user:secret@localhost:9001'});assert.equal(r.status,200);assert(!(await r.text()).includes('secret'));

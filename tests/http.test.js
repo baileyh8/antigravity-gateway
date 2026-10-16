@@ -1,5 +1,7 @@
 'use strict';
 
+require('./helpers/gateway-environment');
+
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');
@@ -453,7 +455,7 @@ test('Chat SSE finish and usage frames retain cache and reasoning details', asyn
     prompt_tokens_details: { cached_tokens: 3 },
     completion_tokens_details: { reasoning_tokens: 2 }
   };
-  assert.deepEqual(chunks.find((chunk) => chunk.choices?.[0]?.finish_reason)?.usage, expected);
+  assert.equal(chunks.find((chunk) => chunk.choices?.[0]?.finish_reason)?.usage, null);
   assert.deepEqual(chunks.find((chunk) => chunk.choices?.length === 0)?.usage, expected);
   assert.ok(text.includes('data: [DONE]'));
 });

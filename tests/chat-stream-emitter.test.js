@@ -9,7 +9,7 @@ const { chatResponse } = require('../src/protocol');
 for (const withTools of [false, true]) {
   test(`chat streaming preserves cache and reasoning usage with tools=${withTools}`, () => {
     const { res, parse } = capture();
-    const emitter = createChatTextEmitter(res, 'gemini-test-high');
+    const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
     emitter.onDelta('Checking');
     emitter.finish(chatResponse('gemini-test-high', {
       text: 'Checking',
@@ -22,7 +22,7 @@ for (const withTools of [false, true]) {
       prompt_tokens_details: { cached_tokens: 80 },
       completion_tokens_details: { reasoning_tokens: 2 }
     };
-    assert.deepEqual(chunks.at(-2).usage, expected);
+    assert.equal(chunks.at(-2).usage, null);
     assert.deepEqual(chunks.at(-1).usage, expected);
     assert.deepEqual(chunks.at(-1).choices, []);
     assert.equal(chunks.at(-2).choices[0].finish_reason, withTools ? 'tool_calls' : 'stop');
@@ -84,7 +84,7 @@ const SHELL_CALL = [{ id: 'call_1', type: 'function', function: { name: 'bash', 
 
 test('chat live emitter forwards each streamed delta exactly once', () => {
   const { res, parse } = capture();
-  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
   emitter.onDelta('深海');
   emitter.onDelta('的灯塔');
   emitter.finish(body('深海的灯塔'));
@@ -95,7 +95,7 @@ test('chat live emitter forwards each streamed delta exactly once', () => {
 
 test('chat live emitter appends tool calls without replaying streamed text', () => {
   const { res, parse } = capture();
-  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
   emitter.onDelta('先看');
   emitter.onDelta('一下');
   emitter.finish(body('先看一下', SHELL_CALL));
@@ -116,7 +116,7 @@ test('chat live emitter appends tool calls without replaying streamed text', () 
 
 test('chat live emitter still sends the whole answer when upstream streamed nothing', () => {
   const { res, parse } = capture();
-  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
   emitter.finish(body('没有流式的一段话', SHELL_CALL));
 
   const chunks = parse();
@@ -126,7 +126,7 @@ test('chat live emitter still sends the whole answer when upstream streamed noth
 
 test('chat live emitter sends only the unseen tail when the answer grew after the last delta', () => {
   const { res, parse } = capture();
-  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
   emitter.onDelta('前半段');
   emitter.finish(body('前半段加尾'));
 
@@ -137,7 +137,7 @@ test('chat live emitter sends only the unseen tail when the answer grew after th
 
 test('chat live emitter preserves image receipts alongside tools and usage without replay', () => {
   const { res, parse } = capture();
-  const emitter = createChatTextEmitter(res, 'gemini-test-high');
+  const emitter = createChatTextEmitter(res, 'gemini-test-high', { includeUsage: true });
   const response = body('Ready: image receipt', SHELL_CALL);
   response.choices[0].message.images = [{ url: 'http://localhost/image.png' }];
   response.choices[0].message.artifacts = [{ id: 'image_1', mime_type: 'image/png' }];

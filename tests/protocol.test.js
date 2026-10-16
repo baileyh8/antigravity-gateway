@@ -11,6 +11,7 @@ const {
   detectAutoModeFormat,
   finalizeModelResult,
   normalizeAnthropic,
+  normalizeChat,
   normalizeAutoMode,
   normalizeResponses,
   normalizeStructured,
@@ -19,6 +20,19 @@ const {
   responsesResponse,
   validateSchema
 } = require('../src/protocol');
+
+test('the three protocols preserve reasoning effort without leaking it into Cloud Code generationConfig', () => {
+  for (const [normalize, payload, effort] of [
+    [normalizeAnthropic, { output_config: { effort: 'high' } }, 'high'],
+    [normalizeChat, { reasoning_effort: 'medium' }, 'medium'],
+    [normalizeResponses, { reasoning: { effort: 'low' } }, 'low']
+  ]) {
+    const normalized = normalize(payload);
+    assert.equal(normalized.reasoningEffort, effort);
+    assert.equal(normalized.generationConfig, null);
+    assert.equal(Object.hasOwn(normalize({}), 'reasoningEffort'), false);
+  }
+});
 
 test('Claude Code provider identity marker is neutralized without dropping system instructions', () => {
   const normalized = normalizeAnthropic({
