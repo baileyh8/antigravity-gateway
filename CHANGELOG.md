@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Expose sourced Argon context/output and modality metadata in the standard model list used by DSH; distinguish published API specifications from unverified Robin transport limits. Remove generic Argon reasoning-level defaults.
+
 ## 1.5.1-bailey.1 - 2026-10-16
 
 - Integrate upstream Gemini App/Argon with provider-scoped HTTP and HTTP/2 account proxies; missing bindings fail closed.

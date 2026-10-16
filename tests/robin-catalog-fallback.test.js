@@ -82,6 +82,31 @@ function assertCatalogs(result, models) {
   assert.deepEqual(result.claude.modelPicker.options.map(item => item.model).sort(), [...models].sort());
   assert.deepEqual(result.codex.models.map(item => item.slug).sort(), [...models].sort());
   assert.deepEqual(result.codex.data.map(item => item.id).sort(), [...models].sort());
+  if (models.includes('gemini-4-argon')) {
+    // DSH selects data[] even when the Codex models[] array is present.
+    for (const catalog of [result.body, result.codex]) {
+      const item = catalog.data.find(item => item.id === 'gemini-4-argon');
+      assert.equal(item.context_window, 1048576);
+      assert.equal(item.max_output_tokens, 65536);
+      assert.equal(item.context_window_shared, true);
+      assert.equal(item.gateway_limits_verified, false);
+      assert.equal(item.video_route, 'cloudcode_default_model');
+      assert.deepEqual(item.input_modalities, ['text', 'image', 'video', 'audio', 'pdf']);
+      assert.equal(item.supports_function_calling, true);
+      assert.match(item.metadata_source, /^https:\/\/ai\.google\.dev\//);
+      assert.equal(item.supported_reasoning_levels, undefined);
+      const codex = catalog.models.find(item => item.slug === 'gemini-4-argon');
+      assert.equal(codex.context_window, item.context_window);
+      assert.equal(codex.max_context_window, item.context_window);
+      assert.equal(codex.max_output_tokens, item.max_output_tokens);
+      assert.deepEqual(codex.supported_reasoning_levels, []);
+      assert.equal(codex.default_reasoning_level, null);
+    }
+    for (const item of result.body.data.filter(item => item.id !== 'gemini-4-argon')) {
+      assert.equal(item.metadata_scope, undefined);
+    }
+  }
+
 }
 
 for (const transport of ['agy', 'auto']) test(`Robin-only catalogs and all three protocols work without a local CLI in ${transport} mode`, async () => {
