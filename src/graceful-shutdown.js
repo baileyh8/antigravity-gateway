@@ -1,6 +1,6 @@
 'use strict';
 
-async function gracefulShutdown({ server, controllers, requests = new Set(), usageStore, accountPool, quotaManager, proxyManager, workers = [], timeoutMs = 30_000 }) {
+async function gracefulShutdown({ server, controllers, requests = new Set(), usageStore, accountPool, robinAccountPool, quotaManager, proxyManager, workers = [], timeoutMs = 30_000 }) {
   quotaManager.stop();
   usageStore.stop({ flush: false });
   const closed = new Promise((resolve) => server.close(resolve));
@@ -20,6 +20,7 @@ async function gracefulShutdown({ server, controllers, requests = new Set(), usa
     server.closeAllConnections?.();
     for (const worker of workers) void worker.close().catch(() => {});
   }
+  robinAccountPool?.stop();
   await proxyManager.close({ force: true });
   if (forced) {
     // Give aborted handlers time to account their final failed attempts without
