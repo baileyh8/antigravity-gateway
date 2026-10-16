@@ -1016,3 +1016,9 @@ Robin shares the existing request/media pools and media byte budget. Tasks retai
 Chat 流式用量遵循 `stream_options.include_usage:true`：中间块 `usage:null`，最后单独用量块保留缓存/推理明细。未请求时不发送用量块；内部用量统计保持。Robin 未知用量仍标记 `usage_known:false`，不伪报为 0。
 
 Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermediate chunks have null usage and the final usage-only chunk preserves cache/reasoning details. Internal accounting remains enabled. Unknown Robin usage stays explicitly unknown.
+
+### Argon 模型目录 / Model metadata
+
+`/v1/models` 的 `data[]` 和 Codex `models[]` 均提供 Argon 的官方规格：共享上下文窗口 1,048,576 tokens、默认同步输出上限 65,536 tokens；文本/图片/视频/音频/PDF 输入、文本输出及函数调用。来源为 [Google 模型规格](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)。这些值用于客户端模型配置，标记为 `published_gemini_api_specification`，不代表已验证 Gemini App/Robin 通道的容量上限。视频仍转至 Cloud Code 默认模型，不宣称支持 API long decode；Argon 不公布可选思考档位。DSH 中已保存的模型需重新导入元数据或更新对应条目。
+
+Both model arrays expose the published Argon specification: a shared 1,048,576-token context window, 65,536-token default synchronous output limit, text/image/video/audio/PDF inputs, text output and function calling. These are sourced client configuration values, not measured Gemini App/Robin transport limits. Video still routes to the Cloud Code default model; API long decode and selectable reasoning levels are not advertised. Previously saved DSH entries need metadata re-import or an explicit update.

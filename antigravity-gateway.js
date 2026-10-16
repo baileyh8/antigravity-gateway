@@ -400,12 +400,29 @@ async function upstreamModelDiagnostic(error, model) {
   return error;
 }
 
+// Published Gemini API specifications, not a measured Robin transport limit.
+// Input and output share the window; long-decode API mode is not advertised.
+const ARGON_MODEL_METADATA = Object.freeze({
+  context_window: 1048576,
+  max_output_tokens: 65536,
+  input_modalities: ['text', 'image', 'video', 'audio', 'pdf'],
+  output_modalities: ['text'],
+  supports_function_calling: true,
+  metadata_source: 'https://ai.google.dev/gemini-api/docs/models/gemini-4-argon',
+  metadata_scope: 'published_gemini_api_specification',
+  context_window_shared: true,
+  gateway_transport: 'gemini_app_robin',
+  gateway_limits_verified: false,
+  video_route: 'cloudcode_default_model'
+});
+
 function codexModelInfo(slug, priority) {
+  const argon = slug === ARGON_MODEL;
   const upstream = usesDirectTransport() ? ACCOUNT_POOL.modelInfo(slug) : null;
   // Cloud Code currently reports 1,048,576 input tokens for Gemini 3.7/3.8
   // Flash. Keep that verified fallback even when a transient discovery request
   // fails; otherwise the client would compact a healthy 1M context at 200K.
-  const contextWindow = upstream?.maxTokens
+  const contextWindow = (argon ? ARGON_MODEL_METADATA.context_window : upstream?.maxTokens)
     || (/^gemini-3\.[78]-flash(?:[.-]|$)/i.test(slug) ? 1048576 : 200000);
   return {
     slug,
@@ -416,7 +433,7 @@ function codexModelInfo(slug, priority) {
     default_verbosity: 'low',
     apply_patch_tool_type: 'freeform',
     web_search_tool_type: 'text_and_image',
-    input_modalities: ['text', 'image'],
+    input_modalities: argon ? ARGON_MODEL_METADATA.input_modalities : ['text', 'image'],
     supports_image_detail_original: true,
     truncation_policy: { mode: 'tokens', limit: 10000 },
     supports_parallel_tool_calls: true,
@@ -429,14 +446,15 @@ function codexModelInfo(slug, priority) {
     auto_review_model_override: null,
     context_window: contextWindow,
     max_context_window: contextWindow,
-    max_output_tokens: upstream?.maxOutputTokens || null,
+    max_output_tokens: argon ? ARGON_MODEL_METADATA.max_output_tokens : upstream?.maxOutputTokens || null,
+    ...(argon ? ARGON_MODEL_METADATA : {}),
     auto_compact_token_limit: null,
     comp_hash: `antigravity-gateway-${GATEWAY_VERSION}`,
     base_instructions: 'Follow the client instructions and use only client-provided tools when needed.',
     reasoning_summary_format: 'experimental',
     default_reasoning_summary: 'none',
-    default_reasoning_level: 'medium',
-    supported_reasoning_levels: [
+    default_reasoning_level: argon ? null : 'medium',
+    supported_reasoning_levels: argon ? [] : [
       { effort: 'low', description: 'Faster responses' },
       { effort: 'medium', description: 'Balanced reasoning' },
       { effort: 'high', description: 'Deeper reasoning' }
@@ -518,7 +536,10 @@ function codexCatalogBody(models) {
   const ordered = displayModels(models);
   return {
     object: 'list',
-    data: ordered.map((id) => ({ id, object: 'model', created: 0, owned_by: 'antigravity', display_name: id })),
+    data: ordered.map((id) => ({
+      id, object: 'model', created: 0, owned_by: 'antigravity', display_name: id,
+      ...(id === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
+    })),
     models: ordered.map((id, index) => codexModelInfo(id, index))
   };
 }

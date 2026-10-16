@@ -114,3 +114,9 @@ Argon 请求忽略客户端的 reasoning effort 与思考开关，不把它们�
 新增回归还覆盖了真实缺失 CLI 情况下的 agy/auto 目录独立性、三种模型目录产物、三个客户端协议，以及 Cloud Code Auto Mode 的独立目录与缓存。永久凭据在 CLI 路径不存在时经开发代码实际调用一次原生 GetUserStatus，返回 Argon，764 毫秒完成，未提交生成任务；此验证不代替视频理解验收。
 
 当前持久凭据三个私有 token 的字面值检查覆盖源码改动和安装包，共 74 个文件，无匹配；安装包的 42 个文件不含账号库、运行状态或日志。`npm audit --omit=dev` 当前报告零个已知依赖漏洞。这些是限定范围的密钥、打包及依赖检查，不代替完整漏洞审计。测试通过不等于上述未验证能力已经完成，也不代表本机安装版本已被替换。
+
+### Argon 模型目录 / Model metadata
+
+`/v1/models` 的 `data[]` 和 Codex `models[]` 均提供 Argon 的官方规格：共享上下文窗口 1,048,576 tokens、默认同步输出上限 65,536 tokens；文本/图片/视频/音频/PDF 输入、文本输出及函数调用。来源为 [Google 模型规格](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)。这些值用于客户端模型配置，标记为 `published_gemini_api_specification`，不代表已验证 Gemini App/Robin 通道的容量上限。视频仍转至 Cloud Code 默认模型，不宣称支持 API long decode；Argon 不公布可选思考档位。DSH 中已保存的模型需重新导入元数据或更新对应条目。
+
+Both model arrays expose the published Argon specification: a shared 1,048,576-token context window, 65,536-token default synchronous output limit, text/image/video/audio/PDF inputs, text output and function calling. These are sourced client configuration values, not measured Gemini App/Robin transport limits. Video still routes to the Cloud Code default model; API long decode and selectable reasoning levels are not advertised. Previously saved DSH entries need metadata re-import or an explicit update.
