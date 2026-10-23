@@ -20,15 +20,21 @@ const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemain
 const { createDashboardAccessPolicy } = require('./src/dashboard-access');
 const { DiagnosticLog } = require('./src/diagnostic-log');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
+const { closeNativeTransport } = require('./src/agy-native-transport');
+const { imageReferencePaths } = require('./src/agy-image-references');
+const { nativeImageToolResponse } = require('./src/agy-tool-results');
 const { checkDashboard, dashboardAsset, dashboardData, dashboardHtml, openBrowser } = require('./src/dashboard');
 const { LocalAccountImporter } = require('./src/local-account-importer');
-const { MediaStore, MultimediaError, mediaParts, normalizeMime } = require('./src/multimedia');
+const { MediaStore, MultimediaError, mediaParts, normalizeMime, imageFileExtension } = require('./src/multimedia');
 const { OAuthFlow } = require('./src/oauth-flow');
 const { ProviderRouter, ProviderRouterError } = require('./src/provider-router');
 const { QuotaManager } = require('./src/quota-manager');
 const { RobinAccountPool } = require('./src/robin-account-pool');
 const { RobinOAuthFlow } = require('./src/robin-oauth-flow');
+const { GeminiWindowsLogin } = require('./src/gemini-windows-login');
+const { GeminiAccountStore } = require('./src/gemini-account-store');
 const { ARGON_MODEL, RobinProviderError } = require('./src/robin-provider');
+const { acquireDirectoryGuard } = require('./src/agy-file-lease');
 const { manageService } = require('./src/service-manager');
 const { TerminalConsole } = require('./src/terminal-console');
 const { UsageStore } = require('./src/usage-store');
@@ -114,6 +120,8 @@ const DEFAULT_MAX_CONCURRENCY = TRANSPORT === 'agy' ? 4 : 12;
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY || DEFAULT_MAX_CONCURRENCY));
 const MAX_QUEUE = Math.max(0, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_QUEUE || 32));
 const MODEL_CACHE_MS = 60000;
+// 先取得目录守护，再初始化可能清理或落盘状态的账号池。
+function initializeGateway(directoryGuard = null) {
 const DIAGNOSTIC_LOG = new DiagnosticLog({ directory: path.join(CONFIG_DIR, 'logs') });
 let diagnosticsEnabled = false;
 const diagnosticReporter = (event, fields) => {
@@ -122,9 +130,12 @@ const diagnosticReporter = (event, fields) => {
 const DIRECT_PROVIDER = new DirectAntigravityProvider({ diagnosticReporter });
 DIRECT_PROVIDER.localAuth.agyPath = AGY_PATH;
 const ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR });
-const ROBIN_ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR, directoryName: 'robin-accounts' });
+const GEMINI_ACCOUNT_STORE = new GeminiAccountStore({ configDir: CONFIG_DIR });
+const ROBIN_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.oauth;
+const WINDOWS_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.windows;
 const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR, onSaveError: (error) => gatewayWarn(`[Antigravity Gateway] 用量保存失败，将重试 (${error.code})`) });
 const PROXY_MANAGER = new ProxyManager({ configDir: CONFIG_DIR });
+
 const ACCOUNT_POOL = new AccountPool({
   proxyManager: PROXY_MANAGER,
   store: ACCOUNT_STORE,
@@ -137,7 +148,7 @@ const QUOTA_MANAGER = new QuotaManager({ configDir: CONFIG_DIR, accountPool: ACC
 ACCOUNT_POOL.quotaManager = QUOTA_MANAGER;
 const OAUTH_FLOW = new OAuthFlow({ agyPath: AGY_PATH });
 const ROBIN_ACCOUNT_POOL = new RobinAccountPool({
-  store: ROBIN_ACCOUNT_STORE,
+  store: GEMINI_ACCOUNT_STORE,
   proxyManager: PROXY_MANAGER,
   diagnosticReporter,
   usageStore: USAGE_STORE
@@ -148,7 +159,8 @@ const ROBIN_OAUTH_FLOW = new RobinOAuthFlow({ fetchImpl: (input, init) => {
   if (!proxy) throw new GatewayError('请先设置 ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID 为已登记代理。', { status: 503, code: 'robin_proxy_required' });
   return PROXY_MANAGER.via(proxy, input, init);
 } });
-const ROBIN_ONBOARDING = new RobinOnboarding({ manager: PROXY_MANAGER, store: ROBIN_ACCOUNT_STORE, pool: ROBIN_ACCOUNT_POOL });
+const ROBIN_ONBOARDING = new RobinOnboarding({ manager: PROXY_MANAGER, store: GEMINI_ACCOUNT_STORE, pool: ROBIN_ACCOUNT_POOL });
+const WINDOWS_LOGIN = new GeminiWindowsLogin();
 const PROVIDER_ROUTER = new ProviderRouter({
   cloudcodePool: ACCOUNT_POOL,
   robinPool: ROBIN_ACCOUNT_POOL
@@ -623,7 +635,7 @@ function startupBanner({ models = [], modelError = '', credentialSource = creden
     ' 可用模型:'
   ];
   if (models.includes(ARGON_MODEL)) lines.splice(lines.length - 1, 0,
-    ' Gemini App: ✅ Robin 原生任务 / 工具通道（独立授权，无需本机应用）');
+    ' Gemini App: ✅ 独立账号池（Robin OAuth / Windows WebChannel）');
   const selected = featuredModels(models);
   if (selected.length) lines.push(...selected.map((model) => `    ${model}`));
   else lines.push(`    ${modelError ? `检测失败：${modelError}` : '未发现精选模型'}`);
@@ -720,7 +732,7 @@ function setCors(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-claude-code-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, DELETE, OPTIONS');
   return true;
 }
@@ -856,7 +868,8 @@ function imageReferences(normalized, requested = []) {
   const images = mediaParts(normalized, (part) => String(part.mediaType || '').startsWith('image/'));
   if (!Array.isArray(requested) || !requested.length) return [];
   const wanted = new Set(requested.map(String));
-  return images.filter((part) => wanted.has(String(part.id)) || wanted.has(String(part.fileId)) || wanted.has(String(part.filename))).slice(0, 3);
+  return images.filter((part) => wanted.has(String(part.id)) || wanted.has(String(part.fileId)) || wanted.has(String(part.filename))
+    || imageReferencePaths(part).some(file => wanted.has(file))).slice(0, 3);
 }
 
 function artifactUrl(base, id) {
@@ -881,7 +894,7 @@ async function argonVideoFallbackModel() {
   return fallback;
 }
 
-async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, onDelta, onThinkingDelta, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
+async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
   const releaseRequest = await requestSlots.acquire(signal);
   let releaseMedia;
   try {
@@ -928,6 +941,8 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
       };
       let raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, {
         signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta, onAccountSelected, reuseConversation, ...taskScope,
+        ...(providerType === 'cloudcode' && nativeCompaction ? { nativeCompaction } : {}),
+        ...(nativeClientProfile ? { nativeClientProfile } : {}),
         onThinkingDelta: normalized.includeThinking ? onThinkingDelta : undefined
       });
       const initialUsage = raw.usage;
@@ -951,6 +966,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         if ((args.ImagePaths || []).length !== references.length) {
           throw new GatewayError('生图工具引用了不存在或非图片类型的附件。', { code: 'invalid_image_reference', status: 400 });
         }
+        const imageStartedAt = Date.now();
         const releaseImage = await imageSlots.acquire(signal);
         let generated, saved;
         try {
@@ -970,7 +986,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           });
           saved = await MEDIA_STORE.saveAsync(Buffer.from(generated.data, 'base64'), {
             mediaType: generated.mimeType,
-            filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.jpg`,
+            filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.${imageFileExtension(generated.mimeType)}`,
             purpose: 'generated',
             scope: mediaScope
           });
@@ -996,17 +1012,23 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           toolChoice: resolved.toolChoice,
           messages: [
             ...prepared.normalized.messages,
-            { role: 'assistant', text: '', parts: [{ type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments, thoughtSignature: call.thoughtSignature }] },
+            { role: 'assistant', text: raw.text || '', parts: [
+              ...(raw.text ? [{ type: 'text', text: raw.text }] : []),
+              { type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments, thoughtSignature: call.thoughtSignature }
+            ] },
             { role: 'user', text: '', parts: [{
               type: 'tool_result', id: call.id, name: call.name,
               content: JSON.stringify(internalResult),
-              response: { output: internalResult },
+              // Local structured metadata remains available to the API/client
+              // layer; only the native text projection goes to Cloud Code.
+              response: nativeImageToolResponse(image, { createdAt: imageStartedAt }),
               media: [{ type: 'media', id: saved.id, mediaType: generated.mimeType, data: generated.data, filename: saved.filename }]
             }] }
           ]
         };
         raw = await PROVIDER_ROUTER.send(continuation, upstreamModel, {
-          signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope
+          signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope,
+          clientProjection: { source: prepared.normalized, images: [image], streamedPrefix: onDelta ? raw.streamedText || raw.text || '' : '' }
         });
         const final = finalize(raw);
         return { ...final, images: [image], usage: combinedUsage(initialUsage, generated.usage, raw.usage) };
@@ -1084,12 +1106,41 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
   }
 }
 
-async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
-  try {
-    return await runTurn(normalized, model, signal, options);
-  } catch (error) {
-    throw await upstreamModelDiagnostic(error, model);
+const activeTransactions = new Set();
+
+function trackTransaction(promise) {
+  const cleanup = () => { activeTransactions.delete(promise); };
+  activeTransactions.add(promise);
+  promise.then(cleanup, cleanup);
+  return promise;
+}
+
+async function drainTransactions(timeoutMs = Infinity) {
+  const until = Number.isFinite(timeoutMs) ? Date.now() + timeoutMs : Infinity;
+  while (activeTransactions.size) {
+    const pending = Promise.allSettled([...activeTransactions]);
+    if (until === Infinity) await pending;
+    else {
+      const left = until - Date.now();
+      if (left <= 0) return false;
+      let timer;
+      try { await Promise.race([pending, new Promise(resolve => { timer = setTimeout(resolve, left); })]); }
+      finally { clearTimeout(timer); }
+    }
   }
+  return true;
+}
+
+
+async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
+  const transaction = (async () => {
+    try {
+      return await runTurn(normalized, model, signal, options);
+    } catch (error) {
+      throw await upstreamModelDiagnostic(error, model);
+    }
+  })();
+  return await trackTransaction(transaction);
 }
 
 function beginSse(res) {
@@ -1424,7 +1475,7 @@ async function generateImages(payload, req, signal, references = []) {
     accountId = result.accountId;
     const saved = await MEDIA_STORE.saveAsync(Buffer.from(result.data, 'base64'), {
       mediaType: result.mimeType,
-      filename: `generated_${Date.now()}_${index + 1}.jpg`, purpose: 'generated', scope
+      filename: `generated_${Date.now()}_${index + 1}.${imageFileExtension(result.mimeType)}`, purpose: 'generated', scope
     });
     images.push({
       id: saved.id,
@@ -1894,9 +1945,13 @@ async function requestHandler(req, res) {
   }
 }
 
-function createServer() {
-  return http.createServer((req, res) => {
-    const pending = requestHandler(req, res).catch(() => {
+function createServer({ directoryGuard = null } = {}) {
+  if (directoryGuard) {
+    DIRECT_PROVIDER.bindDirectoryGuard(directoryGuard);
+    ACCOUNT_POOL.bindDirectoryGuard(directoryGuard);
+  }
+  const server = http.createServer((req, res) => {
+    const pending = trackTransaction(requestHandler(req, res)).catch(() => {
       if (!res.headersSent && !res.destroyed) sendJson(res, 500, { error: { message: 'Antigravity Gateway 内部错误。' } });
       else res.destroy();
     });
@@ -1904,6 +1959,8 @@ function createServer() {
     activeRequests.add(pending);
     void pending.finally(() => activeRequests.delete(pending));
   });
+  server.drainTransactions = drainTransactions;
+  return server;
 }
 
 if (require.main === module) {
@@ -1954,18 +2011,41 @@ if (require.main === module) {
   }
   diagnosticsEnabled = true;
   fs.mkdirSync(RUNTIME, { recursive: true, mode: 0o700 });
-  const server = createServer();
+  const server = createServer({ directoryGuard });
   let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
+  let shutdownPromise = null;
+  const shutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
-    TERMINAL?.stop();
-    stopDiagnosticHeartbeat();
-    diagnosticReporter('gateway_process_stopping', { pid: process.pid });
-    await ROBIN_ONBOARDING.stop();
-    await gracefulShutdown({ server, controllers: activeControllers, requests: activeRequests, usageStore: USAGE_STORE,
-      accountPool: ACCOUNT_POOL, robinAccountPool: ROBIN_ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
-      workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
+    shutdownPromise = (async () => {
+      TERMINAL?.stop();
+      stopDiagnosticHeartbeat();
+      diagnosticReporter('gateway_process_stopping', { pid: process.pid });
+      directoryGuard.hold();
+      await ROBIN_ONBOARDING.stop();
+      QUOTA_MANAGER.stop();
+      const quotaDrain = QUOTA_MANAGER.drain();
+      const shutdownRequests = new Set([...activeRequests, ...activeTransactions, quotaDrain, ...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
+      await gracefulShutdown({ server, controllers: activeControllers, requests: shutdownRequests, usageStore: USAGE_STORE,
+        accountPool: ACCOUNT_POOL, robinAccountPool: ROBIN_ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
+        workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
+      // Never hand the directory to a successor while an aborted task can still write.
+      // A stuck task exits with failure and keeps ownership until process termination.
+      if (!await drainTransactions(1000)) throw new Error('Shutdown transactions did not settle');
+      await quotaDrain;
+      await Promise.allSettled([...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
+      closeNativeTransport();
+      DIRECT_PROVIDER.bindDirectoryGuard(null);
+      ACCOUNT_POOL.bindDirectoryGuard(null);
+      directoryGuard.close();
+    })();
+    return shutdownPromise;
+  };
+  const exitAfterShutdown = (code = 0) => {
+    void shutdown().then(() => process.exit(code || process.exitCode || 0), error => {
+      gatewayError(`[Antigravity Gateway Error] 排空退出失败：${error.message}`);
+      process.exit(1);
+    });
   };
   TERMINAL = new TerminalConsole({
     usageStore: USAGE_STORE,
@@ -1975,6 +2055,8 @@ if (require.main === module) {
     accountStore: ACCOUNT_STORE,
     robinAccountPool: ROBIN_ACCOUNT_POOL,
     robinOAuthFlow: ROBIN_OAUTH_FLOW,
+    windowsLogin: WINDOWS_LOGIN,
+    windowsAccountStore: WINDOWS_ACCOUNT_STORE,
     robinAccountStore: ROBIN_ACCOUNT_STORE,
     onRobinAccountSaved: account => PROXY_MANAGER.bind(`robin:${account.id}`, ROBIN_OAUTH_PROXY_ID),
     commands: {
@@ -2002,7 +2084,7 @@ if (require.main === module) {
   ROBIN_ACCOUNT_POOL.start();
   server.requestTimeout = REQUEST_TIMEOUT + 10000;
   server.headersTimeout = 30000;
-  server.listen(PORT, HOST, async () => {
+  server.listen(PORT, HOST, () => { void trackTransaction((async () => {
     diagnosticReporter('gateway_process_started', {
       pid: process.pid,
       version: GATEWAY_VERSION,
@@ -2052,26 +2134,23 @@ if (require.main === module) {
     } else if (localAccountImport?.status === 'error') {
       gatewayWarn(`[Antigravity Gateway] 本地 agy 账号自动导入未完成：${localAccountImport.message}（不影响已有账号池和原有登录态）`);
     }
-    TERMINAL.showDashboard();
-    TERMINAL.start();
-  });
+    if (!shuttingDown) {
+      TERMINAL.showDashboard();
+      TERMINAL.start();
+    }
+  })()).catch(error => gatewayWarn(`[Antigravity Gateway Warning] 启动初始化未完成：${error.message}`)); });
   server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') gatewayError(`[Antigravity Gateway Error] ${HOST}:${PORT} 已被占用，请关闭旧进程或设置 ANTIGRAVITY_GATEWAY_PORT。`);
     else gatewayError(`[Antigravity Gateway Error] ${error.message}`);
-    QUOTA_MANAGER.stop();
-    ROBIN_ACCOUNT_POOL.stop();
-    USAGE_STORE.stop();
-    ACCOUNT_POOL.stop();
-    stopDiagnosticHeartbeat();
     diagnosticReporter('gateway_process_error', {
       pid: process.pid,
       errorCode: String(error.code || ''),
       message: String(error.message || error || '').slice(0, 1000)
     });
-    process.exitCode = 1;
+    exitAfterShutdown(1);
   });
-  process.once('SIGINT', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
-  process.once('SIGTERM', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
+  process.once('SIGINT', () => exitAfterShutdown());
+  process.once('SIGTERM', () => exitAfterShutdown());
 }
 
 module.exports = {
@@ -2097,5 +2176,23 @@ module.exports = {
   refreshClientModelCatalogs,
   resolveModel,
   runTurn,
-  startupBanner
+  startupBanner,
+  activeTransactions,
+  drainTransactions
 };
+
+}
+
+const daemonStart = require.main === module && ![
+  'help', 'version', 'serviceRequested', 'stats', 'codexCatalogPath',
+  'claudeConfigPath', 'models', 'claudeConfig'
+].some(key => CLI_ARGS[key]);
+if (daemonStart) {
+  void acquireDirectoryGuard(CONFIG_DIR).then(guard => {
+    try { initializeGateway(guard); }
+    catch (error) { guard.close(); throw error; }
+  }).catch(error => {
+    console.error(`[Antigravity Gateway Error] ${error.message}`);
+    process.exitCode = 1;
+  });
+} else initializeGateway();

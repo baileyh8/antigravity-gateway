@@ -4,8 +4,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REFRESH_INTERVAL_MS = 30 * 60_000;
-const TARGETED_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
+const { QUOTA_TTL_MS: REFRESH_INTERVAL_MS,
+  QUOTA_RETRY_MS: TARGETED_REFRESH_MIN_INTERVAL_MS } = require('./account-scheduling');
 const LOAD_PATH = '/v1internal:loadCodeAssist';
 const MODELS_PATH = '/v1internal:fetchAvailableModels';
 const USAGE_PATH = '/v1internal:retrieveUserQuotaSummary';
@@ -112,6 +112,7 @@ class QuotaManager {
     this.file = path.join(this.directory, 'quota.json');
     this.snapshots = this.load();
     this.timer = null;
+    this.startupTimer = null;
     this.refreshing = null;
     this.refreshingAccounts = new Map();
     this.refreshAttempts = new Map();
@@ -130,12 +131,25 @@ class QuotaManager {
     if (this.timer) return;
     this.timer = setInterval(() => { void this.refresh().catch(() => {}); }, this.intervalMs);
     this.timer.unref?.();
-    setTimeout(() => { void this.refresh().catch(() => {}); }, 1000).unref?.();
+    this.startupTimer = setTimeout(() => { this.startupTimer = null; void this.refresh().catch(() => {}); }, 1000);
+    this.startupTimer.unref?.();
   }
 
   stop() {
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  async drain() {
+    // 额度查询也可能刷新凭据或写状态，目录交接前等待已经派发的任务。
+    while (this.refreshing || this.refreshingAccounts.size) {
+      await Promise.allSettled([
+        ...(this.refreshing ? [this.refreshing] : []),
+        ...[...this.refreshingAccounts.values()].map(job => job.promise)
+      ]);
+    }
   }
 
   async refresh() {
@@ -231,8 +245,8 @@ class QuotaManager {
       const token = await provider.access(AbortSignal.timeout(30_000));
       const [loadResult, modelsResult, usageResult] = await Promise.allSettled([
         summaryOnly ? Promise.resolve(null) : fetchJson(provider, token, LOAD_PATH, { metadata: { ideType: 'ANTIGRAVITY' } }),
-        summaryOnly ? Promise.resolve(null) : fetchJson(provider, token, MODELS_PATH, {}),
-        fetchJson(provider, token, USAGE_PATH, {})
+        summaryOnly ? Promise.resolve(null) : fetchJson(provider, token, MODELS_PATH, provider.projectRequestBody?.() || {}),
+        fetchJson(provider, token, USAGE_PATH, provider.projectRequestBody?.() || {})
       ]);
       if (!isCurrent() || !this.usableEntry(this.currentEntry(accountId))) return null;
       if ((summaryOnly || (loadResult.status === 'rejected' && modelsResult.status === 'rejected')) && usageResult.status === 'rejected') {

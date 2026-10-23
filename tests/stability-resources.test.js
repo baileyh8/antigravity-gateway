@@ -102,3 +102,16 @@ test('session aliases retain only digests even for oversized client identifiers'
  const cache=new SessionManager(),raw='s'.repeat(1024*1024);const a=cache.alias('conversation','scope',raw);assert.equal(cache.alias('conversation','scope',raw),a);
  assert([...cache.aliases.keys()].every(k=>k.length<=64));assert.equal(cache.aliases.size,1);
 });
+
+test('generated async images retain typed paths and count against disk budget after restart', async t => {
+ const d=fs.mkdtempSync(path.join(os.tmpdir(),'generated-budget-'));
+ t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
+ const store=new MediaStore({directory:d});
+ const item=await store.saveAsync(Buffer.alloc(1500),{mediaType:'image/png',purpose:'generated',scope:'test'});
+ assert.match(store.contentPath(item.id),/\.png$/);
+ const restarted=new MediaStore({directory:d}); restarted.diskLimit=2500;
+ await assert.rejects(restarted.saveAsync(Buffer.alloc(1500),{mediaType:'image/jpeg',purpose:'generated',scope:'test'}),{status:507});
+ assert.equal((await restarted.getAsync(item.id,{scope:'test'})).buffer.length,1500);
+ assert.equal(await restarted.deleteAsync(item.id,{scope:'test'}),true);
+ assert.deepEqual(fs.readdirSync(d),[]);
+});

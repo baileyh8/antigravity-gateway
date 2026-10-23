@@ -8,6 +8,21 @@
 
 ## 中文
 
+### 上游整合开发版：1.7.1-bailey.1
+
+当前源码整合上游 `db939d4`（1.7.1 及其后续修复）。这不是已发布或已部署版本；下方 1.5.1 的实测记录只属于该历史版本。
+
+- Cloud Code 原生 Go 传输、会话持久化、客户端上下文压缩及工具映射；包含 Claude Code 2.1.284/2.1.304、Codex 和 Hermes 的定向适配。未知客户端保持兼容路径，不代执行客户端工具。
+- 取消或超时不再连锁重试、冷却健康账号；修复容器 PID 复用导致的会话锁死锁、目录锁交接和完整请求排空，保留运行时预算通知的位置以改善前缀缓存。
+- Robin 连接丢失后可使用客户端提供的完整工具历史继续；不虚构工具回执或自动恢复已删除账号。
+- Windows 新增 `add-gemini-win`，使用本机 Chrome/Edge 登录并保存独立的 `gemini-win-accounts/`。此流程要求 Windows 本机浏览器，不能替代 VPS 看板的 OAuth 添加流程。Windows 通道不支持非视频附件；视频沿用 Cloud Code 路由，原生 usage 仍未知。
+- 三种通道共享按额度压力加权的调度策略；会话亲和默认 5 小时，可用 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整。保留每账号代理、12 路总请求、独立 4 路媒体与 4 路生图、字节预算和 SSE 背压。
+
+Cloud Code 原生传输按不同代理地址复用独立 helper 进程，并覆盖 helper 的 `NO_PROXY`，防止绕开账号出口；Token 和普通 HTTP 请求仍经同一绑定代理。代理缺失时不回落直连。安装包包含六种平台/架构的原生程序，运行时校验完整性并解压到配置目录，普通安装无需 Go；源码重建使用 `npm run build:native`，要求上游指定的 Go 1.27.2。原生 helper 会增加进程和磁盘占用，尚未进行本版 VPS 资源及真实模型验收。
+
+Windows 终端添加也使用 `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID` 自动绑定；服务端请求在有效绑定前不会直连。登录浏览器的网络由本机浏览器设置决定。参见 [Windows 通道](docs/windows-native.md) 和 [Robin 通道](docs/robin-provider.md)。上游实验记录只代表上游验证，不作为本维护版部署证明。
+
+
 Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容网关，让 Claude Code、Codex CLI、Trae、DSH、Hermes 及其他兼容客户端调用账号可用的模型。支持导入本地 Antigravity CLI（`agy`）登录态，也支持使用已授权的托管账号池。
 
 本仓库由 Bailey 独立维护，基于 [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway)，保留原项目 MIT 许可与历史。`main` 是本仓库的默认安装和维护分支；`codex/bailey-stability` 用于当前稳定性开发。问题和贡献请提交到[本仓库](https://github.com/baileyh8/antigravity-gateway)，本维护线不自动向原项目提交或合并。
@@ -618,6 +633,21 @@ MIT，见 [LICENSE](LICENSE)。
 ---
 
 ## English
+
+### Upstream integration development build: 1.7.1-bailey.1
+
+This source integrates upstream `db939d4` (1.7.1 plus subsequent fixes). It is not a published release or deployed acceptance result. The 1.5.1 acceptance statements below describe that historical build only.
+
+- Native Go Cloud Code transport, persisted sessions, compaction and targeted Claude Code 2.1.284/2.1.304, Codex and Hermes tool adapters. Unknown clients retain compatibility behavior; tools execute on clients.
+- Cancellation/timeout no longer cascades across healthy accounts. Includes container PID-reuse lease fixes, directory ownership and transaction draining, and position-preserving runtime budget notices for prefix caching.
+- Robin can forward complete client-supplied tool history after connection loss, without inventing receipts or restoring deleted accounts.
+- `add-gemini-win` adds local Windows Chrome/Edge login with separate `gemini-win-accounts/` credentials. It requires a Windows browser and does not replace VPS dashboard OAuth. Non-video attachments are unsupported on this channel; video retains Cloud Code routing and native usage remains unknown.
+- Shared quota-aware weighted scheduling; affinity defaults to five hours (`ANTIGRAVITY_AFFINITY_TTL_SECONDS`). Per-account proxies, 12 total requests, separate four-way media and image pools, byte budgets and SSE backpressure remain.
+
+Native helpers are reused per proxy endpoint with proxy bypass variables cleared. Token and ordinary HTTP requests use the same account proxy; invalid bindings never fall back to direct access. Packages include verified native binaries for six platform/architecture combinations; normal installs need no Go toolchain. `npm run build:native` requires upstream's Go 1.27.2. Helpers add process and disk overhead; this build has not undergone VPS resource or real-model acceptance.
+
+Windows terminal onboarding also binds `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`; server requests fail closed until a valid binding exists. Login browser routing follows local browser settings. See [Windows channel](docs/windows-native.md) and [Robin channel](docs/robin-provider.md). Upstream experiment reports are not deployment evidence for this distribution.
+
 
 Antigravity Gateway is an Anthropic/OpenAI-compatible gateway for local or server deployment. Claude Code, Codex CLI, Trae, DSH, Hermes and other compatible clients can use available account models through imported Antigravity CLI (`agy`) credentials or an authorized managed account pool.
 
