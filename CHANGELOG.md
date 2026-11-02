@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1-bailey.4 - 2026-11-02
+
+- Support retiring the legacy environment client key while retaining multi-key authentication. Admin model probes use short-lived, single-model keys removed on success and failure, independently of client credentials.
+- Preserve upstream LeeFeee attribution, existing client key identities and scoped usage attribution.
+
 ## 1.7.1-bailey.3 - 2026-11-02
 
 - Schedule Gemini, Claude/GPT and Cloud Code Argon using their own quota groups; Robin/Windows Argon keeps its native GXU group. Round-robin weights are independent per group; expired reset windows do not become false zero quotas.
