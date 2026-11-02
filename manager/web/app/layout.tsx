@@ -3,7 +3,7 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 
 export const metadata: Metadata = {
-  title: 'agy-manager',
+  title: 'antigravity-gateway · 管理后台',
   description: 'Antigravity Gateway 管理后台',
   robots: { index: false, follow: false },
   icons: { icon: `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/favicon.svg` }

@@ -21,11 +21,16 @@ function broken(parts, code = 'upstream_read_error', onError) {
     else { onError?.(); controller.error(Object.assign(new Error('controlled response read failure'), { code })); }
   } }, { highWaterMark: 0 }), { headers: { 'content-type': 'text/event-stream' } });
 }
-function fixture(t) {
+function fixture(t, { onDelay } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-stream-tests-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const requests = [], delays = [], original = global.setTimeout;
-  t.mock.method(global, 'setTimeout', (fn, ms, ...args) => { delays.push(ms); return original(fn, Math.min(ms, 2), ...args); });
+  t.mock.method(global, 'setTimeout', (fn, ms, ...args) => {
+    delays.push(ms);
+    const timer = original(fn, Math.min(ms, 2), ...args);
+    if (onDelay) queueMicrotask(() => onDelay(ms));
+    return timer;
+  });
   const provider = (fetch, options = {}) => new DirectAntigravityProvider({ sessionStore: new AgySessionStore({ directory }),
     accessToken: 'test-token', projectId: 'test-project', retryPolicy: 'agy',
     localAuth: { isConfigured: () => false, load: () => ({ sourcePath: 'managed-account:stream-test' }) }, ...options,
@@ -440,8 +445,11 @@ for (const mixed of [false, true]) test(`${mixed ? 'mixed HTTP and empty SSE' : 
 });
 
 test('cancelled empty-read backoff allocates no unsent logical request or model step', async t => {
-  const f = fixture(t), controller = new AbortController();
-  await assert.rejects(f.provider(async () => broken([], 'upstream_read_error', () => setImmediate(() => controller.abort())))
+  const controller = new AbortController();
+  // Cancel after retry sleep has installed its listener. A setImmediate raced
+  // the fixture's shortened timer when the CI event loop was under load.
+  const f = fixture(t, { onDelay: () => controller.abort() });
+  await assert.rejects(f.provider(async () => broken([], 'upstream_read_error'))
     .send({ messages: f.messages }, model, { sessionId: 's', signal: controller.signal }), { name: 'AbortError' });
   assert.deepEqual(f.requests.map(step), [1]);
   const saved = JSON.parse(fs.readFileSync(path.join(f.directory, fs.readdirSync(f.directory).find(n => n.endsWith('.json')))));

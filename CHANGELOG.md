@@ -6,6 +6,7 @@
 - Include the independent `manager/` application: dashboard, accounts/proxies, Gemini/Claude-GPT/Argon quota groups, usage/cache metrics, request/diagnostic/audit logs, model discovery/settings, API keys and password settings.
 - Keep inference, credentials, key validation and scheduling in the proxy core. The separate Node management service accesses a loopback versioned API; Next.js exports static pages under `/admin`.
 - Add compact two-decimal K/M/B metrics, thin bars, smooth curves and hover/tap chart details, unified masked-email labels, CSRF/Origin checks, conditional reads and bounded log scans.
+- Match dashboard metric icons to their meaning and add the antigravity-gateway application title. Make the cancelled-backoff test deterministic under loaded CI timers.
 - Add current-build screenshots with synthetic data and independent installation documentation. npm core installs do not pull frontend build dependencies.
 
 - Exclude the four unused tab/chat internal IDs and the retired Gemini 2.5 Pro from discovery listings and exported catalogs; model smoke tests use the upstream default output configuration instead of an invalid universal 32-token cap.

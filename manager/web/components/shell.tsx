@@ -16,13 +16,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <div className="wrap">
-        <div className="user-menu" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
+        <header className="app-header">
+          <a className="app-title" href={`${BASE_PATH}/dashboard/`}>antigravity-gateway</a>
+          <div className="user-menu">
           <span>{me?.username || ''}</span>
           {me?.role ? <span className="badge">{me.role === 'admin' ? '管理员' : '只读'}</span> : null}
           <button className="btn ghost" type="button" onClick={handleLogout}>
             <LogOutIcon size={14} />退出
           </button>
-        </div>
+          </div>
+        </header>
         {children}
       </div>
       <Dock />
