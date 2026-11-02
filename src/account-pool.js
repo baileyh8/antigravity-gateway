@@ -646,6 +646,8 @@ class AccountPool {
       attempted.add(entry.account.id);
       let responseSeen = false;
       try {
+        if (this.entries.get(entry.account.id) !== entry) throw new DirectProviderError('账号已更新，请重试。', { code: 'account_changed', status: 409 });
+        options.signal?.throwIfAborted();
         options.onAccountSelected?.({
           accountId: entry.account.id,
           email: entry.account.email,

@@ -108,7 +108,8 @@ class ExecutionSlots {
       try { const entry = select(); if (entry) return Promise.resolve(this.reserve(entry, provider)); }
       catch (error) { return Promise.reject(error); }
     }
-    if (!hasCandidates()) return Promise.resolve(null);
+    try { if (!hasCandidates()) return Promise.resolve(null); }
+    catch (error) { return Promise.reject(error); }
     return new Promise((resolve, reject) => {
       const waiter = { select, provider, hasCandidates, resolve, reject, leave: null };
       const fail = error => { this.waiters = this.waiters.filter(item => item !== waiter); reject(error); };
@@ -121,9 +122,9 @@ class ExecutionSlots {
     this.draining = true;
     try {
       for (let i = 0; i < this.waiters.length && this.active < this.limit;) {
-        const waiter = this.waiters[i]; let entry, error;
-        try { entry = waiter.select(); } catch (failure) { error = failure; }
-        if (!error && !entry && waiter.hasCandidates()) { i++; continue; }
+        const waiter = this.waiters[i]; let entry, error, canWait;
+        try { entry = waiter.select(); canWait = !entry && waiter.hasCandidates(); } catch (failure) { error = failure; }
+        if (!error && !entry && canWait) { i++; continue; }
         this.waiters.splice(i, 1); waiter.leave();
         if (error) waiter.reject(error);
         else waiter.resolve(entry ? this.reserve(entry, waiter.provider) : null);

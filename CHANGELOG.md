@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 1.7.1-bailey.3
+## 1.7.1-bailey.3 - 2026-11-02
 
 - Schedule Gemini, Claude/GPT and Cloud Code Argon using their own quota groups; Robin/Windows Argon keeps its native GXU group. Round-robin weights are independent per group; expired reset windows do not become false zero quotas.
 - Share five inference slots per account across models, with 60 total execution slots, 120 queued requests across admission stages, and a cumulative 30-second queue budget. Busy affinity accounts can switch before dispatch; unfinished Robin tool tasks keep their owner.

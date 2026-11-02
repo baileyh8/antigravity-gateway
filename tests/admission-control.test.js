@@ -63,3 +63,12 @@ test('cumulative waiting budget is shared across admission stages, excluding run
   assert.throws(() => budget.enter(signal, () => {}), { code: 'queue_timeout' });
   assert.equal(budget.size, 0);
 });
+
+test('a failed queued selector rejects and releases its queue entry', async () => {
+  const budget = new WaitBudget(), slots = new ExecutionSlots({ limit: 1, budget });
+  const release = await slots.acquire(); let failed = false;
+  const pending = slots.acquireAccount(() => { if (failed) throw new Error('account removed'); return null; });
+  failed = true; release();
+  await assert.rejects(pending, /account removed/);
+  assert.equal(slots.active, 0); assert.equal(budget.size, 0);
+});

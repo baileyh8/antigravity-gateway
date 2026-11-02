@@ -258,6 +258,8 @@ class RobinAccountPool {
       const initialFingerprint = credentialFingerprint(entry.account);
       const upstreamSessionId = JSON.stringify([options.clientId || 'client', upstreamSessionScope(normalized, options), 'robin', entry.account.id]);
       try {
+        if (!this.currentAccount(entry, expectedAuthorization)) throw new RobinProviderError('Gemini 账号授权已变化，请重试。', { code: 'robin_credentials_changed', status: 409 });
+        options.signal?.throwIfAborted();
         options.onAccountSelected?.({
           accountId: entry.account.id,
           email: entry.account.email,
