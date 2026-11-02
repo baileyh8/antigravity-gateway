@@ -2,7 +2,7 @@
 
 **特别感谢 [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway) 的作者与贡献者。** 本项目是基于原项目继续维护的分支方向；上游的网关与协议实现是基础，本分支围绕代理基座和独立管理后台的解耦继续发展。保留原作者版权、项目历史与根目录 [MIT 许可](../LICENSE)。
 
-本目录随 Gateway `1.7.1-bailey.2` 提供，管理应用版本为 `0.1.0`。后台不会单独运行代理逻辑。
+本目录随 Gateway `1.7.1-bailey.3` 提供，管理应用版本为 `0.1.0`。后台不会单独运行代理逻辑。
 
 ## 架构与功能
 

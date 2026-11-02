@@ -860,10 +860,11 @@ test('Robin account health survives restart and clears only with new credentials
 
 test('an obsolete authorization cannot deliver pending tools or quarantine the new Robin grant', async t => {
   for (const failure of [false, true]) {
-    let resolve, reject, requests = 0, stopped = 0, disabled = 0;
+    let resolve, reject, started, requests = 0, stopped = 0, disabled = 0;
+    const upstreamStarted = new Promise(yes => { started = yes; });
     const { pool, store } = poolHarness(t, async () => {
       requests++;
-      return new Promise((yes, no) => { resolve = yes; reject = no; });
+      return new Promise((yes, no) => { resolve = yes; reject = no; started(); });
     });
     pool.bind('affinity', 'a');
     const old = pool.entries.get('a');
@@ -873,6 +874,7 @@ test('an obsolete authorization cannot deliver pending tools or quarantine the n
     old.provider.cancelTask = key => cancelled.push(key);
     const request = pool.send(normalized, ARGON_MODEL, { clientId: 'client', sessionId: 'task', routingKey: 'affinity' });
     const rejection = assert.rejects(request, failure ? { status: 403 } : { code: 'robin_credentials_changed', status: 409 });
+    await upstreamStarted;
     store.update('a', { refreshToken: 'new-grant' });
     pool.reload();
     if (failure) reject(Object.assign(new Error('Verify your account'), { status: 403 }));
@@ -904,15 +906,17 @@ test('normal access-token refresh preserves Robin task ownership and account aff
 });
 
 test('a late old-token authentication failure cannot quarantine the current Robin token', async t => {
-  let reject, requests = [];
+  let reject, started, requests = [];
+  const upstreamStarted = new Promise(yes => { started = yes; });
   const { pool, store } = poolHarness(t, async id => {
     requests.push(id);
     if (id === 'b') return { text: 'fallback', toolCalls: [], usage: {} };
-    return new Promise((_resolve, no) => { reject = no; });
+    return new Promise((_resolve, no) => { reject = no; started(); });
   });
   pool.bind('affinity', 'a');
   const oldFingerprint = robinCredentialFingerprint(store.list().find(a => a.id === 'a'));
   const pending = pool.send(normalized, ARGON_MODEL, { sessionId: 'request', routingKey: 'affinity' });
+  await upstreamStarted;
   store.update('a', { accessToken: 'new-token' }); pool.reload();
   reject(Object.assign(new Error('expired old token'), { status: 401, upstreamAuthFingerprint: oldFingerprint }));
   const result = await pending;
@@ -923,11 +927,13 @@ test('a late old-token authentication failure cannot quarantine the current Robi
 });
 
 test('a late old-token success cannot clear an authoritative failure for the current Robin token', async t => {
-  let resolve;
-  const { pool, store } = poolHarness(t, async () => new Promise(yes => { resolve = yes; }));
+  let resolve, started;
+  const upstreamStarted = new Promise(yes => { started = yes; });
+  const { pool, store } = poolHarness(t, async () => new Promise(yes => { resolve = yes; started(); }));
   pool.bind('affinity', 'a');
   const oldFingerprint = robinCredentialFingerprint(store.list().find(a => a.id === 'a'));
   const pending = pool.send(normalized, ARGON_MODEL, { sessionId: 'request', routingKey: 'affinity' });
+  await upstreamStarted;
   store.update('a', { accessToken: 'new-token' }); pool.reload();
   pool.saveHealth(pool.entries.get('a'), 'account', 'authentication_error', 'current-token failure', Infinity);
   resolve({ text: 'completed old task', toolCalls: [], usage: {}, upstreamAuthFingerprint: oldFingerprint });

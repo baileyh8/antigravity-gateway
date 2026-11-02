@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.1-bailey.3 - 2026-11-02
+
+- Schedule Gemini, Claude/GPT and Cloud Code Argon using their own quota groups; Robin/Windows Argon keeps its native GXU group. Round-robin weights are independent per group; expired reset windows do not become false zero quotas.
+- Share five inference slots per account across models, with 60 total execution slots, 120 queued requests across admission stages, and a cumulative 30-second queue budget. Busy affinity accounts can switch before dispatch; unfinished Robin tool tasks keep their owner.
+- Reserve account and global slots atomically. Dispatch the oldest runnable waiter so saturated models cannot block unrelated free accounts. Release reservations on every success, failure and cancellation.
+- Keep image/media sublimits at four. Open initial SSE streams only after execution admission so initial queue overflow/timeout can return HTTP 429 with Retry-After.
+- Verify boundaries with synthetic providers, not upstream account capacity probes. These settings are configured ceilings, not an upstream capacity guarantee or 100MB memory limit.
+
 ## 1.7.1-bailey.2 - 2026-11-02
 
 - With sincere thanks to LeeFeee and all contributors to [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway). This is a maintained fork direction built on that project; original MIT copyright and history remain intact.

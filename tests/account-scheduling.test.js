@@ -66,13 +66,13 @@ test('Gemini weekly pressure uses fractional values, logarithmic bands, and a on
   assert.equal(geminiWeeklyPressure({ groups: [denied] }, NOW).kind, 'exhausted');
 });
 
-test('all requested model families use Gemini weekly bands then Gemini five-hour resets', async (t) => {
+test('Gemini requests use Gemini weekly bands and resets', async (t) => {
   const { pool, accounts } = fixture(t, [
     { groups: [group('gemini', 0.6, 12, 1), group('3p', 0.9, 0.1, 0.1)] },
     { groups: [group('gemini', 0.8, 20, 0.5), group('3p', 0, 24, 0.1)] },
     { groups: [group('gemini', 0.2, 2, 4), group('3p', 0.1, 168, 4)] }
   ]);
-  for (const model of ['gemini-test', 'claude-test', 'gpt-test', 'custom-model']) {
+  for (const model of ['gemini-test']) {
     assert.deepEqual(pool.orderedCandidates(model, '').map((entry) => entry.account.id), [accounts[2].id, accounts[1].id, accounts[0].id]);
     pool.weights.clear();
     const counts = new Map(accounts.map((account) => [account.id, 0]));
@@ -107,7 +107,7 @@ test('missing Gemini weekly data falls back to five-hour resets and never uses 3
     { groups: [{ id: 'gemini', buckets: [group('gemini', 0.5, 24, 3).buckets[1]] }, group('3p', 0.9, 0.1, 0.1)] },
     { groups: [{ id: 'gemini', buckets: [group('gemini', 0.5, 24, 1).buckets[1]] }, group('3p', 0, 24, 4)] }
   ]);
-  assert.equal(pool.orderedCandidates('claude-test', '')[0].account.id, accounts[1].id);
+  assert.equal(pool.orderedCandidates('gemini-test', '')[0].account.id, accounts[1].id);
 });
 
 test('unknown pressure and weekly exhaustion remain advisory fallback lanes', async (t) => {
@@ -121,8 +121,8 @@ test('unknown pressure and weekly exhaustion remain advisory fallback lanes', as
   pool.entries.get(accounts[1].id).account.enabled = false;
   assert.equal((await pool.send({}, 'gemini-test')).accountId, accounts[0].id);
   pool.entries.get(accounts[2].id).account.enabled = true;
-  snapshots.get(accounts[2].id).available = false;
-  assert.equal(pool.orderedCandidates('gemini-test', '')[0].account.id, accounts[0].id);
+  snapshots.get(accounts[2].id).models = { 'gemini-test': { available: false } };
+  assert.ok(pool.quotaRanks('gemini-test', pool.eligible('gemini-test')).every(rank => rank.depleted));
 });
 
 test('same-band equal-reset accounts rotate fairly and candidate inspection does not alter weights', async (t) => {

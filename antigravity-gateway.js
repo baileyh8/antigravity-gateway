@@ -12,6 +12,7 @@ const { AccountPool } = require('./src/account-pool');
 const { writeStream, streamReady, endStream } = require('./src/sse-writer');
 const { pipeline } = require('node:stream/promises');
 const { ByteBudget } = require('./src/resource-budget');
+const { AdmissionError, Semaphore, executionSlots, MAX_CONCURRENCY, MAX_QUEUE } = require('./src/admission-control');
 const { gracefulShutdown } = require('./src/graceful-shutdown');
 const { RobinOnboarding } = require('./src/robin-onboarding');
 const { ProxyManager } = require('./src/proxy-manager');
@@ -126,9 +127,6 @@ const PROMPT_BYTE_LIMIT = Number(
   || 64 * 1024 * 1024
 );
 const TRANSPORT = String(process.env.ANTIGRAVITY_GATEWAY_TRANSPORT || 'direct').trim().toLowerCase();
-const DEFAULT_MAX_CONCURRENCY = TRANSPORT === 'agy' ? 4 : 12;
-const MAX_CONCURRENCY = Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY || DEFAULT_MAX_CONCURRENCY));
-const MAX_QUEUE = Math.max(0, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_QUEUE || 32));
 const MODEL_CACHE_MS = 60000;
 function readKeyPepper() {
   const inline = String(process.env.AGY_KEY_PEPPER || '').trim();
@@ -262,47 +260,7 @@ let modelCache = { at: 0, models: [], error: null };
 let cloudcodeModelCache = { at: 0, models: [] };
 let versionCache = null;
 
-class Semaphore {
-  constructor(limit, maxQueue) {
-    this.limit = limit;
-    this.maxQueue = maxQueue;
-    this.active = 0;
-    this.waiters = [];
-  }
-
-  acquire(signal) {
-    if (signal?.aborted) return Promise.reject(signal.reason || new GatewayError('请求已取消。', { code: 'request_aborted', status: 499 }));
-    if (this.active < this.limit) {
-      this.active += 1;
-      return Promise.resolve(() => this.release());
-    }
-    if (this.waiters.length >= this.maxQueue) {
-      return Promise.reject(new GatewayError('网关并发队列已满。', { code: 'gateway_busy', status: 429 }));
-    }
-    return new Promise((resolve, reject) => {
-      const waiter = { resolve, reject, signal, abort: null };
-      waiter.abort = () => {
-        const index = this.waiters.indexOf(waiter);
-        if (index >= 0) this.waiters.splice(index, 1);
-        reject(new GatewayError('客户端已取消排队请求。', { code: 'request_aborted', status: 499 }));
-      };
-      signal?.addEventListener('abort', waiter.abort, { once: true });
-      this.waiters.push(waiter);
-    });
-  }
-
-  release() {
-    const waiter = this.waiters.shift();
-    if (!waiter) {
-      this.active = Math.max(0, this.active - 1);
-      return;
-    }
-    waiter.signal?.removeEventListener('abort', waiter.abort);
-    waiter.resolve(() => this.release());
-  }
-}
-
-const requestSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
+const requestSlots = executionSlots;
 // Admit uploads before allocating/normalizing complete request bodies.
 const uploadSlots = new Semaphore(MAX_CONCURRENCY, MAX_QUEUE);
 const mediaSlots = new Semaphore(Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY || 4)), MAX_QUEUE);
@@ -314,7 +272,7 @@ const bodyReservations = new WeakMap();
 function concurrencySnapshot() {
   const snapshot = pool => ({ active: pool.active, limit: pool.limit, queued: pool.waiters.length });
   return {
-    requests: snapshot(requestSlots), media: snapshot(mediaSlots), images: snapshot(imageSlots),
+    requests: executionSlots.snapshot(), media: snapshot(mediaSlots), images: snapshot(imageSlots),
     memory: { body: { used: bodyBudget.used, limit: bodyBudget.limit }, resolvedMedia: { used: resolvedMediaBudget.used, limit: resolvedMediaBudget.limit } }
   };
 }
@@ -885,7 +843,7 @@ function errorBody(error, protocol) {
 }
 
 function mapAgyError(error) {
-  if (error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
+  if (error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
     || error instanceof MultimediaError || error instanceof RobinProviderError || error instanceof ProviderRouterError
     || error instanceof SessionIdentityError) return error;
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || /request aborted/i.test(String(error?.message || ''))) {
@@ -943,8 +901,8 @@ async function argonVideoFallbackModel() {
   return fallback;
 }
 
-async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
-  const releaseRequest = await requestSlots.acquire(signal);
+async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, onAdmitted, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
+  const releaseRequest = usesDirectTransport() || ROBIN_ACCOUNT_POOL.ownsModel(model) ? () => {} : await requestSlots.acquire(signal);
   let releaseMedia;
   try {
     if ((normalized.messages || []).some(m => (m.parts || []).some(p => p.type === 'media' || p.media?.length))) releaseMedia = await mediaSlots.acquire(signal);
@@ -986,6 +944,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         gatewayLog(`[Antigravity Gateway] Argon 视频请求转入原有多媒体路径 model=${upstreamModel} requested=${model} ${trace}`);
       }
       const onAccountSelected = ({ accountId, email, source, attempt }) => {
+        onAdmitted?.();
         gatewayLog(`[Antigravity Gateway] 路由账号=${email || accountId} source=${source} model=${upstreamModel} attempt=${attempt} ${trace}`);
       };
       let raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, {
@@ -1123,6 +1082,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
   }); } catch (error) { release(); throw error; }
   activeWorkers.add(worker);
   try {
+    onAdmitted?.();
     const trackedSend = async (input, sendOptions) => {
       try {
         const output = await worker.send(input, sendOptions);
@@ -1635,10 +1595,11 @@ async function handleAnthropic(payload, req, res, signal) {
   const requestClass = normalized.autoMode ? 'auto-mode' : 'client';
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/messages model=${model} requested=${normalized.model || '-'} class=${requestClass} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} maxOut=${normalized.generationConfig?.maxOutputTokens || '-'} stream=${normalized.stream} ${identityTrace(identity)}`);
-  const stopHeartbeat = normalized.stream ? beginSse(res) : null;
+  let stopHeartbeat = null;
+  const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
   const liveEmitter = textStreamingAllowed(normalized) ? createAnthropicTextEmitter(res, normalized.model || model) : null;
   let result;
-  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
+  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
   const body = anthropicResponse(normalized.model || model, result);
   if (liveEmitter) liveEmitter.finish(body);
@@ -1652,10 +1613,11 @@ async function handleChat(payload, req, res, signal) {
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/chat/completions model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
-  const stopHeartbeat = normalized.stream ? beginSse(res) : null;
+  let stopHeartbeat = null;
+  const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
   const liveEmitter = textStreamingAllowed(normalized) ? createChatTextEmitter(res, normalized.model || model, { includeUsage: normalized.includeUsage }) : null;
   let result;
-  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
+  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
   const body = chatResponse(normalized.model || model, result);
   if (liveEmitter) liveEmitter.finish(body);
@@ -1678,12 +1640,13 @@ async function handleResponses(payload, req, res, signal) {
     const customTools = (payload.tools || []).filter((tool) => tool?.type === 'custom');
     if (customTools.length) gatewayLog(`[Antigravity Gateway Debug] custom-tools=${JSON.stringify(customTools).slice(0, 4000)}`);
   }
-  const stopHeartbeat = normalized.stream ? beginSse(res) : null;
+  let stopHeartbeat = null;
+  const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
   const responseId = `resp_${crypto.randomUUID().replaceAll('-', '')}`;
   const liveEmitter = textStreamingAllowed(normalized) ? createResponsesTextEmitter(res, normalized.model || model, responseId) : null;
   let result;
   const sessionId = identity.sessionId;
-  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
+  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
   const body = responsesResponse(normalized.model || model, result, responseId);
   const stored = SESSION_MANAGER.bindResponse(responseId, req, {
@@ -1788,7 +1751,7 @@ async function requestHandler(req, res) {
   const controller = new AbortController();
   activeControllers.add(controller);
   let timedOut = false;
-  let releaseUpload, releaseRoute;
+  let releaseUpload, releaseRoute, releaseFileRequest;
   const deadline = setTimeout(() => {
     timedOut = true;
     controller.abort(new GatewayError('网关请求超时。', { code: 'request_timeout', status: 504 }));
@@ -1805,7 +1768,7 @@ async function requestHandler(req, res) {
   try {
     // Wait for the dedicated pool before holding a body-admission slot.
     if (req.method === 'POST' && route.startsWith('/v1/images/')) releaseRoute = await imageSlots.acquire(controller.signal);
-    if (req.method === 'POST' && route === '/v1/files') releaseRoute = await mediaSlots.acquire(controller.signal);
+    if (req.method === 'POST' && route === '/v1/files') { releaseRoute = await mediaSlots.acquire(controller.signal); releaseFileRequest = await requestSlots.acquire(controller.signal); }
     if (req.method === 'POST') releaseUpload = await uploadSlots.acquire(controller.signal);
     // Claude Code probes custom providers with this lightweight endpoint.
     // Treat it as a connectivity check instead of logging a false 404 error.
@@ -1896,6 +1859,7 @@ async function requestHandler(req, res) {
     const diagnostic = process.env.ANTIGRAVITY_GATEWAY_DEBUG === '1' && error.details ? ` (${error.details})` : '';
     gatewayError(`[Antigravity Gateway Error] ${error.message}${diagnostic}`);
     if (!res.headersSent) {
+      if (error instanceof AdmissionError && error.status === 429) res.setHeader('Retry-After', '1');
       if (['memory_budget_exceeded', 'request_too_large'].includes(error.code)) {
         res.setHeader('Connection', 'close');
         res.once('finish', () => req.destroy());
@@ -1912,6 +1876,7 @@ async function requestHandler(req, res) {
     activeControllers.delete(controller);
     releaseUpload?.();
     releaseRoute?.();
+    releaseFileRequest?.();
   }
 }
 

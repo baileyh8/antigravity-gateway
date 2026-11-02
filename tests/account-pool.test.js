@@ -214,8 +214,8 @@ test('model capability filtering leaves existing ranking rules unchanged among s
     get: (id) => ({
       available: true,
       groups: [{
-        id: 'gemini',
-        displayName: 'Gemini Models',
+        id: '3p',
+        displayName: 'Claude and GPT models',
         buckets: [{
           window: '5h',
           resetTime: new Date(now + (id === soon.id ? 60 : id === late.id ? 240 : 10) * 60_000).toISOString()
@@ -630,7 +630,7 @@ test('quota snapshots prioritize healthy accounts but never hard-block the last 
   assert.match(fallback.text, /@example\.com$/);
 });
 
-test('account selection always prioritizes the nearest Gemini five-hour reset', (t) => {
+test('account selection uses the requested family five-hour reset', (t) => {
   const store = tempStore(t);
   const soon = store.save(account('soon@example.com'));
   const middle = store.save(account('middle@example.com'));
@@ -659,7 +659,7 @@ test('account selection always prioritizes the nearest Gemini five-hour reset', 
 
   assert.equal(pool.orderedCandidates('gemini-3.8-flash-high', '')[0].account.id, soon.id);
   pool.weights.clear();
-  assert.equal(pool.orderedCandidates('claude-sonnet-4-6', '')[0].account.id, soon.id);
+  assert.equal(pool.orderedCandidates('claude-sonnet-4-6', '')[0].account.id, middle.id);
 
   pool.sessions.set('sticky-session', { accountId: late.id, at: Date.now() });
   pool.weights.clear();
