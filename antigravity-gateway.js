@@ -1578,13 +1578,21 @@ async function testAdminModel(id) {
   if (Date.now() - lastAdminModelTest < 2000) throw new GatewayError('请等待 2 秒后再测试。', { status: 429, code: 'test_rate_limited' });
   lastAdminModelTest = Date.now();
   const started = Date.now();
-  const response = await fetch(`http://127.0.0.1:${PORT}/v1/chat/completions`, {
-    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY || 'antigravity-gateway'}` },
-    body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'Reply with exactly OK' }], stream: false }), signal: AbortSignal.timeout(25000)
-  });
-  const body = await response.json();
-  if (!response.ok) throw new GatewayError(body.error?.message || '模型测试失败。', { status: response.status, code: body.error?.code || 'model_test_failed' });
-  return { model: id, upstreamModel: response.headers.get('x-antigravity-model'), latencyMs: Date.now() - started, usage: body.usage, text: String(body.choices?.[0]?.message?.content || '').slice(0, 200) };
+  // Use a short-lived, model-scoped key so management probes do not depend
+  // on the optional legacy client key or charge a user's client key.
+  const probe = MULTI_KEY ? KEY_STORE.create({ name: '后台模型测试', models: [id],
+    expiresAt: new Date(Date.now() + 60000).toISOString(), actor: 'admin-model-test' }) : null;
+  try {
+    const response = await fetch(`http://127.0.0.1:${PORT}/v1/chat/completions`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${probe?.secret || API_KEY || 'antigravity-gateway'}` },
+      body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'Reply with exactly OK' }], stream: false }), signal: AbortSignal.timeout(25000)
+    });
+    const body = await response.json();
+    if (!response.ok) throw new GatewayError(body.error?.message || '模型测试失败。', { status: response.status, code: body.error?.code || 'model_test_failed' });
+    return { model: id, upstreamModel: response.headers.get('x-antigravity-model'), latencyMs: Date.now() - started, usage: body.usage, text: String(body.choices?.[0]?.message?.content || '').slice(0, 200) };
+  } finally {
+    if (probe) KEY_STORE.remove(probe.key.id);
+  }
 }
 
 async function handleAnthropic(payload, req, res, signal) {

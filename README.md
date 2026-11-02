@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.3 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.4 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.3
+### 当前源码版本：1.7.1-bailey.4
+
+可在启用 `AGY_MULTI_KEY=1` 并确认各客户端专用密钥有效后，移除服务环境中的 `ANTIGRAVITY_GATEWAY_API_KEY`，禁用旧内置主密钥。无密钥请求仍返回401。后台模型测试使用短期、限单模型的临时密钥，完成或失败后删除，不借用客户端密钥。
 
 调度按请求模型匹配额度组：Gemini、Claude/GPT、Argon 分别使用对应的周/5h额度；组间轮询权重独立，单模型有效容量至多为“支持账号数 × 5”，同时受全局60路限制。组额度缺失时不借用其他组；已过期的重置窗口视为未知。额度快照是调度参考，实际上游限流仍按原冷却机制处理。
 
@@ -674,7 +676,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.3
+### Current source version: 1.7.1-bailey.4
+
+After enabling `AGY_MULTI_KEY=1` and migrating clients to dedicated keys, remove `ANTIGRAVITY_GATEWAY_API_KEY` from the service environment to retire the legacy master key. Missing credentials still return 401. Admin model probes use short-lived, model-scoped keys with cleanup on success or failure instead of depending on a client key.
 
 Quota selection follows the requested model: Gemini, Claude/GPT and Argon use separate weekly/5h groups and independent weighted rotation. Five inference slots are shared across each account’s models, capped at 60 executions globally. The model-specific ceiling is five times its eligible account count, bounded by the global cap. A shared 120-request queue has a cumulative 30-second wait budget; oldest runnable work can pass a blocked model. Busy affinity accounts may switch before dispatch; unfinished Robin tool tasks retain ownership. Initial queue rejection returns HTTP 429 with Retry-After before opening SSE. These are configured limits, not measured upstream capacity or a memory guarantee.
 
