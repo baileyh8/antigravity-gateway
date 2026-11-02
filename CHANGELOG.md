@@ -1,6 +1,22 @@
 # Changelog
 
+## 1.7.1-bailey.2 - 2026-11-02
+
+- With sincere thanks to LeeFeee and all contributors to [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway). This is a maintained fork direction built on that project; original MIT copyright and history remain intact.
+- Include the independent `manager/` application: dashboard, accounts/proxies, Gemini/Claude-GPT/Argon quota groups, usage/cache metrics, request/diagnostic/audit logs, model discovery/settings, API keys and password settings.
+- Keep inference, credentials, key validation and scheduling in the proxy core. The separate Node management service accesses a loopback versioned API; Next.js exports static pages under `/admin`.
+- Add compact two-decimal K/M/B metrics, thin bars, smooth curves and hover/tap chart details, unified masked-email labels, CSRF/Origin checks, conditional reads and bounded log scans.
+- Add current-build screenshots with synthetic data and independent installation documentation. npm core installs do not pull frontend build dependencies.
+
+- Exclude the four unused tab/chat internal IDs and the retired Gemini 2.5 Pro from discovery listings and exported catalogs; model smoke tests use the upstream default output configuration instead of an invalid universal 32-token cap.
+- Split out the legacy built-in panel, its assets/access policy and `/dashboard/*` management routes; preserve the separate loopback admin API, account/proxy/OAuth logic and terminal usage summaries.
+- Remove the browser-only html2canvas dependency and its exclusive transitive packages. `stats` now prints local usage instead of launching a browser.
+- Retain provider validation, credential redaction and proxy safety tests on the new admin API; reject invalid/repeated account-provider selectors.
+- Upstream review through 54ae06e (v1.7.2): no wholesale merge; its OAuth hardening is a separately assessed candidate, not included by this removal.
+
 ## Unreleased — 1.7.1-bailey.1
+
+- Display the separate Gemini 4 Argon quota group by name and keep long quota descriptions from squeezing its heading.
 
 - Integrate upstream through db939d4: native transport/client adapters, Windows credentials, shared scheduling, Robin tool-history continuation, cancellation isolation, runtime cache-prefix and lease/drain fixes.
 - Route native Cloud Code helpers through the bound account proxy, independently per endpoint, and preserve fail-closed proxy handling for Windows accounts.

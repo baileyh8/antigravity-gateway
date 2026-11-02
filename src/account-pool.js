@@ -420,6 +420,37 @@ class AccountPool {
     return { id, email: account.email || '', deleted: true };
   }
 
+  updateAccount(accountId, { enabled, weight } = {}) {
+    const id = String(accountId || '');
+    const entry = this.entries.get(id);
+    if (!entry) throw new DirectProviderError('账号不存在或已被删除。', { code: 'account_not_found', status: 404 });
+    const patch = {};
+    if (typeof enabled === 'boolean') patch.enabled = enabled;
+    if (weight !== undefined) {
+      const value = Number(weight);
+      if (!Number.isFinite(value) || value < 1 || value > 100) {
+        throw new DirectProviderError('权重必须是 1-100 的整数。', { code: 'invalid_weight', status: 400 });
+      }
+      patch.weight = Math.max(1, Math.round(value));
+    }
+    if (!Object.keys(patch).length) {
+      return { account: this.status().find((item) => item.id === id), unchanged: true };
+    }
+    const saved = this.store.update(id, patch);
+    entry.account = saved;
+    if (saved.enabled === false) {
+      entry.cooldownUntil = 0;
+      entry.modelCooldowns.clear();
+    }
+    this.rebuildModelSupporters();
+    this.modelCatalogsReady = [...this.entries.values()]
+      .filter((candidate) => candidate.account.enabled !== false && this.isAccountHealthy(candidate))
+      .every((candidate) => candidate.modelCatalogChecked);
+    this.saveState();
+    this.reportDiagnostic('account_updated', saved, { enabled: saved.enabled, weight: saved.weight });
+    return { account: this.status().find((item) => item.id === id) };
+  }
+
   eligible(model, excluded = new Set()) {
     const now = this.now();
     return [...this.entries.values()].filter((entry) => this.isEntryEligible(entry, model, excluded, now));

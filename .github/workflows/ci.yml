@@ -25,3 +25,20 @@ jobs:
         env:
           ANTIGRAVITY_GATEWAY_CONFIG_DIR: ${{ runner.temp }}/gateway-test-config
       - run: npm pack --dry-run
+
+  manager:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            manager/server/package-lock.json
+            manager/web/package-lock.json
+      - run: npm ci --prefix manager/server --ignore-scripts --no-audit --no-fund
+      - run: npm ci --prefix manager/web --ignore-scripts --no-audit --no-fund
+      - run: npm run manager:check
+      - run: npm run manager:test
+      - run: npm run manager:build

@@ -9,7 +9,7 @@ const { EventEmitter } = require('node:events');
 const { GeminiAccountStore } = require('../src/gemini-account-store');
 const { GeminiWindowsProvider } = require('../src/gemini-windows-provider');
 const { TerminalConsole } = require('../src/terminal-console');
-const { dashboardData } = require('../src/dashboard');
+const { accountList } = require('../src/admin-api');
 const { RobinAccountPool, ROBIN_QUOTA_TTL_MS } = require('../src/robin-account-pool');
 const { windowsQuotaSnapshot, parseWindowsQuota, fetchWindowsQuota, WINDOWS_USAGE_QUERY } = require('../src/gemini-windows-quota');
 
@@ -163,9 +163,9 @@ test('Windows snapshots persist on their own accounts, appear in status and guid
   assert.equal(status.find(a => a.id === 'two').quota.groups[0].buckets[0].remainingFraction, 1);
   assert.equal(pool.selectAccount('gemini-4-argon', 'client', new Set([oauth.id])).account.id, 'two');
   assert.equal(pool.entries.get('one').unhealthyUntil, 0);
-  const dashboard = dashboardData({ usageStore: { summary: () => ({}) }, accountPool: { status: () => [] }, robinAccountPool: pool });
-  assert.equal(dashboard.accounts.find(a => a.id === 'one').quota.groups[0].buckets[0].remainingFraction, 0);
-  assert.equal(dashboard.accounts.find(a => a.id === 'one').tokenUsageKnown, false);
+  const accounts = accountList({ accountPool: { status: () => [] }, robinAccountPool: pool });
+  assert.equal(accounts.find(a => a.id === 'one').quota.groups[0].buckets[0].remainingFraction, 0);
+  assert.equal(accounts.find(a => a.id === 'one').tokenUsageKnown, false);
   const restored = new RobinAccountPool({ store, now: pool.now, providerFactory: factory }); t.after(() => restored.stop());
   assert.equal(restored.status().find(a => a.id === 'one').quotaDepleted, true);
   await pool.refreshQuota('one'); assert.equal(calls(), 2);

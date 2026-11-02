@@ -545,6 +545,28 @@ class RobinAccountPool {
     return { id, deleted: true, providerType: 'robin' };
   }
 
+  updateAccount(id, { enabled, weight } = {}) {
+    this.reload();
+    const entry = this.entries.get(id);
+    if (!entry) throw new RobinProviderError(`找不到 Gemini 账号: ${id}`, { code: 'robin_account_not_found', status: 404 });
+    const patch = {};
+    if (typeof enabled === 'boolean') patch.enabled = enabled;
+    if (weight !== undefined) {
+      const value = Number(weight);
+      if (!Number.isFinite(value) || value < 1 || value > 100) {
+        throw new RobinProviderError('权重必须是 1-100 的整数。', { code: 'invalid_weight', status: 400 });
+      }
+      patch.weight = Math.max(1, Math.round(value));
+    }
+    if (!Object.keys(patch).length) {
+      return { account: this.status().find((account) => account.id === id), unchanged: true };
+    }
+    const saved = this.store.update(id, patch);
+    entry.account = saved;
+    if (!saved.enabled) entry.provider.stop?.();
+    return { account: this.status().find((account) => account.id === id) };
+  }
+
   bind(routingKey, accountId) {
     if (!routingKey || !accountId) return;
     const previous = this.sessions.get(routingKey);

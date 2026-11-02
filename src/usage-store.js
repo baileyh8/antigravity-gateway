@@ -86,6 +86,7 @@ class UsageStore {
     const bucket = this.bucket();
     bucket.clientRequests += 1;
     this.dirty = true;
+    try { this.onClientRequest?.(); } catch { /* usage attribution must not affect requests */ }
   }
 
   recordUpstream({ usage = {}, model = '', accountId = '', success = true, count = true } = {}) {
@@ -119,6 +120,19 @@ class UsageStore {
       const accountModels = (this.state.hourlyByAccountModel[hour] ||= {});
       const hourlyModels = (accountModels[accountId] ||= {});
       add((hourlyModels[model] ||= zeroCounters()), values);
+    }
+    this.dirty = true;
+    try { this.onRecord?.({ usage, model, accountId, success, count }); } catch { /* usage attribution must not affect requests */ }
+  }
+
+  recordRequestMetrics(entry) {
+    const hour = hourKey(this.now());
+    for (const [collection, id] of [[this.state.hourlyByModel, entry.model], [this.state.hourlyByAccount, entry.account]]) {
+      if (!id) continue;
+      const groups = (collection[hour] ||= {});
+      const bucket = (groups[id] ||= zeroCounters());
+      bucket.requestSamples = (Number(bucket.requestSamples) || 0) + 1;
+      bucket.latencyMs = (Number(bucket.latencyMs) || 0) + Math.max(0, Number(entry.latencyMs) || 0);
     }
     this.dirty = true;
   }
