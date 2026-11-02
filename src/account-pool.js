@@ -4,78 +4,18 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DirectAntigravityProvider, DirectProviderError } = require('./direct-provider');
+const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const { errorDetails, maskEmail } = require('./diagnostic-log');
 const { ManagedAccountAuthProvider } = require('./managed-account-auth');
 
-const DEFAULT_SESSION_TTL_SECONDS = 5 * 60 * 60;
-const configuredSessionTtlSeconds = Number(process.env.ANTIGRAVITY_AFFINITY_TTL_SECONDS ?? DEFAULT_SESSION_TTL_SECONDS);
-const SESSION_TTL_MS = Math.max(0, Number.isFinite(configuredSessionTtlSeconds)
-  ? configuredSessionTtlSeconds
-  : DEFAULT_SESSION_TTL_SECONDS) * 1000;
-const SESSION_CAPACITY = 2000;
-const DEFAULT_COOLDOWN_MS = 60_000;
-const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60_000;
+const { SESSION_TTL_MS, SESSION_CAPACITY, TRANSIENT_COOLDOWN_MS, durationMs, retryDelay, affinityActive, geminiWeeklyPressure,
+  geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks } = require('./account-scheduling');
 const ACCOUNT_HEALTH_STATES = new Set(['verification_required', 'authentication_error', 'access_denied']);
-
-function geminiGroup(snapshot) {
-  return (snapshot?.groups || []).find((group) => /gemini/i.test([
-    group?.id, group?.displayName, group?.description
-  ].filter(Boolean).join(' ')));
-}
-
-function geminiWeeklyPressure(snapshot, now) {
-  const bucket = geminiGroup(snapshot)?.buckets?.find((item) => (
-    String(item?.window || '').toLowerCase() === 'weekly'
-    || String(item?.id || '').toLowerCase().endsWith('-weekly')
-  ));
-  const raw = bucket?.remainingFraction;
-  const remaining = raw == null || String(raw).trim() === '' || typeof raw === 'boolean' ? NaN : Number(raw);
-  const resetAt = Date.parse(bucket?.resetTime || '');
-  if (!Number.isFinite(remaining) || !Number.isFinite(resetAt) || resetAt <= now) return { kind: 'unknown', band: 0 };
-  if (remaining <= 0 || bucket.available === false) return { kind: 'exhausted', band: 0 };
-  const hours = Math.max((resetAt - now) / 3_600_000, 1 / 60);
-  const pressure = Math.min(1, remaining) / hours;
-  return { kind: 'pressure', band: Math.floor(Math.log2(pressure)) };
-}
-
-function compareQuotaRanks(left, right) {
-  return left.depleted - right.depleted
-    || left.lane - right.lane
-    || right.band - left.band
-    || (left.resetTime === right.resetTime ? 0 : left.resetTime < right.resetTime ? -1 : 1);
-}
-
-function durationMs(value) {
-  const source = String(value || '');
-  let total = 0;
-  let matched = false;
-  for (const match of source.matchAll(/(\d+(?:\.\d+)?)(ms|[smhd])/gi)) {
-    matched = true;
-    const amount = Number(match[1]);
-    const unit = match[2].toLowerCase();
-    total += amount * ({ ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[unit] || 0);
-  }
-  return matched ? total : 0;
-}
-
-function retryDelay(details, fallback = DEFAULT_COOLDOWN_MS) {
-  const source = String(details || '');
-  const resetAt = source.match(/(?:quotaResetTimeStamp|resetTime|reset_at)[^0-9]{0,16}(\d{4}-\d{2}-\d{2}T[^"'\s,}]+)/i);
-  if (resetAt) {
-    const delay = Date.parse(resetAt[1]) - Date.now();
-    if (Number.isFinite(delay) && delay > 0) return Math.max(1000, Math.min(MAX_COOLDOWN_MS, delay));
-  }
-  const duration = source.match(/(?:quotaResetDelay|retryDelay|retry_after|retry after|reset after)[^0-9]{0,24}((?:\d+(?:\.\d+)?(?:ms|[smhd]))+)/i);
-  const milliseconds = durationMs(duration?.[1]);
-  if (milliseconds > 0) return Math.max(1000, Math.min(MAX_COOLDOWN_MS, milliseconds));
-  const seconds = source.match(/(?:retry_after|retry after)[^0-9]{0,8}(\d+(?:\.\d+)?)/i);
-  return seconds ? Math.max(1000, Math.min(MAX_COOLDOWN_MS, Number(seconds[1]) * 1000)) : fallback;
-}
 
 function errorCategory(error) {
   const status = Number(error?.status) || 0;
   const source = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.cause?.code || ''} ${error?.cause?.message || ''}`;
-  if (/abort(?:ed|error)|请求已取消/i.test(source)) return 'request';
+  if (error?.code === 'request_timeout' || error?.code === 'request_aborted' || /abort(?:ed|error)|请求已取消|网关请求超时/i.test(source)) return 'request';
   if (status === 429 || /resource.*exhausted|quota|rate.?limit/i.test(source)) return 'quota';
   if (/fetch failed|network|timeout|timed out|econnreset|econnrefused|enotfound|eai_again|socket|tls|dns/i.test(source)) return 'transient';
   if (status === 401 || status === 403 || (status >= 400 && status < 500 && /direct_refresh_failed/i.test(source)) || /invalid_grant|refresh token|auth.*missing|登录态|unauthenticated|permission.?denied|forbidden|verify\s*your\s*account|account.*verif|security.*challenge|account.*(?:disabled|suspended)/i.test(source)) return 'account';
@@ -132,7 +72,7 @@ function accountFingerprint(account = {}) {
 }
 
 class AccountPool {
-  constructor({ store, fallbackProvider, usageStore, agyPath = '', fetchImpl = globalThis.fetch, providerFactory, fsImpl = fs, stateFile = '', now = () => Date.now(), proxyManager, diagnosticReporter } = {}) {
+  constructor({ store, fallbackProvider, usageStore, agyPath = '', fetchImpl = nativeCloudCodeFetch, providerFactory, fsImpl = fs, stateFile = '', now = () => Date.now(), proxyManager, diagnosticReporter, directoryGuard = null } = {}) {
     this.store = store;
     this.fallbackProvider = fallbackProvider;
     this.usageStore = usageStore;
@@ -141,6 +81,7 @@ class AccountPool {
     this.fs = fsImpl;
     this.now = now;
     this.diagnosticReporter = typeof diagnosticReporter === 'function' ? diagnosticReporter : null;
+    this.directoryGuard = directoryGuard;
     this.lastUnavailableDiagnosticAt = -Infinity;
     this.stateFile = stateFile || path.join(path.dirname(this.store.directory), 'state', 'account-pool.json');
     this.providerFactory = providerFactory || ((account) => {
@@ -149,6 +90,7 @@ class AccountPool {
       return new DirectAntigravityProvider({
         fetchImpl: accountFetch,
         diagnosticReporter: report,
+        directoryGuard: this.directoryGuard,
         localAuth: new ManagedAccountAuthProvider({
           account,
           store: this.store,
@@ -168,6 +110,14 @@ class AccountPool {
     this.modelCatalogDiscovery = null;
     this.loadState();
     this.reload();
+  }
+
+  bindDirectoryGuard(guard) {
+    this.directoryGuard = guard;
+    this.fallbackProvider?.bindDirectoryGuard?.(guard);
+    for (const entry of this.entries.values()) {
+      entry.provider?.bindDirectoryGuard?.(guard);
+    }
   }
 
   reportDiagnostic(event, account, fields = {}) {
@@ -336,7 +286,7 @@ class AccountPool {
     const now = this.now();
     // Affinity is a fixed window from account selection, not a sliding window
     // renewed by every successful request. This guarantees periodic rebalance.
-    if (SESSION_TTL_MS > 0 && previous?.accountId === accountId && previous.at >= now - SESSION_TTL_MS) return;
+    if (previous?.accountId === accountId && affinityActive(previous, now)) return;
     this.sessions.set(routingKey, { accountId, at: now, persistedAt: now });
     this.saveState();
   }
@@ -470,6 +420,37 @@ class AccountPool {
     return { id, email: account.email || '', deleted: true };
   }
 
+  updateAccount(accountId, { enabled, weight } = {}) {
+    const id = String(accountId || '');
+    const entry = this.entries.get(id);
+    if (!entry) throw new DirectProviderError('账号不存在或已被删除。', { code: 'account_not_found', status: 404 });
+    const patch = {};
+    if (typeof enabled === 'boolean') patch.enabled = enabled;
+    if (weight !== undefined) {
+      const value = Number(weight);
+      if (!Number.isFinite(value) || value < 1 || value > 100) {
+        throw new DirectProviderError('权重必须是 1-100 的整数。', { code: 'invalid_weight', status: 400 });
+      }
+      patch.weight = Math.max(1, Math.round(value));
+    }
+    if (!Object.keys(patch).length) {
+      return { account: this.status().find((item) => item.id === id), unchanged: true };
+    }
+    const saved = this.store.update(id, patch);
+    entry.account = saved;
+    if (saved.enabled === false) {
+      entry.cooldownUntil = 0;
+      entry.modelCooldowns.clear();
+    }
+    this.rebuildModelSupporters();
+    this.modelCatalogsReady = [...this.entries.values()]
+      .filter((candidate) => candidate.account.enabled !== false && this.isAccountHealthy(candidate))
+      .every((candidate) => candidate.modelCatalogChecked);
+    this.saveState();
+    this.reportDiagnostic('account_updated', saved, { enabled: saved.enabled, weight: saved.weight });
+    return { account: this.status().find((item) => item.id === id) };
+  }
+
   eligible(model, excluded = new Set()) {
     const now = this.now();
     return [...this.entries.values()].filter((entry) => this.isEntryEligible(entry, model, excluded, now));
@@ -550,50 +531,7 @@ class AccountPool {
   }
 
   weightedPickWithRanks(ranks) {
-    if (!ranks.length) return null;
-
-    // Exhausted/depleted accounts remain last-resort fallbacks, matching the
-    // previous behavior, but no healthy account is excluded merely because a
-    // different account has a better quota rank.
-    let candidates = ranks.filter((rank) => !rank.depleted && rank.lane !== 2);
-    if (!candidates.length) candidates = ranks.filter((rank) => !rank.depleted);
-    if (!candidates.length) candidates = ranks;
-
-    const pressureRanks = candidates.filter((rank) => rank.lane === 0);
-    const maxBand = pressureRanks.length ? Math.max(...pressureRanks.map((rank) => rank.band)) : null;
-    const nearestResetByBand = new Map();
-    for (const rank of candidates) {
-      if (!Number.isFinite(rank.resetTime)) continue;
-      const key = `${rank.lane}:${rank.band}`;
-      nearestResetByBand.set(key, Math.min(nearestResetByBand.get(key) ?? Infinity, rank.resetTime));
-    }
-
-    const effectiveWeight = (rank) => {
-      const accountWeight = Math.max(1, Number(rank.entry.account.weight) || 1);
-      let weeklyWeight = 1;
-      if (rank.lane === 0 && maxBand != null) {
-        const difference = rank.band - maxBand;
-        weeklyWeight = difference >= 0 ? 4 : difference === -1 ? 2 : 1;
-      }
-      const nearestReset = nearestResetByBand.get(`${rank.lane}:${rank.band}`);
-      const fiveHourWeight = Number.isFinite(nearestReset) && rank.resetTime === nearestReset ? 2 : 1;
-      return accountWeight * weeklyWeight * fiveHourWeight;
-    };
-
-    const total = candidates.reduce((sum, rank) => sum + effectiveWeight(rank), 0);
-    let selected = null;
-    let selectedWeight = -Infinity;
-    for (const rank of candidates) {
-      const id = rank.entry.account.id;
-      const current = (this.weights.get(id) || 0) + effectiveWeight(rank);
-      this.weights.set(id, current);
-      if (current > selectedWeight) {
-        selected = rank.entry;
-        selectedWeight = current;
-      }
-    }
-    if (selected) this.weights.set(selected.account.id, (this.weights.get(selected.account.id) || 0) - total);
-    return selected;
+    return weightedPickWithRanks(ranks, this.weights);
   }
 
   refreshAccountQuota(entry, options = {}) {
@@ -604,9 +542,7 @@ class AccountPool {
   }
 
   geminiFiveHourResetTime(snapshot, now) {
-    const bucket = geminiGroup(snapshot)?.buckets?.find((item) => String(item?.window || '').toLowerCase() === '5h');
-    const resetTime = Date.parse(bucket?.resetTime || '');
-    return Number.isFinite(resetTime) && resetTime > now ? resetTime : Infinity;
+    return geminiFiveHourResetTime(snapshot, now);
   }
 
   quotaRanks(model, candidates) {
@@ -615,16 +551,9 @@ class AccountPool {
       const snapshot = this.quotaManager?.getSchedulingSnapshot
         ? this.quotaManager.getSchedulingSnapshot(entry.account.id, now)
         : this.quotaManager?.get(entry.account.id);
-      const weekly = geminiWeeklyPressure(snapshot, now);
-      const resetTime = this.geminiFiveHourResetTime(snapshot, now);
-      if (!snapshot || weekly.kind === 'unknown' || resetTime === Infinity) this.refreshAccountQuota(entry);
-      return {
-        entry,
-        depleted: this.quotaManager?.get(entry.account.id, model)?.available === false ? 1 : 0,
-        lane: { pressure: 0, unknown: 1, exhausted: 2 }[weekly.kind],
-        band: weekly.band,
-        resetTime
-      };
+      const rank = quotaRank(entry, snapshot, now, this.quotaManager?.get(entry.account.id, model)?.available === false);
+      if (!snapshot || rank.lane === 1 || rank.resetTime === Infinity) this.refreshAccountQuota(entry);
+      return rank;
     }).sort(compareQuotaRanks);
   }
 
@@ -649,7 +578,7 @@ class AccountPool {
       if (preferred && this.isEntryEligible(preferred, model, excluded, now)) return preferred;
       const bound = routingKey ? this.sessions.get(routingKey) : null;
       const sticky = bound ? this.entries.get(bound.accountId) : null;
-      const active = bound && SESSION_TTL_MS > 0 && bound.at >= now - SESSION_TTL_MS;
+      const active = affinityActive(bound, now);
       // The hot path is an O(1) local-state lookup: no quota snapshots, sorting,
       // refresh I/O, or account-list scan occurs during a healthy affinity window.
       if (active && sticky && this.isEntryEligible(sticky, model, excluded, now)) return sticky;
@@ -702,6 +631,7 @@ class AccountPool {
     const attempted = new Set();
     let lastError;
     while (true) {
+      if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
       const entry = this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 });
       if (!entry) break;
       attempted.add(entry.account.id);
@@ -727,6 +657,9 @@ class AccountPool {
         if (routingKey && options.bindRouting !== false) this.bindSession(routingKey, entry.account.id);
         return { ...result, accountId: entry.account.id };
       } catch (error) {
+        if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
+          throw error;
+        }
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
         entry.lastFailureAt = new Date(this.now()).toISOString();
@@ -738,7 +671,7 @@ class AccountPool {
           this.refreshAccountQuota(entry);
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'model_request' });
-        else entry.cooldownUntil = this.now() + 15_000;
+        else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
       }
     }
@@ -771,6 +704,7 @@ class AccountPool {
     const attempted = new Set();
     let lastError;
     while (true) {
+      if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
       const entry = this.selectAccount(model, routingKey, attempted, {
         preferredAccountId: options.accountId, allowSticky: attempted.size === 0
       });
@@ -793,6 +727,9 @@ class AccountPool {
         if (routingKey && options.bindRouting !== false) this.bindSession(routingKey, entry.account.id);
         return { ...result, accountId: entry.account.id };
       } catch (error) {
+        if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
+          throw error;
+        }
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
         entry.lastFailureAt = new Date(this.now()).toISOString();
@@ -804,7 +741,7 @@ class AccountPool {
           this.refreshAccountQuota(entry);
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'image_request' });
-        else entry.cooldownUntil = this.now() + 15_000;
+        else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
       }
     }

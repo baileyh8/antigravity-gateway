@@ -5,15 +5,12 @@ const { deliveryText, imageArtifact, imageArtifacts } = require('./artifacts');
 const { mediaPartFromBlock, mediaParts } = require('./multimedia');
 
 const NATIVE_IMAGE_TOOL_NAME = 'generate_image';
-const NATIVE_MULTIMODAL_INSTRUCTION = `<identity>
-You are Antigravity, a native multimodal coding assistant. Follow the client system and user instructions while preserving the external client's tool contract.
-</identity>
-<multimodal_runtime>
-Attached images, video, audio, PDFs, and files are context. Analyze them directly when the user asks questions, requests code changes, or provides visual references. An attachment by itself never means that a new image should be generated.
-The generate_image tool is a native rendering tool. Call it only when the requested deliverable is a newly generated or edited image. For image editing or reference-guided generation, pass the relevant attached media IDs in ImagePaths. Do not call generate_image merely because the user attached an image to explain a coding, design, debugging, or analysis task.
-After generate_image completes, its result is internal structured data with the generated media attached. Continue the user's task using that result, but do not repeat artifact IDs, filenames, paths, URLs, Markdown, or a delivery receipt in the visible answer. The runtime delivers the client-facing image receipt exactly once. You may still pass artifact data to a client-provided tool when the user's task requires that tool call.
-Never combine generate_image with client-provided tool calls in the same response. Client-provided tools retain their declared names and semantics.
-</multimodal_runtime>`;
+const NATIVE_IMAGE_TOOL_INSTRUCTION = 'Generate a new image or edit up to three attached reference images. '
+  + 'Use only when a newly generated or edited image is the requested deliverable, not for analyzing attachments. '
+  + 'Pass the relevant uploaded image paths in ImagePaths for editing or reference-guided generation; attachment IDs are also accepted when no path is provided. '
+  + 'Call this tool alone, without other tools in the same response. The image is delivered automatically once. '
+  + 'After the result, continue the task without repeating an image delivery receipt, paths or URLs in the visible answer; '
+  + 'you may pass the returned artifact to a client tool when the task requires it.';
 
 class GatewayError extends Error {
   constructor(message, { code = 'gateway_error', status = 500, details } = {}) {
@@ -266,7 +263,7 @@ function toolNarrationInstruction(normalized = {}) {
 function nativeImageTool() {
   return {
     name: NATIVE_IMAGE_TOOL_NAME,
-    description: 'Generate a new image or edit up to three attached reference images. Use only when the user wants an image as the deliverable.',
+    description: NATIVE_IMAGE_TOOL_INSTRUCTION,
     kind: 'function',
     internal: true,
     schema: {
@@ -277,7 +274,7 @@ function nativeImageTool() {
         Prompt: { type: 'string', description: 'Detailed generation prompt or image editing instruction.' },
         ImageName: { type: 'string', description: 'Short lowercase snake_case artifact name, at most three words.' },
         AspectRatio: { type: 'string', enum: ['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'], description: 'Output aspect ratio. Defaults to 1:1.' },
-        ImagePaths: { type: 'array', maxItems: 3, items: { type: 'string' }, description: 'IDs of attached images to edit or use as references.' }
+        ImagePaths: { type: 'array', maxItems: 3, items: { type: 'string' }, description: 'Uploaded image paths to edit or use as references.' }
       }
     }
   };
@@ -290,13 +287,11 @@ function prepareNativeMultimodal(normalized) {
     && !normalized.structuredSchema
     && choice.mode === 'auto'
     && !hasReservedClientTool;
-  const hasMedia = mediaParts(normalized).length > 0;
-  if (!canInject && !hasMedia) return { normalized, imageToolInjected: false };
-  const tools = canInject ? [...(normalized.tools || []), nativeImageTool()] : [...(normalized.tools || [])];
+  if (!canInject) return { normalized, imageToolInjected: false };
+  const tools = [...(normalized.tools || []), nativeImageTool()];
   return {
     normalized: {
       ...normalized,
-      system: [NATIVE_MULTIMODAL_INSTRUCTION, normalized.system].filter(Boolean).join('\n\n'),
       tools
     },
     imageToolInjected: canInject
@@ -351,12 +346,29 @@ function normalizeAnthropic(payload) {
   // with RESOURCE_EXHAUSTED even when the account has quota. Remove or
   // neutralize only those provider-specific markers; preserve every
   // behavioral, safety, permission, project, and user instruction verbatim.
-  const system = sanitizeAnthropicProviderIdentity(textFromContent(payload.system, 'anthropic'));
-  const messages = (payload.messages || []).map((message) => ({
-    role: message.role || 'user',
-    text: textFromContent(message.content, 'anthropic'),
-    parts: internalPartsFromContent(message.content, 'anthropic')
-  }));
+  const systemParts = [textFromContent(payload.system, 'anthropic')];
+  const messages = [];
+  for (const message of payload.messages || []) {
+    const text = textFromContent(message.content, 'anthropic');
+    // Claude Code 2.1.285 also sends environment/date instructions as an
+    // actual system-role message. Keep their instruction role; treating them
+    // as user turns changes both priority and the native trajectory count.
+    // CLI 会把 token 与美元余量合成一个 system 消息；纯运行时通知保留时间顺序。
+    // 混合真实指令或非文本块时不降级，避免把高优先级指令误识别为预算状态。
+    const textOnly = typeof message.content === 'string' || (Array.isArray(message.content)
+      && message.content.length > 0 && message.content.every(part => part?.type === 'text' && typeof part.text === 'string'));
+    const runtimeNotice = message.role === 'system' && textOnly && text.trim().split(/\n\s*\n/).every(part => (
+      /^<total_tokens>\d+ tokens left<\/total_tokens>$/.test(part.trim())
+      || /^USD budget: \$\d+(?:\.\d+)?\/\$\d+(?:\.\d+)?; \$-?\d+(?:\.\d+)? remaining$/.test(part.trim())
+    ));
+    if ((message.role === 'system' || message.role === 'developer') && !runtimeNotice) systemParts.push(text);
+    else messages.push({
+      role: message.role || 'user',
+      text,
+      parts: internalPartsFromContent(message.content, 'anthropic')
+    });
+  }
+  const system = sanitizeAnthropicProviderIdentity(systemParts.filter(Boolean).join('\n\n'));
   const autoModeFormat = detectAutoModeFormat(system);
   return {
     protocol: 'anthropic',
@@ -817,7 +829,7 @@ module.exports = {
   normalizeStructured,
   normalizeTools,
   NATIVE_IMAGE_TOOL_NAME,
-  NATIVE_MULTIMODAL_INSTRUCTION,
+  NATIVE_IMAGE_TOOL_INSTRUCTION,
   nativeImageTool,
   normalizeToolCalls,
   parseToolCalls,

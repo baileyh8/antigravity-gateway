@@ -1,4 +1,5 @@
 'use strict';
+const { closeNativeProxy } = require('./agy-native-transport');
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -98,6 +99,7 @@ class ProxyManager {
 
   retire(url) {
     if (!url || this.state.proxies.some((p) => p.url === url)) return;
+    closeNativeProxy(url);
     const agent = this.agents.get(url); this.agents.delete(url);
     if (agent) Promise.resolve(agent.close()).catch(() => {});
   }
@@ -109,7 +111,7 @@ class ProxyManager {
     let released = false;
     const release = () => { if (!released) { released = true; this.active.set(proxy.id, Math.max(0, (this.active.get(proxy.id) || 1) - 1)); } };
     try {
-      const response = await fetchImpl(input, { ...init, dispatcher: agent });
+      const response = await fetchImpl(input, { ...init, dispatcher: agent, nativeProxy: proxy.url });
       // Keep the binding busy until the streaming body finishes, not just headers.
       if (!response.body) { release(); return response; }
       const reader = response.body.getReader();
@@ -148,7 +150,7 @@ class ProxyManager {
     return result;
   }
 
-  async close({ force = false } = {}) { await Promise.allSettled([...this.agents.values()].map((agent) => force && agent.destroy ? agent.destroy() : agent.close())); this.agents.clear(); }
+  async close({ force = false } = {}) { for (const url of this.agents.keys()) closeNativeProxy(url); await Promise.allSettled([...this.agents.values()].map((agent) => force && agent.destroy ? agent.destroy() : agent.close())); this.agents.clear(); }
 }
 
 module.exports = { ProxyManager };

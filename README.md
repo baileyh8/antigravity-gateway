@@ -4,9 +4,62 @@
 
 维护仓库 / Maintained repository: [baileyh8/antigravity-gateway](https://github.com/baileyh8/antigravity-gateway) · [更新记录 / Changelog](CHANGELOG.md) · [贡献与维护 / Contributing](CONTRIBUTING.md)
 
+> **特别感谢上游作者 LeeFeee 和所有贡献者。** 本项目基于 [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway) 继续维护，是原项目的分支方向；代理协议、原始网关能力和历史贡献来自上游。本分支在此基础上发展“代理基座 + 独立管理后台”的架构，补充账号出口隔离、资源控制和运维功能。感谢上游长期开放源码，为这些工作提供基础。保留上游历史、原作者版权与 [MIT 许可](LICENSE)。
+>
+> **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
+
+**1.7.1-bailey.2 · 代理基座与独立后台 / Proxy core + separate admin**
+
+- 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
+- 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
+- 管理后台安装与架构：[manager/README.md](manager/README.md)。npm 网关包仅包含基座；后台源码随本仓库提供，单独安装和构建。
+
+### 新后台预览 / Admin preview
+
+以下截图来自本版本实际构建页面，使用虚构演示数据，不展示真实账号、密钥或生产用量。Screenshots use synthetic demo data and show the built interface, not production accounts or traffic.
+
+![独立管理后台看板](docs/images/admin/dashboard.png)
+
+| 账号与分组额度 / Accounts & quota | 用量与缓存命中率 / Usage & cache |
+| --- | --- |
+| ![账号](docs/images/admin/accounts.png) | ![用量](docs/images/admin/usage.png) |
+
+| 模型管理 / Models | 密钥管理 / API keys |
+| --- | --- |
+| ![模型](docs/images/admin/models.png) | ![密钥](docs/images/admin/keys.png) |
+
+| 请求日志 / Request logs | 移动端 / Mobile |
+| --- | --- |
+| ![日志](docs/images/admin/logs.png) | ![移动端](docs/images/admin/mobile.png) |
+
+<details>
+<summary>更多截图：分组额度与图表明细 / Quota groups and chart details</summary>
+
+![Gemini、Claude-GPT、Argon 分组额度](docs/images/admin/quota.png)
+![图表悬停明细](docs/images/admin/usage-details.png)
+
+</details>
+
 [中文](#中文) · [English](#english)
 
 ## 中文
+
+### 当前源码版本：1.7.1-bailey.2
+
+旧 `/dashboard` 及其子接口已从基座移除并返回 404。部署方可仅将旧页面 `/dashboard`、`/dashboard/` 在 Nginx 301 到独立后台，其他旧接口保持 404。
+
+当前源码整合上游 `db939d4`（1.7.1 及其后续修复），新增 `manager/` 独立后台，通过回环 `/_admin/v1` 访问基座。两个进程独立运行，代理凭据和密钥保留在基座。上游 `54ae06e`（1.7.2）已评估，OAuth 候选改动尚未合入。
+
+- Cloud Code 原生 Go 传输、会话持久化、客户端上下文压缩及工具映射；包含 Claude Code 2.1.284/2.1.304、Codex 和 Hermes 的定向适配。未知客户端保持兼容路径，不代执行客户端工具。
+- 取消或超时不再连锁重试、冷却健康账号；修复容器 PID 复用导致的会话锁死锁、目录锁交接和完整请求排空，保留运行时预算通知的位置以改善前缀缓存。
+- Robin 连接丢失后可使用客户端提供的完整工具历史继续；不虚构工具回执或自动恢复已删除账号。
+- Windows 新增 `add-gemini-win`，使用本机 Chrome/Edge 登录并保存独立的 `gemini-win-accounts/`。此流程要求 Windows 本机浏览器，不能替代 VPS 看板的 OAuth 添加流程。Windows 通道不支持非视频附件；视频沿用 Cloud Code 路由，原生 usage 仍未知。
+- 三种通道共享按额度压力加权的调度策略；会话亲和默认 5 小时，可用 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整。保留每账号代理、12 路总请求、独立 4 路媒体与 4 路生图、字节预算和 SSE 背压。
+
+Cloud Code 原生传输按不同代理地址复用独立 helper 进程，并覆盖 helper 的 `NO_PROXY`，防止绕开账号出口；Token 和普通 HTTP 请求仍经同一绑定代理。代理缺失时不回落直连。安装包包含六种平台/架构的原生程序，运行时校验完整性并解压到配置目录，普通安装无需 Go；源码重建使用 `npm run build:native`，要求上游指定的 Go 1.27.2。原生 helper 会增加进程和磁盘占用。当前维护部署完成最小文本请求验证：23 个可用型号成功，另一个 disabled 占位项跳过；这不代表生图、工具或长会话均已验收，也不代表有高并发资源基准。
+
+Windows 终端添加也使用 `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID` 自动绑定；服务端请求在有效绑定前不会直连。登录浏览器的网络由本机浏览器设置决定。参见 [Windows 通道](docs/windows-native.md) 和 [Robin 通道](docs/robin-provider.md)。上游实验记录只代表上游验证，不作为本维护版部署证明。
+
 
 Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容网关，让 Claude Code、Codex CLI、Trae、DSH、Hermes 及其他兼容客户端调用账号可用的模型。支持导入本地 Antigravity CLI（`agy`）登录态，也支持使用已授权的托管账号池。
 
@@ -16,7 +69,7 @@ Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容
 
 > 非 Google 官方项目，仅用于学习、兼容性研究与个人测试。模型权限、额度、地区限制和服务条款均以上游为准。
 
-当前发布版本：[v1.5.1-bailey.1](https://github.com/baileyh8/antigravity-gateway/releases/tag/v1.5.1-bailey.1)。本版已完成 VPS 部署及真实 Argon 文本、工具调用验收。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+版本记录见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases) 与 [CHANGELOG.md](CHANGELOG.md)。历史版本 `1.5.1-bailey.1` 的 Argon 工具调用验收不能替代本版本的完整能力验收。
 
 ### 主要功能
 
@@ -24,13 +77,13 @@ Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容
 - 支持 Claude Code、Codex CLI、Trae 和其他兼容客户端。
 - 支持前台运行，以及 macOS、Linux、Windows 后台保活和开机自启。
 - 支持自动导入本地 agy 账号，也可以输入 `add` 手动添加账号。
-- 支持在看板添加 Gemini App 账号并调用 `gemini-4-argon`；VPS 部署可在本地浏览器授权，与原 Antigravity 凭据和调度隔离。
+- 支持通过独立管理后台添加 Gemini App 账号并调用 `gemini-4-argon`；VPS 部署可在本地浏览器授权，与原 Antigravity 凭据和调度隔离。
 - 多账号之间轮询；同一会话保持账号一致，限流、认证或额度异常时自动尝试其他账号。
 - 启动界面显示账号状态、历史用量、Token、缓存命中率和最近24小时图表。
 - 支持客户端工具调用、SSE、Claude Code Auto Mode 和结构化输出。
 - 支持图片生成、参考图编辑，以及图片、视频、音频、PDF 和普通文件理解。
 - 支持 OpenAI Images/Files 接口，并让远程客户端先上传文件再在对话中引用。
-- 看板管理账号独立 HTTP/HTTPS 代理，认证刷新、额度和模型请求使用账号绑定出口。
+- 独立管理后台管理账号 HTTP/HTTPS 代理，认证刷新、额度和模型请求使用账号绑定出口。
 - 生图与多媒体输入/上传各有独立 4 路并发池，并提供内存预算、异步文件 I/O、SSE 背压及停机排空。
 
 ### 使用条件
@@ -120,13 +173,13 @@ antigravity-gateway service uninstall
 
 重复执行 `service start` 会更新配置并重启现有服务，不会创建重复服务。后台模式没有交互输入框；需要添加账号时，先停止后台服务并以前台模式启动，添加完成后再执行 `service start`。
 
-打开 Token 用量看板：
+查看本地 Token 用量统计：
 
 ```bash
 antigravity-gateway stats
 ```
 
-网关启动后，无论使用前台模式还是后台保活模式，都可以另开一个终端执行这条命令。看板复用网关现有的 `9897` 端口，不会启动第二个后台服务；也可以直接访问 `http://127.0.0.1:9897/dashboard`。
+该命令直接读取本地统计并输出文本，不启动浏览器或 Web 服务。图形管理界面由独立 agy-manager 的 `/admin/` 提供。
 
 如果 `agy` 不在默认位置：
 
@@ -180,7 +233,7 @@ acc
 
 **服务运行在 VPS，授权在你自己的浏览器完成。** 无需在 VPS 安装浏览器或 agy-cli，也无需 SSH 转发。
 
-1. 打开网关的 HTTPS 看板 `/dashboard` 并登录，在「账号池与额度」点击「添加 Gemini 账号」。
+1. 打开已部署的独立管理后台 `/admin/accounts/` 并登录，使用添加账号入口并选择 Gemini App。
 2. 在展开的添加区域选择已登记的账号代理，点击「开始添加」。服务端授权与后续模型请求使用这个出口。
 3. 打开授权链接，在本地浏览器选择要添加的 Google 账号并完成授权。
 4. 浏览器跳到 `127.0.0.1` 后若显示无法连接，复制地址栏里的**完整回调 URL**，粘回看板并提交。这时不需要重做登录。
@@ -213,7 +266,7 @@ curl https://gateway.example.com/v1/chat/completions \
 | `models` | 查看当前发现的模型 |
 | `status` | 重新显示网关和统计状态 |
 | `usage` | 查看实时详细用量 |
-| `stats` | 在默认浏览器打开 Token 用量看板 |
+| `stats` | 在默认浏览器查看本地用量统计 |
 | `reload` | 重新加载账号与额度信息 |
 | `config` | 查看客户端连接配置 |
 | `logs` | 查看日志说明或位置 |
@@ -403,13 +456,13 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
 
 输入 `usage` 查看实时明细，输入 `status` 刷新展示。用量每5分钟保存一次，24小时图表每小时更新，历史总量展示每24小时更新。额度快照约每30分钟刷新；上游实时返回始终是最终依据。
 
-网关以前台或后台模式运行时，都可以另开终端执行下面的命令查看完整图形看板：
+另开终端可通过下面的命令输出本地用量摘要：
 
 ```bash
 antigravity-gateway stats
 ```
 
-看板提供历史与所选时段 Token、请求和上游调用、输入/输出/思考/缓存、失败率、账号额度、小时热力图、模型趋势和模型消耗占比；支持最近1天、3天、7天、30天及按账号筛选，浏览器会记住上次选择的统计周期。账号列表只来自当前账号池；额度与 agy `/usage` 保持一致，默认按账号完整展示 Gemini 模型组、Claude/GPT 模型组共享的每周额度和 5 小时额度，也可切换为只看 Gemini 模型组的额度概览，浏览器同样会记住上次选择。异常账号提供一次性轻量鉴权的“重新检测”按钮；“删除账号”会移除账号凭据、健康状态、额度快照与会话黏性，并防止已主动删除的本地 agy 身份在重启时被自动导回。若账号池因此变空，网关不会绕过账号池退回该本地登录态；重新使用需通过 `add` 明确加入账号。具体模型的调用次数与 Token 只按真实请求的模型 ID 统计，不再把模型目录中的单项余额误写成账号总额度。点击“生成图片”会在浏览器本地生成账号脱敏的高清 PNG，桌面端直接下载，移动端提供长按保存预览；该过程不依赖第三方服务，也不会增加网关后端截图负担。网页每分钟读取一次本地聚合数据，关闭页面后不会继续轮询，也不保存提示词或模型回复。账号与模型的小时细分从 v0.8.0 起累计。
+图形看板、账号/密钥/模型管理和日志由独立 agy-manager 提供。基座保留用量存储、额度和 `/_admin/v1` 回环接口，不再加载 HTML、截图工具或旧面板管理路由。
 
 ```text
 ~/.antigravity-gateway/state/account-pool.json
@@ -421,7 +474,7 @@ antigravity-gateway stats
 
 ### 账号独立代理
 
-在 `/dashboard` 的「代理管理」中新增 HTTP/HTTPS 代理，然后为账号选择出口并点击「应用」。支持编辑、删除及 Google HTTPS 连通性检测；检测结果仅代表当次网络探测，不代表账号授权或模型额度正常。代理节点由外部代理软件或供应商提供，Gateway 不包含订阅管理或保证静态公网 IP。
+在独立管理后台 `/admin/accounts/` 的「代理管理」中新增 HTTP/HTTPS 代理，然后为账号选择出口并点击「应用」。支持编辑、删除及 Google HTTPS 连通性检测；检测结果仅代表当次网络探测，不代表账号授权或模型额度正常。代理节点由外部代理软件或供应商提供，Gateway 不包含订阅管理或保证静态公网 IP。
 
 - 已绑定账号的聊天、模型列表、图片请求、OAuth Token 刷新及额度查询使用同一个代理。代理失败会返回错误，不回退进程默认代理或直连；账号池仍可按原策略尝试其他账号。
 - 未绑定账号（包括新导入账号）继续使用原来的进程网络配置。解除绑定会恢复该行为。首次 OAuth 登录尚无账号绑定，仍走原进程网络。
@@ -429,15 +482,15 @@ antigravity-gateway stats
 - 修改立即作用于后续网络请求，无需重启。仍有响应体传输的代理不能编辑或解除绑定；已绑定代理不能删除。代理认证 URL 不在看板 API 中回显，也不进入分享图片；编辑 URL 留空保留旧值，输入新 URL 则完整替换。
 - 本功能用于 `direct` 多账号传输；`agy` CLI 传输和未管理的本地登录仍使用原网络设置。每日巡检和节点替换由外部运维任务负责，本功能不自动轮换节点。
 
-管理接口继承看板来源限制。反向代理部署时应对整个 `/dashboard` 前缀启用鉴权。HTTPS 反向代理需将看板的精确 Origin（如 `https://gateway.example.com`）加入 `ANTIGRAVITY_GATEWAY_CORS_ORIGIN`。写操作额外要求 `X-Gateway-Management: 1`，请求体使用 JSON：
+管理接口只接受回环连接和 `X-Agy-Admin-Token`。独立管理 API 负责会话、CSRF、Origin 和审计，不能将 `/_admin` 暴露到公网。请求体使用 JSON：
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/dashboard/proxies` | 脱敏代理列表、绑定、在途网络请求数及上次检测 |
-| POST | `/dashboard/proxies` | 新增或更新 `{id?, name, url?}`（支持 URL 用户名/密码） |
-| DELETE | `/dashboard/proxies/:id` | 删除未绑定、空闲代理 |
-| POST | `/dashboard/proxies/:id/check` | 检测固定 Google HTTPS 目标 |
-| POST | `/dashboard/accounts/:id/proxy` | 绑定 `{proxyId}`；`null` 解除绑定 |
+| GET | `/_admin/v1/proxies` | 脱敏代理列表、绑定、在途网络请求数及上次检测 |
+| POST | `/_admin/v1/proxies` | 新增或更新 `{id?, name, url?}`（支持 URL 用户名/密码） |
+| DELETE | `/_admin/v1/proxies/:id` | 删除未绑定、空闲代理 |
+| POST | `/_admin/v1/proxies/:id/check` | 检测固定 Google HTTPS 目标 |
+| PUT | `/_admin/v1/accounts/:id/proxy` | 绑定 `{proxyId}`；`null` 解除绑定 |
 
 请通过管理接口修改运行中的配置；直接编辑 `proxies.json` 后需要重启 Gateway。代理地址只支持 HTTP/HTTPS CONNECT，不支持 SOCKS。
 
@@ -453,7 +506,7 @@ antigravity-gateway stats
 
 请求正文共享 384 MiB 估算预算；解析后的媒体另有 512 MiB 预算，按二进制大小的四倍预留缓冲、Base64 与协议副本。超限返回 503，即使并发池仍有空位；排队满返回 429。预算不是进程 RSS 硬限制。Responses 历史缓存默认 64 MiB，SSE 缓冲默认每客户端 8 MiB；媒体磁盘限额默认关闭，可显式设置，超限拒绝新增而不删除历史文件。停机先排空请求，再保存用量。
 
-环境变量与完整机制见[资源配置表](#resource-limits-and-concurrency)。看板数据 `/dashboard/data` 的 `concurrency` 字段提供各池 active/limit/queued 与内存预算占用，不额外暴露账号凭据。
+环境变量与完整机制见[资源配置表](#resource-limits-and-concurrency)。回环接口 `/_admin/v1/overview` 的 `concurrency` 字段提供各池 active/limit/queued 与内存预算占用，不额外暴露账号凭据。
 
 2026-10-09 验证：Node 24 环境下本机和 Linux 候选各 252 项测试通过；真实 HTTPS 四路上传、四路生图与四路媒体输入（两张 PNG、两个一秒 MP4）通过，两个池同时达到 4 路。此结果不代表大文件持续压测或所有客户端 UI 均已验收。
 
@@ -537,7 +590,6 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `32` | 最大排队请求数 |
 | `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | 账号软黏性的固定窗口，单位秒；窗口内成功请求不会续期 |
 | `ANTIGRAVITY_GATEWAY_CORS_ORIGIN` | 空 | 允许访问本地网关的浏览器 Origin |
-| `ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW` | 空 | 额外允许访问看板的 IP、CIDR 或 `*`，逗号分隔；默认仅本机 |
 | `ANTIGRAVITY_GATEWAY_DEBUG` | 空 | 设置为 `1` 输出更多诊断信息 |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | 空（关闭） | 设置为 `1` 后，要求模型按工作阶段说明进度；阶段内不逐工具解说，阶段切换时简短交代 |
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | 原生图片请求使用的 Antigravity 图片模型 |
@@ -576,7 +628,6 @@ antigravity-gateway service restart
 ```bash
 export ANTIGRAVITY_GATEWAY_HOST=0.0.0.0
 export ANTIGRAVITY_GATEWAY_API_KEY=请设置自己的密钥
-export ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW=192.168.1.0/24
 antigravity-gateway
 ```
 
@@ -619,6 +670,23 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
+### Current source version: 1.7.1-bailey.2
+
+The built-in `/dashboard` page and all subroutes return 404. Deployments may keep an Nginx 301 for the page URLs only, pointing to the separate admin service. Legacy mutation APIs must remain retired.
+
+This source integrates upstream `db939d4` (1.7.1 plus subsequent fixes). The separate admin source is in `manager/`, with static pages and a Node management API calling the loopback `/_admin/v1` contract. Proxy credentials and API keys remain in the core. Upstream `54ae06e` (1.7.2) was reviewed; its OAuth candidates are not included.
+
+- Native Go Cloud Code transport, persisted sessions, compaction and targeted Claude Code 2.1.284/2.1.304, Codex and Hermes tool adapters. Unknown clients retain compatibility behavior; tools execute on clients.
+- Cancellation/timeout no longer cascades across healthy accounts. Includes container PID-reuse lease fixes, directory ownership and transaction draining, and position-preserving runtime budget notices for prefix caching.
+- Robin can forward complete client-supplied tool history after connection loss, without inventing receipts or restoring deleted accounts.
+- `add-gemini-win` adds local Windows Chrome/Edge login with separate `gemini-win-accounts/` credentials. It requires a Windows browser and does not replace VPS dashboard OAuth. Non-video attachments are unsupported on this channel; video retains Cloud Code routing and native usage remains unknown.
+- Shared quota-aware weighted scheduling; affinity defaults to five hours (`ANTIGRAVITY_AFFINITY_TTL_SECONDS`). Per-account proxies, 12 total requests, separate four-way media and image pools, byte budgets and SSE backpressure remain.
+
+Native helpers are reused per proxy endpoint with proxy bypass variables cleared. Token and ordinary HTTP requests use the same account proxy; invalid bindings never fall back to direct access. Packages include verified native binaries for six platform/architecture combinations; normal installs need no Go toolchain. `npm run build:native` requires upstream's Go 1.27.2. Helpers add process and disk overhead. Minimal text requests succeeded for 23 available models on the maintained deployment; a disabled placeholder was skipped. This is not image, tool, long-session or high-concurrency resource acceptance.
+
+Windows terminal onboarding also binds `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`; server requests fail closed until a valid binding exists. Login browser routing follows local browser settings. See [Windows channel](docs/windows-native.md) and [Robin channel](docs/robin-provider.md). Upstream experiment reports are not deployment evidence for this distribution.
+
+
 Antigravity Gateway is an Anthropic/OpenAI-compatible gateway for local or server deployment. Claude Code, Codex CLI, Trae, DSH, Hermes and other compatible clients can use available account models through imported Antigravity CLI (`agy`) credentials or an authorized managed account pool.
 
 This repository is independently maintained by Bailey, based on [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), with the original MIT license and history preserved. `main` is this repository’s default installation and maintenance branch; `codex/bailey-stability` is the current stability development branch. Submit issues and contributions to [this repository](https://github.com/baileyh8/antigravity-gateway). Changes on this line are not automatically submitted or merged upstream.
@@ -627,7 +695,7 @@ The default `direct` transport calls Cloud Code without the agy Agent wrapper pr
 
 > Unofficial and intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional restrictions, and terms still apply.
 
-Released version: [v1.5.1-bailey.1](https://github.com/baileyh8/antigravity-gateway/releases/tag/v1.5.1-bailey.1). This build has been deployed on a VPS and verified with real Argon text and tool roundtrips. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+See [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases) and [CHANGELOG.md](CHANGELOG.md). Historical Argon tool acceptance for `1.5.1-bailey.1` does not establish full capability acceptance for this version.
 
 ### Features
 
@@ -689,13 +757,13 @@ Background keepalive and autostart:
 antigravity-gateway service start
 ```
 
-Open the local Token dashboard while either foreground or background mode is running:
+Print local usage totals:
 
 ```bash
 antigravity-gateway stats
 ```
 
-Once the gateway is running in either foreground or background mode, run this command from another terminal. The dashboard reuses the gateway process and port `9897`; it does not start another persistent web service. The direct URL is `http://127.0.0.1:9897/dashboard`.
+This command prints local usage in the terminal. The separate agy-manager serves the graphical interface at `/admin/`; the proxy core does not serve HTML.
 
 Service management:
 
@@ -727,7 +795,7 @@ Run the gateway in foreground mode and type `add` to authorize another account. 
 
 **Run the gateway on your VPS and authorize in your local browser.** No VPS browser, agy-cli installation or SSH forwarding is required.
 
-1. Sign in to the gateway's HTTPS `/dashboard` and click “添加 Gemini 账号” (Add Gemini account) in the accounts card.
+1. Sign in to the separately deployed `/admin/accounts/` and select the Gemini App account entry.
 2. Select a registered account proxy and click “开始添加” (Start). Server-side authorization and later model traffic use this proxy.
 3. Open the authorization link in your local browser and authorize the intended Google account.
 4. If the browser redirects to `127.0.0.1` and displays a connection error, copy the **complete callback URL** from the address bar and submit it in the dashboard. You do not need to repeat the login.
@@ -756,7 +824,7 @@ The terminal `add-gemini` alternative requires `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID
 | `models` | Show discovered models |
 | `status` | Refresh gateway and dashboard status |
 | `usage` | Show live detailed usage |
-| `stats` | Open the local Token dashboard |
+| `stats` | Print local usage totals |
 | `reload` | Reload accounts and quota snapshots |
 | `config` | Show client configuration |
 | `logs` | Show log information |
@@ -902,7 +970,7 @@ Token usage and cache accounting:
 - **Anthropic Messages**: `input_tokens` excludes cache reads (`prompt - cache_read`) to avoid double-billing; cache reads are reported under `cache_read_input_tokens`.
 - **OpenAI Chat Completions**: `prompt_tokens` remains inclusive of the cached prefix, with cache hits reported under standard `prompt_tokens_details.cached_tokens` and reasoning tokens under `completion_tokens_details.reasoning_tokens`. This fully supports cache-hit and usage breakdowns in clients such as DeepSeek Harness (DSH) and Cursor.
 
-The browser dashboard shows lifetime and selected-period Tokens, requests, upstream calls, input/output/thinking/cache usage, failures, per-account quota, hourly heatmaps, model trends, and model consumption share. It supports 1/3/7/30-day windows and account filtering, and remembers the last selected time window in the browser. Accounts come exclusively from the active account pool. Quota cards mirror agy `/usage`: by default each account shows the shared weekly and five-hour limits for both the Gemini and Claude/GPT groups, with a compact overview that shows only the Gemini group; the browser also remembers the last selected quota view. Unhealthy accounts expose a one-shot authentication recheck, while Delete Account removes the credential, health record, quota snapshot, and affinity bindings and prevents an explicitly removed local agy identity from being auto-imported or used as an implicit fallback again; use `add` to explicitly restore it. Per-model request and Token charts use the exact model IDs actually called instead of treating a model-catalog balance as the account's total quota. The Generate Image action creates an account-masked, high-resolution PNG entirely in the browser: desktop browsers download it directly, while mobile browsers show a long-press save preview. No third-party screenshot service or extra gateway-side rendering process is used. The page reads local aggregate data once per minute only while open; it never stores prompts or model responses. Hourly account/model breakdowns begin with v0.8.0. Type `usage` for terminal details or run `antigravity-gateway stats` while either foreground or background mode is active. Usage is persisted every five minutes; quota snapshots refresh asynchronously.
+The separate agy-manager provides the graphical dashboard, account/key/model management and logs. The core retains usage storage, quotas and loopback `/_admin/v1` APIs. It no longer loads HTML, screenshot libraries or legacy panel mutation routes. `stats` prints a local text summary.
 
 Authentication diagnostics are written as timestamped JSON Lines to `~/.antigravity-gateway/logs/auth-diagnostics.jsonl`, with one rotated `.1` copy at approximately 5 MB. Events cover account quarantine and recovery, manual rechecks, token-refresh stages, upstream authentication probes, and runtime gaps consistent with sleep or suspension. Credentials, prompts, and model responses are never written to this file.
 
@@ -938,12 +1006,11 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY` | `12` (`4` in `agy` mode) | Maximum concurrent requests |
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `32` | Maximum queued requests |
 | `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | Fixed account-affinity window in seconds; successful requests do not renew it |
-| `ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW` | empty | Extra IPs, CIDRs, or `*` allowed to open the dashboard; comma-separated and local-only by default |
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | Native Antigravity image model |
 | `ANTIGRAVITY_GATEWAY_MEDIA_LIMIT` | `100663296` | Maximum bytes per media item |
 | `ANTIGRAVITY_GATEWAY_TOTAL_MEDIA_LIMIT` | `201326592` | Maximum resolved media bytes per request |
 
-For remote dashboard access, bind the gateway to a non-loopback address, configure an API key, and allow only the required LAN address or CIDR. The dashboard itself does not validate the API key, so allowed sources can see account emails, quotas, and usage; avoid `*` on public networks. Matching uses the TCP peer address and does not trust `X-Forwarded-For`. Re-run `antigravity-gateway service start` to persist changed environment settings in background mode.
+Remote management belongs to the separate authenticated admin service. Keep the core loopback-only where possible; never publish `/_admin/v1` directly. The retired `ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW` setting has no effect.
 
 ### How it works
 
@@ -985,13 +1052,13 @@ Bailey Edition includes progress narration, streaming, usage and image-delivery 
 
 Configure positive finite values for byte/concurrency/time limits. These bounds reduce overload risk but are not a substitute for measuring RSS under representative traffic. The media disk accounting assumes this process is the sole writer; restart after external file changes to refresh the cached directory total. The synchronous MediaStore API remains available for compatibility, while HTTP request handling uses its async methods. Statistics remain a small atomic JSON snapshot rather than introducing a database.
 
-The authenticated dashboard data includes `concurrency` with active, limit and queued counts for each pool and current byte reservations. Media turns also count toward the existing request limit (12 by default). Remote URLs and stored/local file inputs reserve memory before buffering; large simultaneous files can receive 503 even when pool slots remain available. This budget is released when a turn completes, fails or is cancelled.
+The authenticated loopback `/_admin/v1/overview` includes `concurrency` with active, limit and queued counts for each pool and current byte reservations. Media turns also count toward the existing request limit (12 by default). Remote URLs and stored/local file inputs reserve memory before buffering; large simultaneous files can receive 503 even when pool slots remain available. This budget is released when a turn completes, fails or is cancelled.
 
 ### Per-account proxies
 
-Use **Proxy management** in `/dashboard` to create an HTTP/HTTPS CONNECT proxy and bind it to an account. Bound accounts use that proxy for chat/images, token refresh, quota and model discovery. Proxy failure does not fall back to the default proxy or direct access; account failover may still select another account. Unbound/new accounts and initial OAuth authorization use the process network configuration. Changes apply to subsequent requests; busy proxies cannot be edited or unbound, and bound proxies cannot be deleted. SOCKS and subscription/node rotation are not built in.
+Use **Proxy management** in the separate `/admin/accounts/` to create an HTTP/HTTPS CONNECT proxy and bind it to an account. Bound accounts use that proxy for chat/images, token refresh, quota and model discovery. Proxy failure does not fall back to the default proxy or direct access; account failover may still select another account. Unbound/new accounts and initial OAuth authorization use the process network configuration. Changes apply to subsequent requests; busy proxies cannot be edited or unbound, and bound proxies cannot be deleted. SOCKS and subscription/node rotation are not built in.
 
-Bindings are stored separately from tokens in `proxies.json` with mode 0600. The dashboard redacts proxy credentials and excludes proxy controls from shared images. Protect the entire `/dashboard` prefix with authentication when using a reverse proxy; add its exact HTTPS origin to `ANTIGRAVITY_GATEWAY_CORS_ORIGIN`. Management writes require `X-Gateway-Management: 1`. See the [management API table](#账号独立代理) for routes.
+Bindings are stored separately from tokens in `proxies.json` with mode 0600. Responses redact proxy credentials. Loopback management requires `X-Agy-Admin-Token`; the separate admin service handles browser authentication, Origin/CSRF and audit records. See the management API table above.
 
 ### Validation scope
 

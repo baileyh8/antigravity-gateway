@@ -177,21 +177,14 @@ test('health endpoint reports the package release version', async (t) => {
   assert.equal(body.version, packageVersion);
 });
 
-test('local dashboard and live data are served without an extra web process', async (t) => {
+test('legacy panel routes and assets are retired without changing the public API', async t => {
   const base = await withServer(t);
-  const page = await fetch(`${base}/dashboard`);
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-type'), /text\/html/);
-  assert.match(await page.text(), /Token 消耗看板/);
-
-  const data = await fetch(`${base}/dashboard/data`);
-  assert.equal(data.status, 200);
-  const body = await data.json();
-  assert.equal(body.version, packageVersion);
-  assert.ok(body.usage.lifetime);
-  assert.ok(Array.isArray(body.usage.history));
-  assert.ok(Array.isArray(body.accounts));
-  assert.equal((await fetch(`${base}/favicon.ico`)).status, 204);
+  for (const [method, route] of [['GET','/dashboard'],['GET','/dashboard/'],['GET','/dashboard/data'],['GET','/dashboard/assets/html2canvas.min.js'],['GET','/dashboard/proxies'],['POST','/dashboard/accounts/example/recheck'],['DELETE','/dashboard/accounts/example'],['POST','/dashboard/robin/oauth/start']]) {
+    const response = await fetch(base + route, {method});
+    assert.equal(response.status,404); assert.equal((await response.json()).error.type,'legacy_dashboard_removed');
+  }
+  assert.equal((await fetch(`${base}/v1/models`)).status,200);
+  assert.equal((await fetch(`${base}/favicon.ico`)).status,204);
 });
 
 test('Claude Code provider connectivity probe does not produce a false missing-interface error', async (t) => {
@@ -533,4 +526,49 @@ test('explicit model aliases remain opt-in exact mappings', async (t) => {
   });
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('x-antigravity-model'), 'claude-opus-4-6-thinking');
+});
+
+test('in-flight transactions settle on failure or cancellation without unhandled promise rejection and server survives', async (t) => {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  // 1. 模拟上游错误拒绝请求
+  const failResp = await fetch(`${base}/v1/messages`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-test-high', messages: [{ role: 'user', content: 'FAIL' }] })
+  });
+  assert.equal(failResp.status, 502);
+
+  // 2. 模拟客户端主动取消请求
+  const ac = new AbortController();
+  const cancelPromise = fetch(`${base}/v1/messages`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-test-high', messages: [{ role: 'user', content: 'hello' }] }),
+    signal: ac.signal
+  }).catch((err) => err);
+  ac.abort();
+  await cancelPromise;
+
+  // 3. 验证事务均已排空且无残留
+  if (typeof server.drainTransactions === 'function') {
+    const drained = await server.drainTransactions(2000);
+    assert.equal(drained, true);
+  }
+
+  // 4. 验证服务持续健康存活，正常请求依然返回 200
+  const okResp = await fetch(`${base}/v1/messages`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-test-high', messages: [{ role: 'user', content: 'hello' }] })
+  });
+  assert.equal(okResp.status, 200);
+});
+
+test('proxy core does not load any legacy browser panel modules', () => {
+  const loaded = Object.keys(require.cache);
+  assert.equal(loaded.some(file => /[\\/]src[\\/]dashboard(?:-access)?\.js$/.test(file)), false);
 });

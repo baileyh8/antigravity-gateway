@@ -17,20 +17,31 @@ const { RobinOnboarding } = require('./src/robin-onboarding');
 const { ProxyManager } = require('./src/proxy-manager');
 const { AccountStore } = require('./src/account-store');
 const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemainder } = require('./src/artifacts');
-const { createDashboardAccessPolicy } = require('./src/dashboard-access');
+const { handleAdminRequest, readAdminToken } = require('./src/admin-api');
+const { AdminOAuth } = require('./src/admin-oauth');
+const { KeyStore } = require('./src/key-store');
+const keyContext = require('./src/key-context');
+const { RequestLog, requestContext, runRequestLog } = require('./src/request-log');
+const { ModelSettings } = require('./src/model-settings');
 const { DiagnosticLog } = require('./src/diagnostic-log');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
-const { checkDashboard, dashboardAsset, dashboardData, dashboardHtml, openBrowser } = require('./src/dashboard');
+const { closeNativeTransport } = require('./src/agy-native-transport');
+const { imageReferencePaths } = require('./src/agy-image-references');
+const { nativeImageToolResponse } = require('./src/agy-tool-results');
 const { LocalAccountImporter } = require('./src/local-account-importer');
-const { MediaStore, MultimediaError, mediaParts, normalizeMime } = require('./src/multimedia');
+const { MediaStore, MultimediaError, mediaParts, normalizeMime, imageFileExtension } = require('./src/multimedia');
 const { OAuthFlow } = require('./src/oauth-flow');
 const { ProviderRouter, ProviderRouterError } = require('./src/provider-router');
 const { QuotaManager } = require('./src/quota-manager');
 const { RobinAccountPool } = require('./src/robin-account-pool');
 const { RobinOAuthFlow } = require('./src/robin-oauth-flow');
+const { GeminiWindowsLogin } = require('./src/gemini-windows-login');
+const { GeminiAccountStore } = require('./src/gemini-account-store');
 const { ARGON_MODEL, RobinProviderError } = require('./src/robin-provider');
+const { acquireDirectoryGuard } = require('./src/agy-file-lease');
 const { manageService } = require('./src/service-manager');
-const { TerminalConsole } = require('./src/terminal-console');
+const { publicModels } = require('./src/model-visibility');
+const { TerminalConsole, dashboard: renderUsageSummary } = require('./src/terminal-console');
 const { UsageStore } = require('./src/usage-store');
 const { SessionManager, SessionIdentityError, credentialScope } = require('./src/session-manager');
 const { version: GATEWAY_VERSION } = require('./package.json');
@@ -98,6 +109,11 @@ const AGY_PREFIX_ARGS = (() => {
 const DEFAULT_MODEL = CLI_ARGS.model || process.env.ANTIGRAVITY_DEFAULT_MODEL || 'gemini-3.8-flash-high';
 const FAST_MODEL = String(process.env.ANTIGRAVITY_FAST_MODEL || '').trim();
 const API_KEY = process.env.ANTIGRAVITY_GATEWAY_API_KEY || '';
+// The admin API is inert unless a token file exists. It is loopback-only and
+// intentionally separate from the client API key so the data plane can keep
+// running without a management service.
+const ADMIN_TOKEN = readAdminToken();
+const GATEWAY_STARTED_AT = new Date().toISOString();
 // These are transport/memory guards measured in bytes, not model context
 // windows measured in tokens. Keep them comfortably above Gemini 3.8 Flash's
 // 1,048,576-token input window and let Cloud Code perform the authoritative
@@ -114,6 +130,17 @@ const DEFAULT_MAX_CONCURRENCY = TRANSPORT === 'agy' ? 4 : 12;
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_CONCURRENCY || DEFAULT_MAX_CONCURRENCY));
 const MAX_QUEUE = Math.max(0, Number(process.env.ANTIGRAVITY_GATEWAY_MAX_QUEUE || 32));
 const MODEL_CACHE_MS = 60000;
+function readKeyPepper() {
+  const inline = String(process.env.AGY_KEY_PEPPER || '').trim();
+  if (inline) return inline;
+  try {
+    return fs.readFileSync(process.env.AGY_KEY_PEPPER_FILE || '/etc/agy-manager/key-pepper', 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+// 先取得目录守护，再初始化可能清理或落盘状态的账号池。
+function initializeGateway(directoryGuard = null) {
 const DIAGNOSTIC_LOG = new DiagnosticLog({ directory: path.join(CONFIG_DIR, 'logs') });
 let diagnosticsEnabled = false;
 const diagnosticReporter = (event, fields) => {
@@ -122,9 +149,38 @@ const diagnosticReporter = (event, fields) => {
 const DIRECT_PROVIDER = new DirectAntigravityProvider({ diagnosticReporter });
 DIRECT_PROVIDER.localAuth.agyPath = AGY_PATH;
 const ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR });
-const ROBIN_ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR, directoryName: 'robin-accounts' });
+const GEMINI_ACCOUNT_STORE = new GeminiAccountStore({ configDir: CONFIG_DIR });
+const ROBIN_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.oauth;
+const WINDOWS_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.windows;
 const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR, onSaveError: (error) => gatewayWarn(`[Antigravity Gateway] 用量保存失败，将重试 (${error.code})`) });
+const KEY_PEPPER = readKeyPepper();
+const MULTI_KEY = process.env.AGY_MULTI_KEY === '1';
+let KEY_STORE;
+try {
+  KEY_STORE = new KeyStore({ configDir: CONFIG_DIR, pepper: KEY_PEPPER, multiKey: MULTI_KEY });
+} catch (error) {
+  console.error('[Antigravity Gateway] 多密钥模式未启用:', error.message);
+  KEY_STORE = new KeyStore({ configDir: CONFIG_DIR, pepper: '', multiKey: false });
+}
+const ACCOUNT_LABELS = new (require('./src/account-labels').AccountLabels)({ configDir: CONFIG_DIR });
+const MODEL_SETTINGS = new ModelSettings({ configDir: CONFIG_DIR });
+USAGE_STORE.onClientRequest = () => KEY_STORE.recordRequest();
+const REQUEST_LOG = new RequestLog({
+  configDir: CONFIG_DIR,
+  retentionDays: Number(process.env.AGY_LOG_RETENTION_DAYS || 30),
+  maxBytes: Number(process.env.AGY_LOG_MAX_BYTES || 500 * 1024 * 1024)
+});
+USAGE_STORE.onRecord = (event) => {
+  KEY_STORE.recordUsage(event);
+  const log = requestContext();
+  if (log) {
+    if (event.model) log.model ||= event.model;
+    if (event.accountId) log.account = event.accountId;
+    if (event.usage?.total_tokens) log.usage = event.usage;
+  }
+};
 const PROXY_MANAGER = new ProxyManager({ configDir: CONFIG_DIR });
+
 const ACCOUNT_POOL = new AccountPool({
   proxyManager: PROXY_MANAGER,
   store: ACCOUNT_STORE,
@@ -136,8 +192,10 @@ const ACCOUNT_POOL = new AccountPool({
 const QUOTA_MANAGER = new QuotaManager({ configDir: CONFIG_DIR, accountPool: ACCOUNT_POOL });
 ACCOUNT_POOL.quotaManager = QUOTA_MANAGER;
 const OAUTH_FLOW = new OAuthFlow({ agyPath: AGY_PATH });
+// The management console gets its own flow so a browser-side add never
+// interferes with the foreground terminal's `add` command.
 const ROBIN_ACCOUNT_POOL = new RobinAccountPool({
-  store: ROBIN_ACCOUNT_STORE,
+  store: GEMINI_ACCOUNT_STORE,
   proxyManager: PROXY_MANAGER,
   diagnosticReporter,
   usageStore: USAGE_STORE
@@ -148,7 +206,15 @@ const ROBIN_OAUTH_FLOW = new RobinOAuthFlow({ fetchImpl: (input, init) => {
   if (!proxy) throw new GatewayError('请先设置 ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID 为已登记代理。', { status: 503, code: 'robin_proxy_required' });
   return PROXY_MANAGER.via(proxy, input, init);
 } });
-const ROBIN_ONBOARDING = new RobinOnboarding({ manager: PROXY_MANAGER, store: ROBIN_ACCOUNT_STORE, pool: ROBIN_ACCOUNT_POOL });
+const ROBIN_ONBOARDING = new RobinOnboarding({ manager: PROXY_MANAGER, store: GEMINI_ACCOUNT_STORE, pool: ROBIN_ACCOUNT_POOL });
+const ADMIN_OAUTH = new AdminOAuth({
+  flowFactory: () => new OAuthFlow({ agyPath: AGY_PATH, openBrowserImpl: async () => false }),
+  accountStore: ACCOUNT_STORE,
+  accountPool: ACCOUNT_POOL,
+  quotaManager: QUOTA_MANAGER,
+  proxyManager: PROXY_MANAGER
+});
+const WINDOWS_LOGIN = new GeminiWindowsLogin();
 const PROVIDER_ROUTER = new ProviderRouter({
   cloudcodePool: ACCOUNT_POOL,
   robinPool: ROBIN_ACCOUNT_POOL
@@ -188,11 +254,6 @@ function stopDiagnosticHeartbeat() {
   if (diagnosticHeartbeat) clearInterval(diagnosticHeartbeat);
   diagnosticHeartbeat = null;
 }
-
-const DASHBOARD_ACCESS = createDashboardAccessPolicy(
-  process.env.ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW,
-  { warn: (message) => gatewayWarn(`[Antigravity Gateway Warning] ${message}`) }
-);
 
 const activeWorkers = new Set();
 const activeControllers = new Set();
@@ -262,10 +323,6 @@ function isLoopbackHost(host) {
   return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(host).toLowerCase());
 }
 
-function dashboardUrl() {
-  const host = isLoopbackHost(HOST) ? (HOST === '::1' ? '[::1]' : HOST) : '127.0.0.1';
-  return `http://${host}:${PORT}/dashboard`;
-}
 
 function requestBaseUrl(req) {
   const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
@@ -274,13 +331,14 @@ function requestBaseUrl(req) {
 }
 
 function configuredAliases() {
+  let envAliases = {};
   try {
     const value = JSON.parse(process.env.ANTIGRAVITY_MODEL_ALIASES || '{}');
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).filter(([source, target]) => source && typeof target === 'string' && target.trim()));
-  } catch {
-    return {};
-  }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      envAliases = Object.fromEntries(Object.entries(value).filter(([source, target]) => source && typeof target === 'string' && target.trim()));
+    }
+  } catch { /* invalid env aliases are ignored */ }
+  return { ...envAliases, ...MODEL_SETTINGS.aliases() };
 }
 
 function usesDirectTransport() {
@@ -303,9 +361,10 @@ function directAuthDescription() {
   return 'unavailable';
 }
 
-async function availableModels(force = false) {
+async function availableModels(force = false, { includeDisabled = false } = {}) {
+  const visible = (items) => publicModels(items).filter(id => includeDisabled || !MODEL_SETTINGS.isDisabled(id));
   if (force) cloudcodeModelCache.at = 0;
-  if (!force && Date.now() - modelCache.at < MODEL_CACHE_MS && modelCache.models.length) return modelCache.models;
+  if (!force && Date.now() - modelCache.at < MODEL_CACHE_MS && modelCache.models.length) return visible(modelCache.models);
   try {
     // The subprocess is only a Cloud Code transport. Its absence/failure must
     // not skip Robin, nor may a Robin catalog failure hide working agy models.
@@ -319,18 +378,18 @@ async function availableModels(force = false) {
     modelCache = { at: Date.now(), models: modelCache.models, error };
     if (!modelCache.models.length) throw error;
   }
-  return modelCache.models;
+  return visible(modelCache.models);
 }
 
 async function availableCloudCodeModels() {
   if (Date.now() - cloudcodeModelCache.at < MODEL_CACHE_MS && cloudcodeModelCache.models.length) {
-    return cloudcodeModelCache.models;
+    return publicModels(cloudcodeModelCache.models);
   }
   const models = usesDirectTransport()
     ? await ACCOUNT_POOL.listModels(undefined, { force: true })
     : await listModels({ agyPath: AGY_PATH, prefixArgs: AGY_PREFIX_ARGS });
   cloudcodeModelCache = { at: Date.now(), models };
-  return models;
+  return publicModels(models);
 }
 
 function preferredFastModel(models) {
@@ -355,7 +414,14 @@ function preferredFastModel(models) {
 async function resolveModel(requested, { preferFast = false } = {}) {
   const aliases = configuredAliases();
   const original = requested || DEFAULT_MODEL;
+  KEY_STORE.checkModel(original);
   const mapped = Object.prototype.hasOwnProperty.call(aliases, original) ? aliases[original] : original;
+  if (mapped !== original) KEY_STORE.checkModel(mapped);
+  if (MODEL_SETTINGS.isDisabled(mapped)) {
+    throw new GatewayError(`模型 ${mapped} 已在管理后台停用。`, { code: 'model_disabled', status: 404 });
+  }
+  const logContext = requestContext();
+  if (logContext && !logContext.model) logContext.model = mapped;
   // Normal requests preserve the exact client model ID. Aliases are opt-in,
   // exact mappings only. Cloud Code Auto Mode classifiers can use its faster
   // route; an explicitly Robin-owned model keeps its independent provider.
@@ -422,11 +488,11 @@ function codexModelInfo(slug, priority) {
   // Cloud Code currently reports 1,048,576 input tokens for Gemini 3.7/3.8
   // Flash. Keep that verified fallback even when a transient discovery request
   // fails; otherwise the client would compact a healthy 1M context at 200K.
-  const contextWindow = (argon ? ARGON_MODEL_METADATA.context_window : upstream?.maxTokens)
+  const contextWindow = MODEL_SETTINGS.get(slug).contextWindow || (argon ? ARGON_MODEL_METADATA.context_window : upstream?.maxTokens)
     || (/^gemini-3\.[78]-flash(?:[.-]|$)/i.test(slug) ? 1048576 : 200000);
   return {
     slug,
-    display_name: upstream?.displayName || slug,
+    display_name: MODEL_SETTINGS.get(slug).displayName || upstream?.displayName || slug,
     description: 'Model provided through the local Antigravity Gateway.',
     prefer_websockets: false,
     support_verbosity: false,
@@ -448,6 +514,8 @@ function codexModelInfo(slug, priority) {
     max_context_window: contextWindow,
     max_output_tokens: argon ? ARGON_MODEL_METADATA.max_output_tokens : upstream?.maxOutputTokens || null,
     ...(argon ? ARGON_MODEL_METADATA : {}),
+    ...(MODEL_SETTINGS.get(slug).contextWindow ? { context_window: MODEL_SETTINGS.get(slug).contextWindow, max_context_window: MODEL_SETTINGS.get(slug).contextWindow } : {}),
+    ...(MODEL_SETTINGS.get(slug).maxOutputTokens ? { max_output_tokens: MODEL_SETTINGS.get(slug).maxOutputTokens } : {}),
     auto_compact_token_limit: null,
     comp_hash: `antigravity-gateway-${GATEWAY_VERSION}`,
     base_instructions: 'Follow the client instructions and use only client-provided tools when needed.',
@@ -537,7 +605,7 @@ function codexCatalogBody(models) {
   return {
     object: 'list',
     data: ordered.map((id) => ({
-      id, object: 'model', created: 0, owned_by: 'antigravity', display_name: id,
+      id, object: 'model', created: 0, owned_by: 'antigravity', display_name: MODEL_SETTINGS.get(id).displayName || id,
       ...(id === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
     })),
     models: ordered.map((id, index) => codexModelInfo(id, index))
@@ -623,13 +691,13 @@ function startupBanner({ models = [], modelError = '', credentialSource = creden
     ' 可用模型:'
   ];
   if (models.includes(ARGON_MODEL)) lines.splice(lines.length - 1, 0,
-    ' Gemini App: ✅ Robin 原生任务 / 工具通道（独立授权，无需本机应用）');
+    ' Gemini App: ✅ 独立账号池（Robin OAuth / Windows WebChannel）');
   const selected = featuredModels(models);
   if (selected.length) lines.push(...selected.map((model) => `    ${model}`));
   else lines.push(`    ${modelError ? `检测失败：${modelError}` : '未发现精选模型'}`);
   lines.push(' 更多模型: antigravity-gateway --models');
   lines.push(' Claude Code 模型配置: antigravity-gateway --claude-config-path');
-  lines.push(' Token 看板: antigravity-gateway stats');
+  lines.push(' 用量统计: antigravity-gateway stats');
   lines.push('=================================================================');
   return lines.join('\n');
 }
@@ -653,7 +721,7 @@ function printHelp() {
   --codex-catalog-path    显示自动生成的 Codex 模型目录绝对路径
   --claude-config-path    显示自动生成的 Claude Code 模型配置路径
   --claude-config         输出 Claude Code modelPicker 配置 JSON
-  stats                   在默认浏览器打开本地 Token 用量看板
+  stats                   输出本地 Token 用量统计
 
 后台保活:
   service start           自动注册开机/登录自启并立即后台启动；重复执行会更新并重启
@@ -679,8 +747,7 @@ function printHelp() {
 
 接口:
   GET  /
-  GET  /dashboard
-  GET  /dashboard/data
+  GET  /_admin/v1/*（仅回环管理接口）
   GET  /v1/models
   POST /v1/files
   GET  /v1/files/:id/content
@@ -720,7 +787,7 @@ function setCors(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-claude-code-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, DELETE, OPTIONS');
   return true;
 }
@@ -749,13 +816,7 @@ function identityTrace(identity = {}) {
 }
 
 function authorized(req) {
-  if (!API_KEY) return true;
-  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const provided = String(bearer || req.headers['x-api-key'] || '');
-  const providedBuffer = Buffer.from(provided);
-  const expectedBuffer = Buffer.from(API_KEY);
-  return providedBuffer.length === expectedBuffer.length
-    && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+  return Boolean(keyContext.current()) || (!API_KEY && !MULTI_KEY) || KEY_STORE.legacyMatches(req);
 }
 
 async function readBuffer(req) {
@@ -856,7 +917,8 @@ function imageReferences(normalized, requested = []) {
   const images = mediaParts(normalized, (part) => String(part.mediaType || '').startsWith('image/'));
   if (!Array.isArray(requested) || !requested.length) return [];
   const wanted = new Set(requested.map(String));
-  return images.filter((part) => wanted.has(String(part.id)) || wanted.has(String(part.fileId)) || wanted.has(String(part.filename))).slice(0, 3);
+  return images.filter((part) => wanted.has(String(part.id)) || wanted.has(String(part.fileId)) || wanted.has(String(part.filename))
+    || imageReferencePaths(part).some(file => wanted.has(file))).slice(0, 3);
 }
 
 function artifactUrl(base, id) {
@@ -881,7 +943,7 @@ async function argonVideoFallbackModel() {
   return fallback;
 }
 
-async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, onDelta, onThinkingDelta, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
+async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
   const releaseRequest = await requestSlots.acquire(signal);
   let releaseMedia;
   try {
@@ -928,6 +990,8 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
       };
       let raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, {
         signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta, onAccountSelected, reuseConversation, ...taskScope,
+        ...(providerType === 'cloudcode' && nativeCompaction ? { nativeCompaction } : {}),
+        ...(nativeClientProfile ? { nativeClientProfile } : {}),
         onThinkingDelta: normalized.includeThinking ? onThinkingDelta : undefined
       });
       const initialUsage = raw.usage;
@@ -951,6 +1015,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         if ((args.ImagePaths || []).length !== references.length) {
           throw new GatewayError('生图工具引用了不存在或非图片类型的附件。', { code: 'invalid_image_reference', status: 400 });
         }
+        const imageStartedAt = Date.now();
         const releaseImage = await imageSlots.acquire(signal);
         let generated, saved;
         try {
@@ -970,7 +1035,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           });
           saved = await MEDIA_STORE.saveAsync(Buffer.from(generated.data, 'base64'), {
             mediaType: generated.mimeType,
-            filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.jpg`,
+            filename: `${String(args.ImageName || 'generated_image').replace(/[^a-z0-9_-]+/gi, '_')}.${imageFileExtension(generated.mimeType)}`,
             purpose: 'generated',
             scope: mediaScope
           });
@@ -996,17 +1061,23 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           toolChoice: resolved.toolChoice,
           messages: [
             ...prepared.normalized.messages,
-            { role: 'assistant', text: '', parts: [{ type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments, thoughtSignature: call.thoughtSignature }] },
+            { role: 'assistant', text: raw.text || '', parts: [
+              ...(raw.text ? [{ type: 'text', text: raw.text }] : []),
+              { type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments, thoughtSignature: call.thoughtSignature }
+            ] },
             { role: 'user', text: '', parts: [{
               type: 'tool_result', id: call.id, name: call.name,
               content: JSON.stringify(internalResult),
-              response: { output: internalResult },
+              // Local structured metadata remains available to the API/client
+              // layer; only the native text projection goes to Cloud Code.
+              response: nativeImageToolResponse(image, { createdAt: imageStartedAt }),
               media: [{ type: 'media', id: saved.id, mediaType: generated.mimeType, data: generated.data, filename: saved.filename }]
             }] }
           ]
         };
         raw = await PROVIDER_ROUTER.send(continuation, upstreamModel, {
-          signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope
+          signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope,
+          clientProjection: { source: prepared.normalized, images: [image], streamedPrefix: onDelta ? raw.streamedText || raw.text || '' : '' }
         });
         const final = finalize(raw);
         return { ...final, images: [image], usage: combinedUsage(initialUsage, generated.usage, raw.usage) };
@@ -1084,12 +1155,41 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
   }
 }
 
-async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
-  try {
-    return await runTurn(normalized, model, signal, options);
-  } catch (error) {
-    throw await upstreamModelDiagnostic(error, model);
+const activeTransactions = new Set();
+
+function trackTransaction(promise) {
+  const cleanup = () => { activeTransactions.delete(promise); };
+  activeTransactions.add(promise);
+  promise.then(cleanup, cleanup);
+  return promise;
+}
+
+async function drainTransactions(timeoutMs = Infinity) {
+  const until = Number.isFinite(timeoutMs) ? Date.now() + timeoutMs : Infinity;
+  while (activeTransactions.size) {
+    const pending = Promise.allSettled([...activeTransactions]);
+    if (until === Infinity) await pending;
+    else {
+      const left = until - Date.now();
+      if (left <= 0) return false;
+      let timer;
+      try { await Promise.race([pending, new Promise(resolve => { timer = setTimeout(resolve, left); })]); }
+      finally { clearTimeout(timer); }
+    }
   }
+  return true;
+}
+
+
+async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
+  const transaction = (async () => {
+    try {
+      return await runTurn(normalized, model, signal, options);
+    } catch (error) {
+      throw await upstreamModelDiagnostic(error, model);
+    }
+  })();
+  return await trackTransaction(transaction);
 }
 
 function beginSse(res) {
@@ -1424,7 +1524,7 @@ async function generateImages(payload, req, signal, references = []) {
     accountId = result.accountId;
     const saved = await MEDIA_STORE.saveAsync(Buffer.from(result.data, 'base64'), {
       mediaType: result.mimeType,
-      filename: `generated_${Date.now()}_${index + 1}.jpg`, purpose: 'generated', scope
+      filename: `generated_${Date.now()}_${index + 1}.${imageFileExtension(result.mimeType)}`, purpose: 'generated', scope
     });
     images.push({
       id: saved.id,
@@ -1503,7 +1603,32 @@ async function handleFileUpload(req, res) {
   sendJson(res, 200, saved);
 }
 
+function applyModelDefaults(payload) {
+  const aliases = configuredAliases();
+  const id = aliases[payload.model || DEFAULT_MODEL] || payload.model || DEFAULT_MODEL;
+  const setting = MODEL_SETTINGS.get(id);
+  return { ...payload,
+    ...(payload.temperature == null && setting.defaultTemperature != null ? { temperature: setting.defaultTemperature } : {}),
+    ...(payload.max_tokens == null && payload.max_output_tokens == null && payload.max_completion_tokens == null && setting.defaultMaxTokens != null ? { max_tokens: setting.defaultMaxTokens, max_output_tokens: setting.defaultMaxTokens } : {})
+  };
+}
+
+let lastAdminModelTest = 0;
+async function testAdminModel(id) {
+  if (Date.now() - lastAdminModelTest < 2000) throw new GatewayError('请等待 2 秒后再测试。', { status: 429, code: 'test_rate_limited' });
+  lastAdminModelTest = Date.now();
+  const started = Date.now();
+  const response = await fetch(`http://127.0.0.1:${PORT}/v1/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY || 'antigravity-gateway'}` },
+    body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'Reply with exactly OK' }], stream: false }), signal: AbortSignal.timeout(25000)
+  });
+  const body = await response.json();
+  if (!response.ok) throw new GatewayError(body.error?.message || '模型测试失败。', { status: response.status, code: body.error?.code || 'model_test_failed' });
+  return { model: id, upstreamModel: response.headers.get('x-antigravity-model'), latencyMs: Date.now() - started, usage: body.usage, text: String(body.choices?.[0]?.message?.content || '').slice(0, 200) };
+}
+
 async function handleAnthropic(payload, req, res, signal) {
+  payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
   const normalized = normalizeAnthropic(payload);
   const model = await resolveModel(normalized.model, { preferFast: normalized.autoMode });
@@ -1521,6 +1646,7 @@ async function handleAnthropic(payload, req, res, signal) {
 }
 
 async function handleChat(payload, req, res, signal) {
+  payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
   const normalized = normalizeChat(payload);
   const model = await resolveModel(normalized.model);
@@ -1537,6 +1663,7 @@ async function handleChat(payload, req, res, signal) {
 }
 
 async function handleResponses(payload, req, res, signal) {
+  payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
   cleanupResponseStore();
   const previous = payload.previous_response_id ? SESSION_MANAGER.getResponse(payload.previous_response_id, req, payload) : null;
@@ -1586,26 +1713,6 @@ async function handleResponses(payload, req, res, signal) {
   else sendJson(res, 200, body, { 'x-antigravity-model': model });
 }
 
-function dashboardAccountPool(requestUrl, accountId) {
-  const providers = requestUrl.searchParams.getAll('provider');
-  if (providers.length > 1 || (providers.length === 1 && !['cloudcode', 'robin'].includes(providers[0]))) {
-    throw new GatewayError('账号来源必须明确为 cloudcode 或 robin，且只能指定一次。', {
-      code: 'invalid_account_provider', status: 400
-    });
-  }
-  if (providers.length) return providers[0] === 'robin' ? ROBIN_ACCOUNT_POOL : ACCOUNT_POOL;
-  const inCloudCode = ACCOUNT_POOL.status().some(account => account.id === accountId);
-  const inRobin = ROBIN_ACCOUNT_POOL.status().some(account => account.id === accountId);
-  if (inCloudCode && inRobin) {
-    throw new GatewayError('该账号 ID 同时存在于两类账号池，请明确指定账号来源。', {
-      code: 'ambiguous_account_provider', status: 409
-    });
-  }
-  // Preserve older single-provider callers, including the existing Cloud Code
-  // not-found error, without guessing when two stores own the same ID.
-  return inRobin ? ROBIN_ACCOUNT_POOL : ACCOUNT_POOL;
-}
-
 async function requestHandler(req, res) {
   if (!setCors(req, res)) { sendJson(res, 403, { error: { type: 'origin_not_allowed', message: '浏览器来源未获授权。' } }); return; }
   if (req.method === 'OPTIONS') { res.writeHead(204); endStream(res); return; }
@@ -1622,132 +1729,44 @@ async function requestHandler(req, res) {
     endStream(res);
     return;
   }
-  if (route === '/dashboard' || route === '/dashboard/data' || route.startsWith('/dashboard/robin/oauth') || route.startsWith('/dashboard/assets/') || route.startsWith('/dashboard/accounts/') || route === '/dashboard/proxies' || route.startsWith('/dashboard/proxies/')) {
-    if (!DASHBOARD_ACCESS.allows(req.socket?.remoteAddress)) {
-      sendJson(res, 403, { error: { type: 'dashboard_local_only', message: 'Token 看板仅允许从网关所在设备或 ANTIGRAVITY_GATEWAY_DASHBOARD_ALLOW 所列来源访问。' } });
-      return;
-    }
-    if (req.method === 'GET' && route === '/dashboard') {
-      const body = dashboardHtml();
-      res.writeHead(200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
-        'Cache-Control': 'no-store',
-        'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:"
-      });
-      res.end(body);
-      return;
-    }
-    if (req.method === 'GET' && route === '/dashboard/data') {
-      sendJson(res, 200, { ...dashboardData({
+  if (route === '/_admin' || route.startsWith('/_admin/')) {
+    await handleAdminRequest({
+      req,
+      res,
+      route,
+      requestUrl,
+      deps: {
+        token: ADMIN_TOKEN,
+        version: GATEWAY_VERSION,
+        startedAt: GATEWAY_STARTED_AT,
+        transport: usesDirectTransport() ? 'direct' : 'agy',
+        defaultModel: DEFAULT_MODEL,
         usageStore: USAGE_STORE,
         accountPool: ACCOUNT_POOL,
+        accountLabels: ACCOUNT_LABELS,
         robinAccountPool: ROBIN_ACCOUNT_POOL,
         quotaManager: QUOTA_MANAGER,
         proxyManager: PROXY_MANAGER,
-        version: GATEWAY_VERSION
-      }), concurrency: concurrencySnapshot() }, { 'Cache-Control': 'no-store' });
-      return;
-    }
-    if (route === '/dashboard/robin/oauth' || route.startsWith('/dashboard/robin/oauth/')) {
-      try {
-        if (req.method === 'GET' && route === '/dashboard/robin/oauth') {
-          sendJson(res, 200, ROBIN_ONBOARDING.status(), { 'Cache-Control': 'no-store' }); return;
-        }
-        if (req.method !== 'POST' || req.headers['x-gateway-management'] !== '1') {
-          sendJson(res, 403, { error: { message: '授权操作需要管理请求头。' } }); return;
-        }
-        const body = await readJson(req);
-        const result = route.endsWith('/start') ? await ROBIN_ONBOARDING.start(body.proxyId)
-          : route.endsWith('/callback') ? ROBIN_ONBOARDING.submit(body.id, body.callback)
-          : route.endsWith('/cancel') ? ROBIN_ONBOARDING.cancel(body.id) : null;
-        if (!result) { sendJson(res, 404, { error: { message: '未知授权操作。' } }); return; }
-        sendJson(res, 200, result, { 'Cache-Control': 'no-store' });
-      } catch (error) {
-        sendJson(res, Number(error.status) || 500, { error: { message: error.code === 'robin_onboarding_error' ? error.message : '授权服务暂不可用，请重试。' } }, { 'Cache-Control': 'no-store' });
+        keyStore: KEY_STORE,
+        requestLog: REQUEST_LOG,
+        diagnosticLog: DIAGNOSTIC_LOG,
+        listModels: (force) => availableModels(force, { includeDisabled: true }),
+        modelInfo: (id) => codexModelInfo(id, 0),
+        modelDiscovery: () => ({ discoveredAt: modelCache.at ? new Date(modelCache.at).toISOString() : null, stale: Boolean(modelCache.error), error: modelCache.error ? '上游发现失败，保留上次目录' : null }),
+        testModel: testAdminModel,
+        catalogs: async () => { const models = await availableModels(); return { codex: codexCatalogBody(models), claude: claudeConfigBody(models) }; },
+        modelSettings: MODEL_SETTINGS,
+        robinModels: PROVIDER_ROUTER.catalog.robin,
+        refreshCatalogs: async () => { const models = await availableModels(true); writeCodexCatalog(models); writeClaudeConfig(models); return models; },
+        adminOAuth: ADMIN_OAUTH,
+        robinOnboarding: ROBIN_ONBOARDING,
+        concurrency: concurrencySnapshot
       }
-      return;
-    }
-    if (route === '/dashboard/proxies' || route.startsWith('/dashboard/proxies/') || /^\/dashboard\/accounts\/[^/]+\/proxy$/.test(route)) {
-      try {
-        if (req.method === 'GET' && route === '/dashboard/proxies') {
-          sendJson(res, 200, PROXY_MANAGER.snapshot(), { 'Cache-Control': 'no-store' }); return;
-        }
-        if (req.headers['x-gateway-management'] !== '1') {
-          sendJson(res, 403, { error: { message: '代理管理请求缺少安全请求头。' } }); return;
-        }
-        const proxyMatch = route.match(/^\/dashboard\/proxies\/([a-zA-Z0-9_-]+)(\/check)?$/);
-        const bindingMatch = route.match(/^\/dashboard\/accounts\/([^/]+)\/proxy$/);
-        let result;
-        if (req.method === 'POST' && route === '/dashboard/proxies') result = PROXY_MANAGER.upsert(await readJson(req));
-        else if (req.method === 'DELETE' && proxyMatch && !proxyMatch[2]) result = PROXY_MANAGER.remove(proxyMatch[1]);
-        else if (req.method === 'POST' && proxyMatch?.[2]) result = await PROXY_MANAGER.check(proxyMatch[1]);
-        else if (req.method === 'POST' && bindingMatch) {
-          const accountId = decodeURIComponent(bindingMatch[1]);
-          const pool = dashboardAccountPool(requestUrl, accountId);
-          if (!pool.status().some(a => a.id === accountId)) throw Object.assign(new Error('账号不存在。'), { status: 404 });
-          const proxyAccountId = pool === ROBIN_ACCOUNT_POOL ? `robin:${accountId}` : accountId;
-          const body = await readJson(req);
-          result = PROXY_MANAGER.bind(proxyAccountId, body.proxyId);
-        } else { sendJson(res, 405, { error: { message: '代理请求方法不受支持。' } }); return; }
-        sendJson(res, 200, result, { 'Cache-Control': 'no-store' });
-      } catch (error) {
-        sendJson(res, Number(error.status) || 500, { error: { type: 'proxy_management_error', message: error.code === 'proxy_management_error' ? error.message : '代理操作失败，请检查配置和文件权限。' } }, { 'Cache-Control': 'no-store' });
-      }
-      return;
-    }
-    const accountRecheckMatch = route.match(/^\/dashboard\/accounts\/([^/]+)\/recheck$/);
-    const accountDeleteMatch = route.match(/^\/dashboard\/accounts\/([^/]+)$/);
-    if (req.method === 'POST' && accountRecheckMatch) {
-      try {
-        const accountId = decodeURIComponent(accountRecheckMatch[1]);
-        const pool = dashboardAccountPool(requestUrl, accountId);
-        const result = await pool.recheckAccount(accountId, { signal: AbortSignal.timeout(15_000) });
-        modelCache.at = 0;
-        if (pool === ACCOUNT_POOL) cloudcodeModelCache.at = 0;
-        sendJson(res, 200, result, { 'Cache-Control': 'no-store' });
-      } catch (error) {
-        sendJson(res, Number(error?.status) || 502, {
-          error: { type: error?.code || 'account_recheck_failed', message: error?.message || '账号重新检测失败。' }
-        }, { 'Cache-Control': 'no-store' });
-      }
-      return;
-    }
-    if (req.method === 'DELETE' && accountDeleteMatch) {
-      try {
-        const accountId = decodeURIComponent(accountDeleteMatch[1]);
-        const pool = dashboardAccountPool(requestUrl, accountId);
-        const result = pool.removeAccount(accountId);
-        modelCache.at = 0;
-        if (pool === ACCOUNT_POOL) cloudcodeModelCache.at = 0;
-        sendJson(res, 200, result, { 'Cache-Control': 'no-store' });
-      } catch (error) {
-        sendJson(res, Number(error?.status) || 500, {
-          error: { type: error?.code || 'account_delete_failed', message: error?.message || '账号删除失败。' }
-        }, { 'Cache-Control': 'no-store' });
-      }
-      return;
-    }
-    if (route.startsWith('/dashboard/assets/')) {
-      if (req.method !== 'GET') {
-        sendJson(res, 405, { error: { type: 'method_not_allowed', message: '看板资源只支持 GET。' } });
-        return;
-      }
-      const asset = dashboardAsset(route.slice('/dashboard/assets/'.length));
-      if (!asset) {
-        sendJson(res, 404, { error: { type: 'not_found', message: '看板资源不存在。' } });
-        return;
-      }
-      res.writeHead(200, {
-        'Content-Type': asset.contentType,
-        'Content-Length': asset.body.length,
-        'Cache-Control': 'private, max-age=86400',
-        'X-Content-Type-Options': 'nosniff'
-      });
-      res.end(asset.body);
-      return;
-    }
-    sendJson(res, 405, { error: { type: 'method_not_allowed', message: '看板请求方法不受支持。' } });
+    });
+    return;
+  }
+  if (route === '/dashboard' || route.startsWith('/dashboard/')) {
+    sendJson(res, 404, { error: { type: 'legacy_dashboard_removed', message: '旧面板已剥离，请使用独立管理后台。' } });
     return;
   }
   const publicFileMatch = route.match(/^\/v1\/files\/(file_[a-f0-9]{32})\/content$/);
@@ -1822,7 +1841,7 @@ async function requestHandler(req, res) {
           accounts: [...ACCOUNT_POOL.status(), ...ROBIN_ACCOUNT_POOL.status()]
         },
         usage: { file: USAGE_STORE.file, ...USAGE_STORE.summary() },
-        capabilities: { anthropic_messages: true, openai_responses: true, chat_completions: true, image_generation: true, image_edits: true, image_understanding: true, video_understanding: true, file_uploads: true, tools_experimental: true, direct_upstream_sse: usesDirectTransport(), local_agy_session_bridge: Boolean(DIRECT_PROVIDER.localAuth?.isConfigured?.()), multi_account: true, persistent_usage: true, web_dashboard: true, interactive_console: true, credentials_read_by_gateway: usesDirectTransport(), tool_narration: toolNarrationEnabled() }
+        capabilities: { anthropic_messages: true, openai_responses: true, chat_completions: true, image_generation: true, image_edits: true, image_understanding: true, video_understanding: true, file_uploads: true, tools_experimental: true, direct_upstream_sse: usesDirectTransport(), local_agy_session_bridge: Boolean(DIRECT_PROVIDER.localAuth?.isConfigured?.()), multi_account: true, persistent_usage: true, web_dashboard: false, management_api: Boolean(ADMIN_TOKEN), interactive_console: true, credentials_read_by_gateway: usesDirectTransport(), tool_narration: toolNarrationEnabled() }
       });
       return;
     }
@@ -1863,6 +1882,8 @@ async function requestHandler(req, res) {
     throw new GatewayError(`接口不存在: ${route}`, { code: 'not_found', status: 404 });
   } catch (rawError) {
     const error = mapAgyError(rawError);
+    const logContext = requestContext();
+    if (logContext) logContext.code = error.code || '';
     // Claude Code may cancel an in-flight classifier/tool request as soon as a
     // newer branch wins. That is normal client control flow, not a gateway
     // failure, and the socket is already gone so no error body can be sent.
@@ -1894,16 +1915,43 @@ async function requestHandler(req, res) {
   }
 }
 
-function createServer() {
-  return http.createServer((req, res) => {
-    const pending = requestHandler(req, res).catch(() => {
+function createServer({ directoryGuard = null } = {}) {
+  if (directoryGuard) {
+    DIRECT_PROVIDER.bindDirectoryGuard(directoryGuard);
+    ACCOUNT_POOL.bindDirectoryGuard(directoryGuard);
+  }
+  const server = http.createServer((req, res) => {
+    let context = null;
+    const isApi = String(req.url || '').startsWith('/v1/');
+    if (isApi) {
+      const auth = KEY_STORE.authenticate(req);
+      if (auth.error) {
+        sendJson(res, auth.error.status || 401, { error: { type: auth.error.code || 'authentication_error', message: auth.error.message || 'API key 无效。' } });
+        return;
+      }
+      context = auth.context;
+    }
+    const logContext = isApi ? REQUEST_LOG.createContext(req, context) : null;
+    const runHandler = () => keyContext.run(context, () => requestHandler(req, res));
+    const pending = trackTransaction(logContext ? runRequestLog(logContext, runHandler) : runHandler()).catch(() => {
       if (!res.headersSent && !res.destroyed) sendJson(res, 500, { error: { message: 'Antigravity Gateway 内部错误。' } });
       else res.destroy();
     });
+    if (logContext) {
+      res.once('finish', () => {
+        logContext.status = res.statusCode;
+        logContext.latencyMs = Date.now() - logContext.at;
+        USAGE_STORE.recordRequestMetrics(logContext);
+        KEY_STORE.recordLatency(logContext);
+        REQUEST_LOG.record(logContext);
+      });
+    }
     void pending.finally(() => { for (const release of bodyReservations.get(req) || []) release(); bodyReservations.delete(req); });
     activeRequests.add(pending);
     void pending.finally(() => activeRequests.delete(pending));
   });
+  server.drainTransactions = drainTransactions;
+  return server;
 }
 
 if (require.main === module) {
@@ -1920,17 +1968,7 @@ if (require.main === module) {
     });
     return;
   }
-  if (CLI_ARGS.stats) {
-    const url = dashboardUrl();
-    void checkDashboard(url).then(() => {
-      openBrowser(url);
-      console.log(`Antigravity Gateway Token 看板：${url}`);
-    }).catch(() => {
-      console.error(`[Antigravity Gateway Error] 网关尚未运行。请先执行 antigravity-gateway 或 antigravity-gateway service start，然后再次运行 antigravity-gateway stats。\n看板地址：${url}`);
-      process.exitCode = 1;
-    });
-    return;
-  }
+  if (CLI_ARGS.stats) { console.log(renderUsageSummary(USAGE_STORE, ACCOUNT_POOL, QUOTA_MANAGER)); return; }
   if (CLI_ARGS.codexCatalogPath) { console.log(codexCatalogPath()); return; }
   if (CLI_ARGS.claudeConfigPath) { console.log(claudeConfigPath()); return; }
   if (CLI_ARGS.models || CLI_ARGS.claudeConfig) {
@@ -1954,18 +1992,44 @@ if (require.main === module) {
   }
   diagnosticsEnabled = true;
   fs.mkdirSync(RUNTIME, { recursive: true, mode: 0o700 });
-  const server = createServer();
+  const server = createServer({ directoryGuard });
   let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
+  let shutdownPromise = null;
+  const shutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
-    TERMINAL?.stop();
-    stopDiagnosticHeartbeat();
-    diagnosticReporter('gateway_process_stopping', { pid: process.pid });
-    await ROBIN_ONBOARDING.stop();
-    await gracefulShutdown({ server, controllers: activeControllers, requests: activeRequests, usageStore: USAGE_STORE,
-      accountPool: ACCOUNT_POOL, robinAccountPool: ROBIN_ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
-      workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
+    shutdownPromise = (async () => {
+      TERMINAL?.stop();
+      stopDiagnosticHeartbeat();
+      diagnosticReporter('gateway_process_stopping', { pid: process.pid });
+      directoryGuard.hold();
+      await ROBIN_ONBOARDING.stop();
+      QUOTA_MANAGER.stop();
+
+      const quotaDrain = QUOTA_MANAGER.drain();
+      const shutdownRequests = new Set([...activeRequests, ...activeTransactions, quotaDrain, ...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
+      await gracefulShutdown({ server, controllers: activeControllers, requests: shutdownRequests, usageStore: USAGE_STORE,
+        accountPool: ACCOUNT_POOL, robinAccountPool: ROBIN_ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
+        workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
+      // Never hand the directory to a successor while an aborted task can still write.
+      // A stuck task exits with failure and keeps ownership until process termination.
+      if (!await drainTransactions(1000)) throw new Error('Shutdown transactions did not settle');
+      await REQUEST_LOG.stop();
+      KEY_STORE.stop();
+      await quotaDrain;
+      await Promise.allSettled([...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
+      closeNativeTransport();
+      DIRECT_PROVIDER.bindDirectoryGuard(null);
+      ACCOUNT_POOL.bindDirectoryGuard(null);
+      directoryGuard.close();
+    })();
+    return shutdownPromise;
+  };
+  const exitAfterShutdown = (code = 0) => {
+    void shutdown().then(() => process.exit(code || process.exitCode || 0), error => {
+      gatewayError(`[Antigravity Gateway Error] 排空退出失败：${error.message}`);
+      process.exit(1);
+    });
   };
   TERMINAL = new TerminalConsole({
     usageStore: USAGE_STORE,
@@ -1975,6 +2039,8 @@ if (require.main === module) {
     accountStore: ACCOUNT_STORE,
     robinAccountPool: ROBIN_ACCOUNT_POOL,
     robinOAuthFlow: ROBIN_OAUTH_FLOW,
+    windowsLogin: WINDOWS_LOGIN,
+    windowsAccountStore: WINDOWS_ACCOUNT_STORE,
     robinAccountStore: ROBIN_ACCOUNT_STORE,
     onRobinAccountSaved: account => PROXY_MANAGER.bind(`robin:${account.id}`, ROBIN_OAUTH_PROXY_ID),
     commands: {
@@ -1988,11 +2054,7 @@ if (require.main === module) {
         `Codex 模型目录: ${codexCatalogPath()}`
       ].join('\n'),
       logs: async () => `后台日志目录：${path.join(CONFIG_DIR, 'logs')}`,
-      stats: async () => {
-        const url = dashboardUrl();
-        openBrowser(url);
-        return `Token 看板：${url}`;
-      },
+      stats: async () => renderUsageSummary(USAGE_STORE, ACCOUNT_POOL, QUOTA_MANAGER),
       version: async () => `Antigravity Gateway v${GATEWAY_VERSION}`,
       quit: async () => { await shutdown(); process.exit(0); }
     }
@@ -2002,7 +2064,7 @@ if (require.main === module) {
   ROBIN_ACCOUNT_POOL.start();
   server.requestTimeout = REQUEST_TIMEOUT + 10000;
   server.headersTimeout = 30000;
-  server.listen(PORT, HOST, async () => {
+  server.listen(PORT, HOST, () => { void trackTransaction((async () => {
     diagnosticReporter('gateway_process_started', {
       pid: process.pid,
       version: GATEWAY_VERSION,
@@ -2013,7 +2075,6 @@ if (require.main === module) {
       accountCount: ACCOUNT_POOL.status().length
     });
     startDiagnosticHeartbeat();
-    gatewayLog(`[Antigravity Gateway] 看板来源：${DASHBOARD_ACCESS.description}`);
     let models = [];
     let modelError = '';
     let localAccountImport = null;
@@ -2052,26 +2113,23 @@ if (require.main === module) {
     } else if (localAccountImport?.status === 'error') {
       gatewayWarn(`[Antigravity Gateway] 本地 agy 账号自动导入未完成：${localAccountImport.message}（不影响已有账号池和原有登录态）`);
     }
-    TERMINAL.showDashboard();
-    TERMINAL.start();
-  });
+    if (!shuttingDown) {
+      TERMINAL.showDashboard();
+      TERMINAL.start();
+    }
+  })()).catch(error => gatewayWarn(`[Antigravity Gateway Warning] 启动初始化未完成：${error.message}`)); });
   server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') gatewayError(`[Antigravity Gateway Error] ${HOST}:${PORT} 已被占用，请关闭旧进程或设置 ANTIGRAVITY_GATEWAY_PORT。`);
     else gatewayError(`[Antigravity Gateway Error] ${error.message}`);
-    QUOTA_MANAGER.stop();
-    ROBIN_ACCOUNT_POOL.stop();
-    USAGE_STORE.stop();
-    ACCOUNT_POOL.stop();
-    stopDiagnosticHeartbeat();
     diagnosticReporter('gateway_process_error', {
       pid: process.pid,
       errorCode: String(error.code || ''),
       message: String(error.message || error || '').slice(0, 1000)
     });
-    process.exitCode = 1;
+    exitAfterShutdown(1);
   });
-  process.once('SIGINT', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
-  process.once('SIGTERM', () => { void shutdown().catch(() => { process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0)); });
+  process.once('SIGINT', () => exitAfterShutdown());
+  process.once('SIGTERM', () => exitAfterShutdown());
 }
 
 module.exports = {
@@ -2097,5 +2155,23 @@ module.exports = {
   refreshClientModelCatalogs,
   resolveModel,
   runTurn,
-  startupBanner
+  startupBanner,
+  activeTransactions,
+  drainTransactions
 };
+
+}
+
+const daemonStart = require.main === module && ![
+  'help', 'version', 'serviceRequested', 'stats', 'codexCatalogPath',
+  'claudeConfigPath', 'models', 'claudeConfig'
+].some(key => CLI_ARGS[key]);
+if (daemonStart) {
+  void acquireDirectoryGuard(CONFIG_DIR).then(guard => {
+    try { initializeGateway(guard); }
+    catch (error) { guard.close(); throw error; }
+  }).catch(error => {
+    console.error(`[Antigravity Gateway Error] ${error.message}`);
+    process.exitCode = 1;
+  });
+} else initializeGateway();
