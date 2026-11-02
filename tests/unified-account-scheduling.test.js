@@ -41,6 +41,7 @@ function fixture(t, channel, definitions, send) {
     const id = `account-${index}`;
     const windows = channel === 'windows' || channel === 'mixed' && index % 2 === 1;
     const quota = snapshot(definition);
+    if (quota.groups.length) quota.groups[0].id = isCloud ? 'gemini-argon-wtu' : 'gemini-robin';
     snapshots.set(id, quota);
     store.save({ id, subjectId: id, email: `${id}@example.com`, accessToken: 'test-only', projectId: 'test',
       providerType: isCloud ? 'cloudcode' : 'robin', accountType: isCloud ? 'antigravity' : 'gemini-app',
@@ -76,6 +77,7 @@ function fixture(t, channel, definitions, send) {
   t.after(() => { pool.stop(); fs.rmSync(dir, { recursive: true, force: true }); });
   const setQuota = (id, definition) => {
     const quota = snapshot(definition);
+    if (quota.groups.length) quota.groups[0].id = isCloud ? 'gemini-argon-wtu' : 'gemini-robin';
     snapshots.set(id, quota);
     if (!isCloud) {
       const account = store.list().find(item => item.id === id);

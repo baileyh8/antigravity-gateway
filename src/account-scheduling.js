@@ -45,39 +45,67 @@ function affinityActive(binding, now) {
   return Boolean(binding && SESSION_TTL_MS > 0 && binding.at >= now - SESSION_TTL_MS);
 }
 
-function geminiGroup(snapshot) {
-  return (snapshot?.groups || []).find((group) => /gemini/i.test([
-    group?.id, group?.displayName, group?.description
-  ].filter(Boolean).join(' ')));
+function modelGroup(model = '') {
+  const id = String(model).replace(/^models\//, '').toLowerCase();
+  if (id.includes('argon')) return 'argon';
+  if (/^(claude|gpt|o[1-9](?:-|$))/.test(id)) return 'claude-gpt';
+  if (!id || id.startsWith('gemini')) return 'gemini';
+  return 'unknown';
 }
 
-function geminiWeeklyPressure(snapshot, now) {
-  const bucket = geminiGroup(snapshot)?.buckets?.find((item) => (
-    String(item?.window || '').toLowerCase() === 'weekly'
-    || String(item?.id || '').toLowerCase().endsWith('-weekly')
-  ));
+function quotaGroup(snapshot, model = '', provider = '') {
+  const groups = snapshot?.groups || [];
+  // Gemini App GXU is the Argon quota for OAuth and Windows providers.
+  if (provider === 'robin' || snapshot?.providerType === 'robin') {
+    return groups.find(group => group.id === 'gemini-robin') || null;
+  }
+  const kind = modelGroup(model);
+  return groups.find(group => {
+    const label = `${group.id || ''} ${group.displayName || ''}`.toLowerCase();
+    if (/argon/.test(label)) return kind === 'argon';
+    if (/claude|gpt|(?:^|\s)3p(?:$|\s)/.test(label)) return kind === 'claude-gpt';
+    return /gemini/.test(label) && kind === 'gemini';
+  }) || null;
+}
+
+function activeBuckets(group, now) {
+  return (group?.buckets || []).filter(bucket => {
+    const remaining = bucket.remainingFraction;
+    if (remaining == null || typeof remaining === 'boolean' || String(remaining).trim() === '' || !Number.isFinite(Number(remaining))) return false;
+    const reset = Date.parse(bucket.resetTime);
+    return !Number.isFinite(reset) || reset > now;
+  });
+}
+
+function weeklyPressure(group, now) {
+  const bucket = (group?.buckets || []).find(item => String(item.window || '').toLowerCase() === 'weekly' || /-weekly$/i.test(item.id || ''));
   const raw = bucket?.remainingFraction;
   const remaining = raw == null || String(raw).trim() === '' || typeof raw === 'boolean' ? NaN : Number(raw);
   const resetAt = Date.parse(bucket?.resetTime || '');
   if (!Number.isFinite(remaining) || !Number.isFinite(resetAt) || resetAt <= now) return { kind: 'unknown', band: 0 };
   if (remaining <= 0 || bucket.available === false) return { kind: 'exhausted', band: 0 };
   const hours = Math.max((resetAt - now) / 3_600_000, 1 / 60);
-  const pressure = Math.min(1, remaining) / hours;
-  return { kind: 'pressure', band: Math.floor(Math.log2(pressure)) };
+  return { kind: 'pressure', band: Math.floor(Math.log2(Math.min(1, remaining) / hours)) };
 }
 
-function geminiFiveHourResetTime(snapshot, now) {
-  const bucket = geminiGroup(snapshot)?.buckets?.find((item) => String(item?.window || '').toLowerCase() === '5h');
+function fiveHourResetTime(group, now) {
+  const bucket = (group?.buckets || []).find(item => String(item.window || '').toLowerCase() === '5h');
   const resetTime = Date.parse(bucket?.resetTime || '');
   return Number.isFinite(resetTime) && resetTime > now ? resetTime : Infinity;
 }
 
-function quotaRank(entry, snapshot, now, depleted = false) {
-  const weekly = geminiWeeklyPressure(snapshot, now);
+function geminiWeeklyPressure(snapshot, now) { return weeklyPressure(quotaGroup(snapshot), now); }
+function geminiFiveHourResetTime(snapshot, now) { return fiveHourResetTime(quotaGroup(snapshot), now); }
+
+function quotaRank(entry, snapshot, now, depleted = false, model = '', provider = '') {
+  const group = quotaGroup(snapshot, model, provider);
+  const buckets = activeBuckets(group, now);
+  const weekly = weeklyPressure(group, now);
+  const exhausted = buckets.some(bucket => Number(bucket.remainingFraction) <= 0 || bucket.available === false);
   return {
-    entry, depleted: depleted ? 1 : 0,
-    lane: { pressure: 0, unknown: 1, exhausted: 2 }[weekly.kind],
-    band: weekly.band, resetTime: geminiFiveHourResetTime(snapshot, now)
+    entry, group: `${provider}:${modelGroup(model)}`, depleted: depleted || exhausted ? 1 : 0,
+    lane: exhausted ? 2 : { pressure: 0, unknown: 1, exhausted: 2 }[weekly.kind],
+    band: weekly.band, resetTime: fiveHourResetTime(group, now)
   };
 }
 
@@ -119,7 +147,7 @@ function weightedPickWithRanks(ranks, weights) {
   let selected = null;
   let selectedWeight = -Infinity;
   for (const rank of candidates) {
-    const id = rank.entry.account.id;
+    const id = `${rank.group || 'gemini'}\0${rank.entry.account.id}`;
     const current = (weights.get(id) || 0) + effectiveWeight(rank);
     weights.set(id, current);
     if (current > selectedWeight) {
@@ -127,12 +155,12 @@ function weightedPickWithRanks(ranks, weights) {
       selectedWeight = current;
     }
   }
-  if (selected) weights.set(selected.account.id, (weights.get(selected.account.id) || 0) - total);
+  if (selected) { const rank = candidates.find(item => item.entry === selected); const id = `${rank.group || 'gemini'}\0${selected.account.id}`; weights.set(id, (weights.get(id) || 0) - total); }
   return selected;
 }
 
 module.exports = {
   SESSION_TTL_MS, SESSION_CAPACITY, QUOTA_TTL_MS, QUOTA_RETRY_MS, TRANSIENT_COOLDOWN_MS,
   durationMs, retryDelay, affinityActive,
-  geminiWeeklyPressure, geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks
+  modelGroup, quotaGroup, geminiWeeklyPressure, geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks
 };

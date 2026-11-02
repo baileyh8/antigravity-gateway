@@ -162,6 +162,9 @@ function overview(deps) {
       active: concurrency.requests.active,
       queued: concurrency.requests.queued,
       limit: concurrency.requests.limit,
+      accountLimit: concurrency.requests.accountLimit,
+      queueLimit: concurrency.requests.queueLimit,
+      queueTimeoutMs: concurrency.requests.queueTimeoutMs,
       memory: concurrency.memory
     },
     accounts: {

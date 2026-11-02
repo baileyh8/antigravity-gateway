@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { executionSlots } = require('./admission-control');
 const { ProxyRobinTransport, accountFetch } = require('./robin-proxy');
 const path = require('node:path');
 const { RobinAccountAuthProvider, robinAuthorizationKey: authorizationKey,
@@ -77,6 +78,7 @@ class RobinAccountPool {
     this.entries = new Map();
     this.sessions = new Map();
     this.weights = new Map();
+    this.admission = executionSlots;
     this.activeTasks = new Map();
     this.activeRequests = new Set();
     this.quotaRefreshes = new Map();
@@ -172,8 +174,8 @@ class RobinAccountPool {
       // Expire telemetry as a whole only at its TTL. Individual reset windows
       // are evaluated separately: a 5h reset must not renew the weekly budget.
       const current = Number.isFinite(fetchedAt) && now - fetchedAt < ROBIN_QUOTA_TTL_MS ? snapshot : null;
-      const rank = quotaRank(entry, current, now, this.quotaDepleted(entry.account));
-      if (!current || rank.lane === 1 || rank.resetTime === Infinity) this.refreshAccountQuota(entry);
+      const rank = quotaRank(entry, current, now, this.quotaDepleted(entry.account), model, 'robin');
+      if (!current || rank.lane === 1) this.refreshAccountQuota(entry);
       return rank;
     }).sort(compareQuotaRanks);
   }
@@ -186,7 +188,7 @@ class RobinAccountPool {
 
   selectAccount(model, routingKey, excluded = new Set(), { preferredAccountId = '', allowSticky = true } = {}) {
     this.cleanupSessions();
-    const candidates = this.eligible(model, excluded);
+    const candidates = this.eligible(model, excluded).filter(entry => this.admission.available('robin', entry.account.id));
     if (!candidates.length) return null;
     if (allowSticky) {
       const preferred = preferredAccountId && candidates.find((entry) => entry.account.id === preferredAccountId);
@@ -241,23 +243,27 @@ class RobinAccountPool {
     let lastError = null, attempts = 0;
     while (true) {
       options.signal?.throwIfAborted();
-      const entry = taskAccount || this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 });
+      const lease = await this.admission.acquireAccount(() => taskAccount
+        ? this.admission.available('robin', taskAccount.account.id) ? taskAccount : null
+        : this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 }),
+      { signal: options.signal, provider: 'robin', hasCandidates: () => Boolean(taskAccount) || this.eligible(model, excluded).length > 0 });
+      const entry = lease?.entry;
       if (!entry) {
         if (lastError) throw lastError;
         throw new RobinProviderError(`没有可用于模型 ${model} 的 Gemini 账号。`, { code: 'robin_model_unavailable', status: 503 });
       }
       excluded.add(entry.account.id);
-      options.onAccountSelected?.({
-        accountId: entry.account.id,
-        email: entry.account.email,
-        source: 'robin-account-pool',
-        attempt: ++attempts
-      });
       let emitted = false;
       const expectedAuthorization = entryAuthorizationKey(entry);
       const initialFingerprint = credentialFingerprint(entry.account);
       const upstreamSessionId = JSON.stringify([options.clientId || 'client', upstreamSessionScope(normalized, options), 'robin', entry.account.id]);
       try {
+        options.onAccountSelected?.({
+          accountId: entry.account.id,
+          email: entry.account.email,
+          source: 'robin-account-pool',
+          attempt: ++attempts
+        });
         const result = await entry.provider.send(normalized, model, {
           ...options, sessionId: upstreamSessionId, accountId: entry.account.id,
           requireExistingTurn: Boolean(taskAccount),
@@ -317,7 +323,7 @@ class RobinAccountPool {
         // can duplicate both output and client side effects.
         if (category === 'request' || taskAccount || emitted) throw failure;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      }
+      } finally { lease.release(); }
     }
   }
 

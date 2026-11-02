@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { executionSlots } = require('./admission-control');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DirectAntigravityProvider, DirectProviderError } = require('./direct-provider');
@@ -105,6 +106,7 @@ class AccountPool {
     this.health = new Map();
     this.removedIdentities = new Set();
     this.weights = new Map();
+    this.admission = executionSlots;
     this.modelSupporters = new Map();
     this.modelCatalogsReady = false;
     this.modelCatalogDiscovery = null;
@@ -551,8 +553,11 @@ class AccountPool {
       const snapshot = this.quotaManager?.getSchedulingSnapshot
         ? this.quotaManager.getSchedulingSnapshot(entry.account.id, now)
         : this.quotaManager?.get(entry.account.id);
-      const rank = quotaRank(entry, snapshot, now, this.quotaManager?.get(entry.account.id, model)?.available === false);
-      if (!snapshot || rank.lane === 1 || rank.resetTime === Infinity) this.refreshAccountQuota(entry);
+      const modelQuota = this.quotaManager?.get(entry.account.id, model);
+      const depleted = modelQuota?.models?.[model]?.available === false
+        || !modelQuota?.groups?.length && modelQuota?.available === false;
+      const rank = quotaRank(entry, snapshot, now, depleted, model, 'cloudcode');
+      if (!snapshot || rank.lane === 1) this.refreshAccountQuota(entry);
       return rank;
     }).sort(compareQuotaRanks);
   }
@@ -575,18 +580,18 @@ class AccountPool {
     if (allowSticky) {
       const now = this.now();
       const preferred = preferredAccountId ? this.entries.get(preferredAccountId) : null;
-      if (preferred && this.isEntryEligible(preferred, model, excluded, now)) return preferred;
+      if (preferred && this.admission.available('cloudcode', preferred.account.id) && this.isEntryEligible(preferred, model, excluded, now)) return preferred;
       const bound = routingKey ? this.sessions.get(routingKey) : null;
       const sticky = bound ? this.entries.get(bound.accountId) : null;
       const active = affinityActive(bound, now);
       // The hot path is an O(1) local-state lookup: no quota snapshots, sorting,
       // refresh I/O, or account-list scan occurs during a healthy affinity window.
-      if (active && sticky && this.isEntryEligible(sticky, model, excluded, now)) return sticky;
-      if (bound && routingKey) this.deleteSession(routingKey);
+      if (active && sticky && this.admission.available('cloudcode', sticky.account.id) && this.isEntryEligible(sticky, model, excluded, now)) return sticky;
+      if (bound && routingKey && (!active || !sticky || !this.isEntryEligible(sticky, model, excluded, now))) this.deleteSession(routingKey);
     }
 
     this.cleanupSessions();
-    const candidates = this.eligible(model, excluded);
+    const candidates = this.eligible(model, excluded).filter(entry => this.admission.available('cloudcode', entry.account.id));
     const ranks = this.quotaRanks(model, candidates);
     if (!ranks.length) return null;
     return this.weightedPickWithRanks(ranks);
@@ -603,26 +608,29 @@ class AccountPool {
   async send(normalized, model, options = {}) {
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
-      options.onAccountSelected?.({
-        accountId: 'local-agy-session',
-        email: '',
-        source: 'local-agy-session',
-        attempt: 1
-      });
-      let responseSeen = false;
-      const result = await this.fallbackProvider.send(normalized, model, {
-        ...options,
-        onUpstreamAttempt: (event) => {
-          if (event.phase === 'response') {
-            responseSeen = true;
-            this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
+      const releaseFallback = await this.admission.acquire(options.signal);
+      try {
+        options.onAccountSelected?.({
+          accountId: 'local-agy-session',
+          email: '',
+          source: 'local-agy-session',
+          attempt: 1
+        });
+        let responseSeen = false;
+        const result = await this.fallbackProvider.send(normalized, model, {
+          ...options,
+          onUpstreamAttempt: (event) => {
+            if (event.phase === 'response') {
+              responseSeen = true;
+              this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
+            }
           }
-        }
-      });
-      // Custom/fake providers used by tests may not expose transport attempts.
-      if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
-      this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
-      return result;
+        });
+        // Custom/fake providers used by tests may not expose transport attempts.
+        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
+        this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
+        return result;
+      } finally { releaseFallback(); }
     }
 
     await this.ensureModelCatalogs(options.signal);
@@ -632,17 +640,18 @@ class AccountPool {
     let lastError;
     while (true) {
       if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
-      const entry = this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 });
+      const lease = await this.admission.acquireAccount(() => this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 }), { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
+      const entry = lease?.entry;
       if (!entry) break;
       attempted.add(entry.account.id);
-      options.onAccountSelected?.({
-        accountId: entry.account.id,
-        email: entry.account.email,
-        source: entry.account.source || 'managed-account',
-        attempt: attempted.size
-      });
       let responseSeen = false;
       try {
+        options.onAccountSelected?.({
+          accountId: entry.account.id,
+          email: entry.account.email,
+          source: entry.account.source || 'managed-account',
+          attempt: attempted.size
+        });
         const result = await entry.provider.send(normalized, model, {
           ...options,
           onUpstreamAttempt: (event) => {
@@ -673,7 +682,7 @@ class AccountPool {
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'model_request' });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      }
+      } finally { lease.release(); }
     }
     throw lastError || this.noAccountError(model);
   }
@@ -682,20 +691,23 @@ class AccountPool {
     const model = 'gemini-3.1-flash-image';
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
-      options.onAccountSelected?.({ accountId: 'local-agy-session', email: '', source: 'local-agy-session', attempt: 1 });
-      let responseSeen = false;
-      const result = await this.fallbackProvider.generateImage(request, {
-        ...options,
-        onUpstreamAttempt: (event) => {
-          if (event.phase === 'response') {
-            responseSeen = true;
-            this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
+      const releaseFallback = await this.admission.acquire(options.signal);
+      try {
+        options.onAccountSelected?.({ accountId: 'local-agy-session', email: '', source: 'local-agy-session', attempt: 1 });
+        let responseSeen = false;
+        const result = await this.fallbackProvider.generateImage(request, {
+          ...options,
+          onUpstreamAttempt: (event) => {
+            if (event.phase === 'response') {
+              responseSeen = true;
+              this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
+            }
           }
-        }
-      });
-      if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
-      this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
-      return { ...result, accountId: 'local-agy-session' };
+        });
+        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
+        this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
+        return { ...result, accountId: 'local-agy-session' };
+      } finally { releaseFallback(); }
     }
 
     await this.ensureModelCatalogs(options.signal);
@@ -705,21 +717,22 @@ class AccountPool {
     let lastError;
     while (true) {
       if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
-      const entry = this.selectAccount(model, routingKey, attempted, {
+      const lease = await this.admission.acquireAccount(() => this.selectAccount(model, routingKey, attempted, {
         preferredAccountId: options.accountId, allowSticky: attempted.size === 0
-      });
+      }), { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
+      const entry = lease?.entry;
       if (!entry) break;
       attempted.add(entry.account.id);
-      options.onAccountSelected?.({ accountId: entry.account.id, email: entry.account.email, source: entry.account.source || 'managed-account', attempt: attempted.size });
       let responseSeen = false;
       try {
-        const result = await entry.provider.generateImage(request, {
-          ...options,
-          onUpstreamAttempt: (event) => {
-            if (event.phase === 'response') responseSeen = true;
-            this.attemptReporter(entry.account.id, model)(event);
-          }
-        });
+        options.onAccountSelected?.({ accountId: entry.account.id, email: entry.account.email, source: entry.account.source || 'managed-account', attempt: attempted.size });
+          const result = await entry.provider.generateImage(request, {
+            ...options,
+            onUpstreamAttempt: (event) => {
+              if (event.phase === 'response') responseSeen = true;
+              this.attemptReporter(entry.account.id, model)(event);
+            }
+          });
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: true, count: true });
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
         entry.lastSuccessAt = new Date(this.now()).toISOString();
@@ -743,7 +756,7 @@ class AccountPool {
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'image_request' });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      }
+      } finally { lease.release(); }
     }
     throw lastError || this.noAccountError(model);
   }
