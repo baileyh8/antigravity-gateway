@@ -57,6 +57,22 @@ function toolResultPart(id, content, name, isError = false, media = []) {
   };
 }
 
+function splitToolOutput(output, protocol) {
+  const media = [], remaining = [];
+  if (Array.isArray(output)) {
+    for (const block of output) {
+      const attachment = mediaPartFromBlock(block, protocol);
+      if (attachment) media.push(attachment);
+      else remaining.push(block);
+    }
+  }
+  // Attachments travel as native media, never also as Base64/URLs inside the
+  // textual tool result. Retain other JSON values and literal strings exactly.
+  const content = media.length ? (remaining.length ? compactJson(remaining) : '')
+    : typeof output === 'string' ? output : compactJson(output);
+  return { content, media };
+}
+
 function internalPartsFromContent(content, protocol) {
   if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
   if (content == null) return [];
@@ -89,9 +105,9 @@ function internalPartsFromContent(content, protocol) {
       parts.push(toolResultPart(block.tool_use_id, textFromContent(block.content, protocol), block.name, block.is_error === true, nested.filter((part) => part.type === 'media')));
     } else if (block.type === 'function_call') {
       parts.push(toolCallPart(block.call_id || block.id, block.name, block.arguments, block.thoughtSignature));
-    } else if (block.type === 'function_call_output' || block.type === 'computer_call_output') {
-      const nested = internalPartsFromContent(block.output, protocol);
-      parts.push(toolResultPart(block.call_id, typeof block.output === 'string' ? block.output : compactJson(block.output), '', false, nested.filter((part) => part.type === 'media')));
+    } else if (block.type === 'function_call_output' || block.type === 'custom_tool_call_output' || block.type === 'computer_call_output') {
+      const output = splitToolOutput(block.output, protocol);
+      parts.push(toolResultPart(block.call_id, output.content, '', false, output.media));
     } else if (block.text != null) {
       parts.push({ type: 'text', text: String(block.text) });
     } else if (block.content != null) {
@@ -121,8 +137,8 @@ function textFromContent(content, protocol) {
       parts.push(`[CLIENT_TOOL_RESULT id=${block.tool_use_id || ''} error=${Boolean(block.is_error)}]\n${textFromContent(block.content, protocol)}`);
     } else if (block.type === 'function_call') {
       parts.push(`[ASSISTANT_TOOL_CALL id=${block.call_id || block.id || ''} name=${block.name || ''}]\n${typeof block.arguments === 'string' ? block.arguments : compactJson(block.arguments || {})}`);
-    } else if (block.type === 'function_call_output' || block.type === 'computer_call_output') {
-      parts.push(`[CLIENT_TOOL_RESULT id=${block.call_id || ''}]\n${typeof block.output === 'string' ? block.output : compactJson(block.output)}`);
+    } else if (block.type === 'function_call_output' || block.type === 'custom_tool_call_output' || block.type === 'computer_call_output') {
+      parts.push(`[CLIENT_TOOL_RESULT id=${block.call_id || ''}]\n${splitToolOutput(block.output, protocol).content}`);
     } else if (['thinking', 'redacted_thinking'].includes(block.type)) {
       continue;
     } else if (block.text != null) {
@@ -440,11 +456,11 @@ function normalizeResponses(payload, previousTranscript) {
       parts: internalPartsFromContent(item.content, 'responses')
     });
     else if (item?.type === 'function_call_output' || item?.type === 'custom_tool_call_output' || item?.type === 'computer_call_output') {
-      const output = typeof item.output === 'string' ? item.output : compactJson(item.output);
+      const output = splitToolOutput(item.output, 'responses');
       messages.push({
         role: 'user',
-        text: `[CLIENT_TOOL_RESULT id=${item.call_id || ''}]\n${output}`,
-        parts: [toolResultPart(item.call_id, output, '', false, internalPartsFromContent(item.output, 'responses').filter((part) => part.type === 'media'))]
+        text: `[CLIENT_TOOL_RESULT id=${item.call_id || ''}]\n${output.content}`,
+        parts: [toolResultPart(item.call_id, output.content, '', false, output.media)]
       });
     } else if (item?.type === 'function_call' || item?.type === 'custom_tool_call') {
       const id = item.call_id || item.id || '';

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1-bailey.5 - 2026-11-03
+
+- Keep Responses tool-output attachments exclusively in native media parts. Remove attachment blocks from the accompanying JSON text while preserving other structured output and literal strings, avoiding Base64 duplication in long multimodal conversations.
+- Classify Cloud Code input-token overflows as `context_length_exceeded` request errors. Return HTTP 400 before streaming, or a standard nested `response.error` in `response.failed` after streaming starts, preserving response IDs, event sequence and partial output.
+
 ## 1.7.1-bailey.4 - 2026-11-02
 
 - Support retiring the legacy environment client key while retaining multi-key authentication. Admin model probes use short-lived, single-model keys removed on success and failure, independently of client credentials.

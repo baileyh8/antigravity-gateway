@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.4 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.5 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.4
+### 当前源码版本：1.7.1-bailey.5
+
+Responses 工具结果中的图片等附件只通过原生媒体传递，不再将 Base64 编码重复放入结果正文。Cloud Code 输入超限明确返回 `context_length_exceeded`；已经开启的 Responses 流通过标准 `response.failed.response.error` 返回原因，保留响应 ID、事件序号和已输出内容。
 
 可在启用 `AGY_MULTI_KEY=1` 并确认各客户端专用密钥有效后，移除服务环境中的 `ANTIGRAVITY_GATEWAY_API_KEY`，禁用旧内置主密钥。无密钥请求仍返回401。后台模型测试使用短期、限单模型的临时密钥，完成或失败后删除，不借用客户端密钥。
 
@@ -676,7 +678,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.4
+### Current source version: 1.7.1-bailey.5
+
+Responses tool-output attachments travel only as native media, without duplicating Base64 in the accompanying text. Cloud Code input overflows report `context_length_exceeded`; open Responses streams return the reason in `response.failed.response.error`, retaining the response ID, event sequence and delivered partial output.
 
 After enabling `AGY_MULTI_KEY=1` and migrating clients to dedicated keys, remove `ANTIGRAVITY_GATEWAY_API_KEY` from the service environment to retire the legacy master key. Missing credentials still return 401. Admin model probes use short-lived, model-scoped keys with cleanup on success or failure instead of depending on a client key.
 

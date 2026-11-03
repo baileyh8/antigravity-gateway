@@ -72,6 +72,7 @@ const CONFIG_DIR = path.resolve(
   process.env.ANTIGRAVITY_GATEWAY_CONFIG_DIR
     || path.join(os.homedir(), '.antigravity-gateway')
 );
+const RESPONSES_FAILURE = Symbol('responsesFailure');
 
 function parseArgs(argv) {
   const result = {};
@@ -1402,7 +1403,19 @@ function createResponsesTextEmitter(res, model, responseId) {
     emit({ type: kind === 'reasoning' ? 'response.reasoning_summary_text.delta' : 'response.output_text.delta',
       item_id: state.id, output_index: state.index, ...(kind === 'reasoning' ? { summary_index: 0 } : { content_index: 0 }), delta: text });
   };
-  return { onDelta: value => { emitDelta('message', value); return streamReady(res); }, onThinkingDelta: value => { emitDelta('reasoning', value); return streamReady(res); }, finish(body) {
+  return { onDelta: value => { emitDelta('message', value); return streamReady(res); }, onThinkingDelta: value => { emitDelta('reasoning', value); return streamReady(res); }, fail(error) {
+    start();
+    const output = [...states].map(([kind, state]) => kind === 'reasoning'
+      ? { id: state.id, type: 'reasoning', status: 'incomplete', summary: [{ type: 'summary_text', text: state.text }] }
+      : { id: state.id, type: 'message', role: 'assistant', status: 'incomplete',
+        content: [{ type: 'output_text', text: state.text, annotations: [] }] });
+    emit({ type: 'response.failed', response: {
+      id: responseId, object: 'response', created_at: createdAt, model, status: 'failed', output,
+      error: { code: error.code || 'server_error', message: error.message || 'Gateway error' },
+      incomplete_details: null, usage: null
+    } });
+    endStream(res);
+  }, finish(body) {
     start();
     body.id = responseId;
     body.created_at = createdAt;
@@ -1651,7 +1664,9 @@ async function handleResponses(payload, req, res, signal) {
   let stopHeartbeat = null;
   const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
   const responseId = `resp_${crypto.randomUUID().replaceAll('-', '')}`;
-  const liveEmitter = textStreamingAllowed(normalized) ? createResponsesTextEmitter(res, normalized.model || model, responseId) : null;
+  const responseEmitter = createResponsesTextEmitter(res, normalized.model || model, responseId);
+  const liveEmitter = textStreamingAllowed(normalized) ? responseEmitter : null;
+  res[RESPONSES_FAILURE] = responseEmitter.fail;
   let result;
   const sessionId = identity.sessionId;
   try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
@@ -1874,9 +1889,11 @@ async function requestHandler(req, res) {
       }
       sendJson(res, error.status || 500, errorBody(error, protocol));
     }
-    else {
+    else if (route === '/v1/responses' && res[RESPONSES_FAILURE]) {
+      res[RESPONSES_FAILURE](error);
+    } else {
       if (protocol === 'anthropic') sendSse(res, 'error', errorBody(error, protocol));
-      else sendSse(res, null, { type: route === '/v1/responses' ? 'response.failed' : 'error', error: errorBody(error, protocol).error });
+      else sendSse(res, null, { type: 'error', error: errorBody(error, protocol).error });
       endStream(res);
     }
   } finally {

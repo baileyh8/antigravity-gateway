@@ -64,3 +64,21 @@ test('Responses emitter handles empty and buffered-only answers without phantom 
     assert.equal(res.ended, true);
   }
 });
+
+test('Responses failure retains the same response, event sequence and any delivered text', () => {
+  const { emitter, events, res } = harness();
+  emitter.onDelta('Partial answer');
+  const messageId = events().find(event => event.type === 'response.output_item.added').item.id;
+  emitter.fail({ code: 'upstream_read_error', message: 'Synthetic stream interruption' });
+  const all = events(), failed = all.at(-1);
+  assert.equal(all.filter(event => event.type === 'response.created').length, 1);
+  assert.deepEqual(all.map(event => event.sequence_number), all.map((_, i) => i));
+  assert.equal(failed.type, 'response.failed');
+  assert.equal(failed.response.id, 'resp_live');
+  assert.equal(failed.response.error.code, 'upstream_read_error');
+  assert.equal(failed.response.output[0].id, messageId);
+  assert.equal(failed.response.output[0].status, 'incomplete');
+  assert.equal(failed.response.output[0].content[0].text, 'Partial answer');
+  assert.equal(all.some(event => event.type === 'response.completed'), false);
+  assert.equal(res.ended, true);
+});
