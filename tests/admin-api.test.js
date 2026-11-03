@@ -74,6 +74,7 @@ test('admin api overview reports account counts and today totals', () => {
   assert.equal('email' in data.accounts.items[0], false);
   assert.equal(data.usage.today.totalTokens > 0, true);
   assert.equal(data.trend.length, 14);
+  assert.deepEqual(data.affinityPolicy, { maxTurns: 20, lowQuotaMaxTurns: 5, lowQuotaPercent: 20, ttlSeconds: 18000 });
 });
 
 test('admin api rejects missing and wrong tokens before reading state', async () => {
