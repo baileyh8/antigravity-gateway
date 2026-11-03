@@ -43,10 +43,13 @@ const NATIVE_CHECKPOINT_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 class DirectProviderError extends Error {
   constructor(message, { code = 'direct_provider_error', status = 502, details, cause } = {}) {
-    super(message, { cause });
+    const contextExceeded = code === 'direct_upstream_error'
+      && /context_(?:length|window)_exceeded|input token count exceeds the maximum|maximum context length is \d+ tokens|prompt is too long/i
+        .test(`${message} ${details || ''}`);
+    super(contextExceeded ? '上下文超过模型输入上限，请压缩会话后重试。' : message, { cause });
     this.name = 'DirectProviderError';
-    this.code = code;
-    this.status = status;
+    this.code = contextExceeded ? 'context_length_exceeded' : code;
+    this.status = contextExceeded ? 400 : status;
     this.details = details;
   }
 }
