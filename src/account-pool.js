@@ -9,9 +9,10 @@ const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const { errorDetails, maskEmail } = require('./diagnostic-log');
 const { ManagedAccountAuthProvider } = require('./managed-account-auth');
 
-const { SESSION_TTL_MS, SESSION_CAPACITY, TRANSIENT_COOLDOWN_MS, durationMs, retryDelay, affinityActive, geminiWeeklyPressure,
+const { SESSION_TTL_MS, TRANSIENT_COOLDOWN_MS, durationMs, retryDelay, geminiWeeklyPressure,
   geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks,
-  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS } = require('./account-scheduling');
+  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS, affinityTurnLimit } = require('./account-scheduling');
+const { normalizeAffinity, affinityBinding, withinAffinity, reserveAffinity, deleteAffinity, pruneAffinities } = require('./session-affinity');
 const ACCOUNT_HEALTH_STATES = new Set(['verification_required', 'authentication_error', 'access_denied']);
 
 function quotaReserveError() {
@@ -152,7 +153,7 @@ class AccountPool {
     for (const [routingKey, value] of Object.entries(state.affinities)) {
       const at = Number(value?.at);
       if (routingKey && value?.accountId && Number.isFinite(at)) {
-        this.sessions.set(routingKey, { accountId: String(value.accountId), at, persistedAt: at });
+        this.sessions.set(routingKey, normalizeAffinity({ ...value, at }));
       }
     }
     for (const [accountId, value] of Object.entries(state.health)) {
@@ -162,12 +163,11 @@ class AccountPool {
   }
 
   saveState() {
+    clearTimeout(this.affinitySaveTimer);
+    this.affinitySaveTimer = null;
     try {
       this.fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
-      const affinities = Object.fromEntries([...this.sessions].map(([routingKey, value]) => [routingKey, {
-        accountId: value.accountId,
-        at: value.at
-      }]));
+      const affinities = Object.fromEntries([...this.sessions].map(([routingKey, value]) => [routingKey, normalizeAffinity(value)]));
       const health = Object.fromEntries(this.health);
       const temporary = `${this.stateFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
       this.fs.writeFileSync(temporary, `${JSON.stringify({
@@ -275,35 +275,35 @@ class AccountPool {
   }
 
   cleanupSessions({ persist = true } = {}) {
-    const cutoff = this.now() - SESSION_TTL_MS;
-    let changed = false;
-    for (const [id, value] of this.sessions) {
-      if (value.at < cutoff || !this.entries.has(value.accountId)) {
-        this.sessions.delete(id);
-        changed = true;
-      }
-    }
-    while (this.sessions.size > SESSION_CAPACITY) {
-      this.sessions.delete(this.sessions.keys().next().value);
-      changed = true;
-    }
+    const changed = pruneAffinities(this.sessions, this.entries, this.now());
     if (changed && persist) this.saveState();
     return changed;
   }
 
-  bindSession(routingKey, accountId) {
+  bindSession(routingKey, accountId, model = '') {
     if (!routingKey) return;
-    const previous = this.sessions.get(routingKey);
-    const now = this.now();
-    // Affinity is a fixed window from account selection, not a sliding window
-    // renewed by every successful request. This guarantees periodic rebalance.
-    if (previous?.accountId === accountId && affinityActive(previous, now)) return;
-    this.sessions.set(routingKey, { accountId, at: now, persistedAt: now });
+    this.reserveSession(routingKey, accountId, model)(true);
     this.saveState();
   }
 
-  deleteSession(routingKey) {
-    if (routingKey && this.sessions.delete(routingKey)) this.saveState();
+  scheduleAffinitySave() {
+    if (this.affinitySaveTimer) return;
+    this.affinitySaveTimer = setTimeout(() => this.saveState(), 1000);
+    this.affinitySaveTimer.unref?.();
+  }
+
+  reserveSession(routingKey, accountId, model, { bindRouting = true } = {}) {
+    const bound = affinityBinding(this.sessions.get(routingKey), model, 'cloudcode');
+    // An auxiliary image on the parent's account consumes its turn budget,
+    // but auxiliary fallback cannot create or migrate the parent binding.
+    if (!bindRouting && bound?.accountId !== accountId) return () => {};
+    const entry = this.entries.get(accountId);
+    const limit = affinityTurnLimit(entry && this.reserveSnapshot(entry), this.now(), model, 'cloudcode');
+    return reserveAffinity(this.sessions, routingKey, accountId, model, 'cloudcode', this.now(), limit, () => this.scheduleAffinitySave());
+  }
+
+  deleteSession(routingKey, model, expectedAccountId) {
+    if (routingKey && deleteAffinity(this.sessions, routingKey, model, 'cloudcode', expectedAccountId)) this.saveState();
   }
 
   markAccountIssue(entry, error, context = {}) {
@@ -423,9 +423,7 @@ class AccountPool {
       .every((candidate) => candidate.modelCatalogChecked);
     this.health.delete(id);
     this.weights.delete(id);
-    for (const [routingKey, binding] of this.sessions) {
-      if (binding.accountId === id) this.sessions.delete(routingKey);
-    }
+    this.cleanupSessions({ persist: false });
     try { this.quotaManager?.remove?.(id); } catch { /* stale quota data is non-authoritative */ }
     this.saveState();
     return { id, email: account.email || '', deleted: true };
@@ -601,9 +599,9 @@ class AccountPool {
     this.cleanupSessions();
     const output = [];
     const excluded = new Set();
-    const bound = sessionId ? this.sessions.get(sessionId) : null;
+    const bound = sessionId ? affinityBinding(this.sessions.get(sessionId), model, 'cloudcode') : null;
     const sticky = bound ? this.entries.get(bound.accountId) : null;
-    if (sticky && this.eligible(model).includes(sticky)) {
+    if (sticky && withinAffinity(bound, this.now(), affinityTurnLimit(this.reserveSnapshot(sticky), this.now(), model, 'cloudcode')) && this.eligible(model).includes(sticky)) {
       output.push(sticky);
       excluded.add(sticky.account.id);
     }
@@ -612,22 +610,23 @@ class AccountPool {
   }
 
   selectAccount(model, routingKey, excluded, { preferredAccountId = '', allowSticky = true } = {}) {
+    const now = this.now();
+    const bound = routingKey ? affinityBinding(this.sessions.get(routingKey), model, 'cloudcode') : null;
+    const sticky = bound ? this.entries.get(bound.accountId) : null;
+    const active = sticky && withinAffinity(bound, now, affinityTurnLimit(this.reserveSnapshot(sticky), now, model, 'cloudcode'));
+    const rotate = allowSticky && bound && !active;
     if (allowSticky) {
-      const now = this.now();
       const preferred = preferredAccountId ? this.entries.get(preferredAccountId) : null;
-      if (preferred && this.admission.available('cloudcode', preferred.account.id) && this.isEntryEligible(preferred, model, excluded, now)) return this.refreshSelectedAccount(preferred, model);
-      const bound = routingKey ? this.sessions.get(routingKey) : null;
-      const sticky = bound ? this.entries.get(bound.accountId) : null;
-      const active = affinityActive(bound, now);
+      if (preferred && !(rotate && preferred.account.id === bound.accountId) && this.admission.available('cloudcode', preferred.account.id) && this.isEntryEligible(preferred, model, excluded, now)) return this.refreshSelectedAccount(preferred, model);
       // Affinity still avoids ranking and account scans, but must check the
       // cached reserve. Active-account summary refreshes are throttled/coalesced.
       if (active && sticky && this.admission.available('cloudcode', sticky.account.id) && this.isEntryEligible(sticky, model, excluded, now)) return this.refreshSelectedAccount(sticky, model);
-      if (bound && routingKey && (!active || !sticky || !this.isEntryEligible(sticky, model, excluded, now))) this.deleteSession(routingKey);
     }
 
-    this.cleanupSessions();
     const candidates = this.eligible(model, excluded).filter(entry => this.admission.available('cloudcode', entry.account.id));
-    const ranks = this.quotaRanks(model, candidates);
+    const alternatives = rotate ? candidates.filter(entry => entry.account.id !== bound.accountId) : candidates;
+    const ranks = this.quotaRanks(model, alternatives.length ? alternatives : candidates);
+    this.cleanupSessions();
     if (!ranks.length) return null;
     return this.refreshSelectedAccount(this.weightedPickWithRanks(ranks), model);
   }
@@ -679,7 +678,12 @@ class AccountPool {
     let lastError;
     while (true) {
       if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
-      const lease = await this.admission.acquireAccount(() => this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 }), { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
+      let finishAffinity = () => {};
+      const lease = await this.admission.acquireAccount(() => {
+        const selected = this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 });
+        if (selected) finishAffinity = this.reserveSession(routingKey, selected.account.id, model, options);
+        return selected;
+      }, { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
       const entry = lease?.entry;
       if (!entry) break;
       attempted.add(entry.account.id);
@@ -704,7 +708,7 @@ class AccountPool {
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
         entry.lastSuccessAt = new Date(this.now()).toISOString();
         entry.lastError = '';
-        if (routingKey && options.bindRouting !== false) this.bindSession(routingKey, entry.account.id);
+        finishAffinity(true);
         return { ...result, accountId: entry.account.id };
       } catch (error) {
         if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
@@ -722,8 +726,8 @@ class AccountPool {
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'model_request' });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
-        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      } finally { lease.release(); }
+        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
+      } finally { finishAffinity(false); lease.release(); }
     }
     throw lastError || this.noAccountError(model);
   }
@@ -762,9 +766,14 @@ class AccountPool {
     let lastError;
     while (true) {
       if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
-      const lease = await this.admission.acquireAccount(() => this.selectAccount(model, routingKey, attempted, {
-        preferredAccountId: options.accountId, allowSticky: attempted.size === 0
-      }), { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
+      let finishAffinity = () => {};
+      const lease = await this.admission.acquireAccount(() => {
+        const selected = this.selectAccount(model, routingKey, attempted, {
+          preferredAccountId: options.accountId, allowSticky: attempted.size === 0
+        });
+        if (selected) finishAffinity = this.reserveSession(routingKey, selected.account.id, model, options);
+        return selected;
+      }, { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
       const entry = lease?.entry;
       if (!entry) break;
       attempted.add(entry.account.id);
@@ -782,7 +791,7 @@ class AccountPool {
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
         entry.lastSuccessAt = new Date(this.now()).toISOString();
         entry.lastError = '';
-        if (routingKey && options.bindRouting !== false) this.bindSession(routingKey, entry.account.id);
+        finishAffinity(true);
         return { ...result, accountId: entry.account.id };
       } catch (error) {
         if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
@@ -800,8 +809,8 @@ class AccountPool {
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'image_request' });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
-        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      } finally { lease.release(); }
+        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
+      } finally { finishAffinity(false); lease.release(); }
     }
     throw lastError || this.noAccountError(model);
   }

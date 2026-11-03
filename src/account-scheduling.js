@@ -12,6 +12,9 @@ const QUOTA_TTL_MS = 30 * 60_000;
 const QUOTA_RETRY_MS = 5 * 60_000;
 const QUOTA_RESERVE_FRACTION = 0.05;
 const QUOTA_FRACTION_EPSILON = 1e-7; // Native Float32 usage can encode 95% just below .95.
+const AFFINITY_MAX_TURNS = 20;
+const AFFINITY_LOW_QUOTA_TURNS = 5;
+const LOW_QUOTA_FRACTION = 0.2;
 const ACTIVE_QUOTA_REFRESH_MS = 60_000;
 const LOW_QUOTA_REFRESH_MS = 15_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
@@ -88,7 +91,13 @@ function quotaReserveReached(snapshot, now, model = '', provider = '') {
 
 function quotaRefreshInterval(snapshot, now, model = '', provider = '') {
   return activeBuckets(quotaGroup(snapshot, model, provider), now)
-    .some(bucket => Number(bucket.remainingFraction) <= .2 + QUOTA_FRACTION_EPSILON) ? LOW_QUOTA_REFRESH_MS : ACTIVE_QUOTA_REFRESH_MS;
+    .some(bucket => Number(bucket.remainingFraction) <= LOW_QUOTA_FRACTION + QUOTA_FRACTION_EPSILON) ? LOW_QUOTA_REFRESH_MS : ACTIVE_QUOTA_REFRESH_MS;
+}
+
+function affinityTurnLimit(snapshot, now, model = '', provider = '') {
+  return activeBuckets(quotaGroup(snapshot, model, provider), now)
+    .some(bucket => Number(bucket.remainingFraction) <= LOW_QUOTA_FRACTION + QUOTA_FRACTION_EPSILON)
+    ? AFFINITY_LOW_QUOTA_TURNS : AFFINITY_MAX_TURNS;
 }
 
 function boundedQuotaRefreshMs(value = QUOTA_RETRY_MS) {
@@ -184,6 +193,7 @@ function weightedPickWithRanks(ranks, weights) {
 module.exports = {
   SESSION_TTL_MS, SESSION_CAPACITY, QUOTA_TTL_MS, QUOTA_RETRY_MS, TRANSIENT_COOLDOWN_MS,
   QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS,
+  AFFINITY_MAX_TURNS, AFFINITY_LOW_QUOTA_TURNS, LOW_QUOTA_FRACTION, affinityTurnLimit,
   quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs,
   durationMs, retryDelay, affinityActive,
   modelGroup, quotaGroup, geminiWeeklyPressure, geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks

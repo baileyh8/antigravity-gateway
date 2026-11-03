@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.7 - 2026-11-03
+
+- Limit account affinity to 20 successful model requests, shortened to five when any valid quota window in the requested group has 20% or less remaining. Gemini, Claude/GPT and Argon retain independent bindings and counters; the fixed five-hour deadline and 5% reserve remain effective.
+- Prefer another compatible idle account at the turn/time limit, including image account preferences; reuse the original only when no alternative can run above the reserve. Reserve in-flight turn budget before dispatch, recheck queued admission, count successful tool continuations and ignore failed/cancelled attempts. Late completions cannot restore an older binding.
+- Keep unfinished Robin/Windows native tool tasks on their owner until complete, while still rejecting new dispatches at the 5% reserve. Expose the effective affinity policy in management overview.
+- Persist counters in the existing bounded 2,000-session registry with one batched-save timer per pool and a graceful-stop flush. Preserve legacy bindings with zero historical counts; an abrupt crash can lose the final one-second save interval. No new dependencies or capacity changes.
+
 ## 1.7.1-bailey.6 - 2026-11-03
 
 - Reserve the last 5% of each model group's reported five-hour and weekly quota. New dispatches, affinity, queued work and last-resort selection cannot use an account at or below the reserve; unrelated model groups remain independent.

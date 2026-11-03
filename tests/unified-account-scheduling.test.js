@@ -123,9 +123,9 @@ test('all channels preserve safe affinity without weight spending or sliding ren
     state.advance(SESSION_TTL_MS - 1000);
     assert.equal(state.pick('family'), 'account-0', 'same boundary semantics');
     state.advance(1);
-    // Both quota snapshots have expired; ordinary equal-weight rotation resumes.
-    assert.equal(state.pick('family'), 'account-0');
-    assert.equal(state.pick('another'), 'account-1');
+    // Expiry rebalances away from the old owner when another account can run.
+    assert.equal(state.pick('family'), 'account-1');
+    assert.equal(state.pick('another'), 'account-0');
     assert.ok(state.reads() > beforeReads);
   }
 });
@@ -177,6 +177,7 @@ test('session-only clients, bindRouting=false and persisted affinity have matchi
     assert.equal(again.accountId, first.accountId);
     await state.pool.send(normalized, MODEL, { routingKey: 'auxiliary', bindRouting: false });
     assert.equal(state.pool.sessions.has('auxiliary'), false);
+    state.pool.stop(); // Graceful stop flushes the bounded, batched counter save.
     const restored = channel === 'cloudcode'
       ? new AccountPool({ store: state.store, now: () => NOW, providerFactory: state.factory })
       : new RobinAccountPool({ store: state.store, now: () => NOW, providerFactory: state.factory });

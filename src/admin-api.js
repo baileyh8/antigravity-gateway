@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const { reverseLines } = require('./log-reader');
 const { zeroCounters } = require('./usage-store');
 const { maskEmail } = require('./account-format');
-const { QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS } = require('./account-scheduling');
+const { QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS,
+  AFFINITY_MAX_TURNS, AFFINITY_LOW_QUOTA_TURNS, LOW_QUOTA_FRACTION, SESSION_TTL_MS } = require('./account-scheduling');
 
 const API_VERSION = 1;
 const PREFIX = '/_admin/v1';
@@ -161,6 +162,8 @@ function overview(deps) {
     defaultModel: deps.defaultModel,
     quotaPolicy: { reservePercent: QUOTA_RESERVE_FRACTION * 100,
       activeRefreshMs: ACTIVE_QUOTA_REFRESH_MS, lowQuotaRefreshMs: LOW_QUOTA_REFRESH_MS },
+    affinityPolicy: { maxTurns: AFFINITY_MAX_TURNS, lowQuotaMaxTurns: AFFINITY_LOW_QUOTA_TURNS,
+      lowQuotaPercent: LOW_QUOTA_FRACTION * 100, ttlSeconds: SESSION_TTL_MS / 1000 },
     concurrency: {
       active: concurrency.requests.active,
       queued: concurrency.requests.queued,

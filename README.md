@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.6 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.7 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.6
+### 当前源码版本：1.7.1-bailey.7
+
+会话按“路由会话、账号、模型组”分别计数：默认连续 **20 次成功模型请求**后重新选号，对应组任一有效额度窗口剩余 **≤20%** 时缩短到 **5 次**；固定 **5 小时**期限仍有效，以先达到者为准。工具结果后的再次模型请求也计数，失败、取消和重试不重复计数。并发请求在派发前预留轮次，排队请求在出队时重查；到期优先选择其他支持该模型、有空位且未进入5%保留区的账号。仅原账号可用时允许重新使用它，5%保留线始终有效。Robin/Windows尚未完成的原生工具任务保留原账号，任务结束后再轮换，保留线期间暂停继续派发。计数沿用现有最多2000个会话的有界缓存，每个账号池最多一个1秒合并写盘定时器，正常停止时刷盘；突然崩溃可能丢失最后一个合并周期的计数。旧版本绑定保留，历史成功次数从零计起。
 
 各模型组的有效 5h、周额度任一剩余不高于 **5%** 时，停止向该账号派发对应组的新请求；粘连、排队和兜底选择均遵守这条线，其他组独立使用。全部账号进入保留区时返回 `quota_reserve_reached`（429），额度重置或新读数恢复后重新参与调度。活跃账号每分钟刷新摘要，所选组剩余不高于 20% 时每 15 秒刷新；读数未知时触发有节制的刷新，不伪造剩余额度。在途请求和上游读数延迟可能使最终余额低于 5%，这不是可精确锁定的余额。
 
@@ -441,9 +443,9 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
   --prompt "分析这段视频并回答我的问题"
 ```
 
-网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性。软黏性映射会在本地保存固定 5 小时（可通过 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整），网关重启后仍会优先恢复当前窗口内的账号；窗口内的后续请求检查本地可用状态和缓存额度保留线，不重新进行额度排序。窗口到期、账号额度耗尽、网络异常、凭据失效、访问受限或 Google 要求安全核验时会重新按请求所属模型组的周额度压力、5小时重置时间和账号权重加权选择，避免单一高压力账号独占全部新流量。认证和账号风控会把账号标记为异常并停止继续尝试；重新授权导致凭据变化时自动恢复，也可以在看板中点击“重新检测”，以不生成内容、不消耗模型 Token 的轻量鉴权确认核验结果。网络瞬态故障仍由直连传输重试，失败后只进入短暂冷却。
+网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性。软黏性映射会在本地保存固定 5 小时（可通过 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整），网关重启后仍会优先恢复当前窗口内的账号；窗口内且未达到20轮（组剩余≤20%时5轮）的后续请求检查本地可用状态和缓存额度保留线，不重新进行额度排序。轮数或窗口到期、账号进入额度保留区、网络异常、凭据失效、访问受限或 Google 要求安全核验时会重新按请求所属模型组的周额度压力、5小时重置时间和账号权重加权选择，避免单一高压力账号独占全部新流量。认证和账号风控会把账号标记为异常并停止继续尝试；重新授权导致凭据变化时自动恢复，也可以在看板中点击“重新检测”，以不生成内容、不消耗模型 Token 的轻量鉴权确认核验结果。网络瞬态故障仍由直连传输重试，失败后只进入短暂冷却。
 
-首次选择账号或故障转移时，按请求的模型匹配 Gemini、Claude/GPT 或 Argon 额度组，使用该组的周额度计算 `Pressure = remainingFraction / 距周重置小时数`，以 `floor(log2(Pressure))` 分档。最高档、相邻档和其余可用档分别获得4、2、1倍权重；同档中该组5小时额度最早重置的账号再获得2倍权重，最后叠加账号权重。当前组任一有效窗口剩余不高于5%时硬排除，已过重置时间的窗口不继续视为低额度。各组轮询状态独立；缺失的组额度不借用其他组。亲和账号有空位时直接续接，满载时按同组权重改选其他空闲账号。
+首次选择账号或故障转移时，按请求的模型匹配 Gemini、Claude/GPT 或 Argon 额度组，使用该组的周额度计算 `Pressure = remainingFraction / 距周重置小时数`，以 `floor(log2(Pressure))` 分档。最高档、相邻档和其余可用档分别获得4、2、1倍权重；同档中该组5小时额度最早重置的账号再获得2倍权重，最后叠加账号权重。当前组任一有效窗口剩余不高于5%时硬排除，已过重置时间的窗口不继续视为低额度。各组轮询状态独立；缺失的组额度不借用其他组。亲和账号未达到轮数限制且有空位时直接续接，达到轮数或满载时按同组权重改选其他空闲账号。
 
 选号只读取内存中的真实上游额度快照，不等待联网查询，也不根据 Token 用量推算余额。有效的当前模型组周压力档位优先，未知压力账号随后，已知任一有效窗口剩余不高于5%的账号不再作为兜底。快照过期、重置已到或字段缺失时补刷新；已知低额度在其窗口重置或更新读数前继续保护；同档未知的 5 小时重置时间仍退回加权轮询。后台保留约 30 分钟一次的完整刷新；缺失/失效快照及实际额度失败只补查相关账号的额度汇总，普通补刷新每账号至少间隔5分钟；活跃账号最短间隔1分钟，当前组剩余不高于20%时缩短为15秒。重复请求合并，最多同时刷新两个账号。新增账号、凭据变化及重新检测成功会触发该账号的完整刷新。额度汇总单独记录观测时间，套餐或模型目录查询成功不会把旧额度标记为最新。
 
@@ -598,7 +600,7 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `120` | 所有准入阶段共享的排队请求上限 |
 | `ANTIGRAVITY_GATEWAY_ACCOUNT_CONCURRENCY` | `5` | 每账号所有模型共享的推理并发上限 |
 | `ANTIGRAVITY_GATEWAY_QUEUE_TIMEOUT_MS` | `30000` | 每个请求跨准入阶段的累计排队期限；执行时间另受总超时限制 |
-| `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | 账号软黏性的固定窗口，单位秒；窗口内成功请求不会续期 |
+| `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | 账号软黏性的固定窗口，单位秒；与20/5轮限制同时生效，成功请求不会续期 |
 | `ANTIGRAVITY_GATEWAY_CORS_ORIGIN` | 空 | 允许访问本地网关的浏览器 Origin |
 | `ANTIGRAVITY_GATEWAY_DEBUG` | 空 | 设置为 `1` 输出更多诊断信息 |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | 空（关闭） | 设置为 `1` 后，要求模型按工作阶段说明进度；阶段内不逐工具解说，阶段切换时简短交代 |
@@ -680,7 +682,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.6
+### Current source version: 1.7.1-bailey.7
+
+Affinity counts successful model requests separately per routing session, account and quota group. Rebalance after **20 successes**, or **five** when any valid window of the selected group has **20% or less** remaining; the fixed **five-hour** deadline still applies, whichever comes first. Model requests following tool results count too; failures, cancellations and retries do not add duplicate turns. Concurrent dispatches reserve turn budget, and queued requests recheck it at admission. Prefer another compatible, idle account above the 5% reserve; reuse the current account only when no alternative can run. Unfinished Robin/Windows native tool tasks keep their owner until complete, while the 5% reserve still stops further dispatch. The existing 2,000-session bound remains. At most one one-second batched-save timer per pool persists counters and flushes on graceful stop; a crash can lose the last save interval. Existing bindings survive upgrades with historical counts starting at zero.
 
 An account stops receiving new work for a model group when any valid five-hour or weekly reading is at or below **5%** remaining. Affinity, queued dispatch and fallback cannot bypass the reserve; other groups remain independent. A fully protected pool returns `quota_reserve_reached` (429), and becomes eligible again after the relevant reset or an improved reading. Active-account summaries refresh every minute, or every 15 seconds at 20% or less remaining in the selected group. Unknown readings trigger throttled refreshes rather than fabricated balances. In-flight requests and delayed upstream telemetry prevent an exact final-balance guarantee.
 
@@ -965,9 +969,9 @@ curl http://127.0.0.1:9897/v1/files \
   -F 'purpose=assistants'
 ```
 
-Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Healthy continuations use an O(1) local affinity lookup without recalculating quota ranks; expiry or failure triggers weighted selection using the requested group’s weekly pressure, five-hour reset time, and configured account weights without starving lower-ranked healthy accounts. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
+Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Continuations within the 20-success budget (five at ≤20% remaining) use an O(1) local affinity lookup without recalculating quota ranks; turn exhaustion, expiry or failure triggers weighted selection using the requested group’s weekly pressure, five-hour reset time, and configured account weights without starving lower-ranked healthy accounts. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
 
-New bindings and failover match the requested Gemini, Claude/GPT or Argon quota group. Weekly pressure is `floor(log2(remainingFraction / hoursUntilWeeklyReset))`, with a one-minute minimum denominator. The highest, adjacent and other usable bands receive 4x, 2x and 1x weights; the earliest five-hour reset in the same group/band receives another 2x multiplier. Rotation state is independent per group. An active window at or below 5% is excluded even from fallback; passed reset windows become unknown. Missing groups never borrow unrelated budgets. Healthy affinity accounts keep their slot when available; busy accounts may switch before dispatch. Robin/Windows Argon uses its native GXU group and unfinished tool tasks retain their owner.
+New bindings and failover match the requested Gemini, Claude/GPT or Argon quota group. Weekly pressure is `floor(log2(remainingFraction / hoursUntilWeeklyReset))`, with a one-minute minimum denominator. The highest, adjacent and other usable bands receive 4x, 2x and 1x weights; the earliest five-hour reset in the same group/band receives another 2x multiplier. Rotation state is independent per group. An active window at or below 5% is excluded even from fallback; passed reset windows become unknown. Missing groups never borrow unrelated budgets. Affinity accounts retain their slot within the turn budget when available; turn exhaustion or busy accounts trigger selection of another runnable account when possible. Robin/Windows Argon uses its native GXU group and unfinished tool tasks retain their owner.
 
 Scheduling reads fresh in-memory quota summaries without waiting for network queries or estimating quota from Token counts. Unknown/expired weekly data follows known positive pressure, and known reserves are excluded rather than used as fallbacks. Full background refreshes remain approximately half-hourly. Missing/expired data and live quota failures trigger asynchronous per-account summary refreshes, coalesced with two accounts refreshed concurrently. Ordinary retries have a five-minute minimum; active accounts use one minute, shortened to 15 seconds when the selected group has at most 20% left. Known low readings remain protected through cache expiry until their own reset or a newer reading; account additions, changed credentials and successful authentication rechecks trigger full account refreshes. Summary freshness is tracked independently, so successful plan/catalog queries cannot renew stale quota data.
 
@@ -1025,7 +1029,7 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_MAX_QUEUE` | `120` | Shared queue capacity across admission stages |
 | `ANTIGRAVITY_GATEWAY_ACCOUNT_CONCURRENCY` | `5` | Shared inference concurrency per account across models |
 | `ANTIGRAVITY_GATEWAY_QUEUE_TIMEOUT_MS` | `30000` | Cumulative queue budget per request; execution also observes the overall request timeout |
-| `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | Fixed account-affinity window in seconds; successful requests do not renew it |
+| `ANTIGRAVITY_AFFINITY_TTL_SECONDS` | `18000` | Fixed account-affinity window in seconds, also bounded by the 20/five-turn policy; successes do not renew it |
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | Native Antigravity image model |
 | `ANTIGRAVITY_GATEWAY_MEDIA_LIMIT` | `100663296` | Maximum bytes per media item |
 | `ANTIGRAVITY_GATEWAY_TOTAL_MEDIA_LIMIT` | `201326592` | Maximum resolved media bytes per request |

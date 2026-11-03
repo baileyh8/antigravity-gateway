@@ -10,10 +10,11 @@ const { ARGON_MODEL, RobinProvider, RobinProviderError } = require('./robin-prov
 const { GeminiWindowsAuthProvider } = require('./gemini-windows-auth');
 const { GeminiWindowsProvider } = require('./gemini-windows-provider');
 
-const { SESSION_TTL_MS: ROBIN_SESSION_TTL_MS, SESSION_CAPACITY,
+const { SESSION_TTL_MS: ROBIN_SESSION_TTL_MS,
   QUOTA_TTL_MS: ROBIN_QUOTA_TTL_MS, QUOTA_RETRY_MS: ROBIN_QUOTA_RETRY_MS,
-  TRANSIENT_COOLDOWN_MS, retryDelay, affinityActive, quotaRank, compareQuotaRanks, weightedPickWithRanks,
-  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS } = require('./account-scheduling');
+  TRANSIENT_COOLDOWN_MS, retryDelay, quotaRank, compareQuotaRanks, weightedPickWithRanks,
+  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS, affinityTurnLimit } = require('./account-scheduling');
+const { normalizeAffinity, affinityBinding, withinAffinity, reserveAffinity, deleteAffinity, pruneAffinities } = require('./session-affinity');
 
 function quotaReserveError() {
   return new RobinProviderError('对应模型组已进入 5% 额度保留区，请等待额度恢复后重试。', {
@@ -207,18 +208,22 @@ class RobinAccountPool {
   }
 
   selectAccount(model, routingKey, excluded = new Set(), { preferredAccountId = '', allowSticky = true } = {}) {
-    this.cleanupSessions();
+    const now = this.now();
+    const bound = routingKey ? affinityBinding(this.sessions.get(routingKey), model, 'robin') : null;
+    const sticky = bound && this.entries.get(bound.accountId);
+    const active = sticky && withinAffinity(bound, now, affinityTurnLimit(this.quotaSnapshot(sticky.account), now, model, 'robin'));
+    const rotate = allowSticky && bound && !active;
     const candidates = this.eligible(model, excluded).filter(entry => this.admission.available('robin', entry.account.id));
     if (!candidates.length) return null;
     if (allowSticky) {
       const preferred = preferredAccountId && candidates.find((entry) => entry.account.id === preferredAccountId);
-      if (preferred) return this.refreshSelectedAccount(preferred, model);
-      const bound = routingKey ? this.sessions.get(routingKey) : null;
-      const sticky = bound && candidates.find((entry) => entry.account.id === bound.accountId);
-      if (sticky && affinityActive(bound, this.now())) return this.refreshSelectedAccount(sticky, model);
-      if (bound) this.deleteSession(routingKey);
+      if (preferred && !(rotate && preferred.account.id === bound.accountId)) return this.refreshSelectedAccount(preferred, model);
+      if (active && candidates.includes(sticky)) return this.refreshSelectedAccount(sticky, model);
     }
-    return this.refreshSelectedAccount(weightedPickWithRanks(this.quotaRanks(model, candidates), this.weights), model);
+    const alternatives = rotate ? candidates.filter(entry => entry.account.id !== bound.accountId) : candidates;
+    const ranks = this.quotaRanks(model, alternatives.length ? alternatives : candidates);
+    this.cleanupSessions();
+    return this.refreshSelectedAccount(weightedPickWithRanks(ranks, this.weights), model);
   }
 
   async send(normalized, model, options = {}) {
@@ -263,12 +268,20 @@ class RobinAccountPool {
     let lastError = null, attempts = 0;
     while (true) {
       options.signal?.throwIfAborted();
+      let finishAffinity = () => {};
       const lease = await this.admission.acquireAccount(() => {
-        if (!taskAccount) return this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 });
+        let selected;
+        if (!taskAccount) selected = this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 });
         // Keep native tool ownership, but do not dispatch another turn while
         // its owner's quota is reserved. The task can resume after reset.
-        if (this.quotaProtected(taskAccount, model)) throw quotaReserveError();
-        return this.admission.available('robin', taskAccount.account.id) ? this.refreshSelectedAccount(taskAccount, model) : null;
+        else {
+          if (this.quotaProtected(taskAccount, model)) throw quotaReserveError();
+          selected = this.admission.available('robin', taskAccount.account.id) ? this.refreshSelectedAccount(taskAccount, model) : null;
+        }
+        if (selected) finishAffinity = this.reserveSession(routingKey, selected.account.id, model, {
+          bindRouting: options.bindRouting, retainOwner: Boolean(taskAccount)
+        });
+        return selected;
       },
       { signal: options.signal, provider: 'robin', hasCandidates: () => Boolean(taskAccount) || this.eligible(model, excluded).length > 0 });
       const entry = lease?.entry;
@@ -311,7 +324,7 @@ class RobinAccountPool {
         }
         this.saveHealth(entry, '', '', '', 0, { lastSuccessAt: new Date(this.now()).toISOString() }, expectedAuthorization,
           result.upstreamAuthFingerprint || initialFingerprint);
-        if (routingKey && options.bindRouting !== false) this.bind(routingKey, entry.account.id);
+        finishAffinity(true);
         return { ...result, accountId: entry.account.id, accountEmail: entry.account.email, providerType: 'robin' };
       } catch (error) {
         if (error?.code !== 'robin_tool_result_missing' && error?.code !== 'robin_session_busy') {
@@ -349,8 +362,8 @@ class RobinAccountPool {
         // Once a client saw text or a tool call, replaying on another account
         // can duplicate both output and client side effects.
         if (category === 'request' || taskAccount || emitted) throw failure;
-        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey);
-      } finally { lease.release(); }
+        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
+      } finally { finishAffinity(false); lease.release(); }
     }
   }
 
@@ -573,7 +586,7 @@ class RobinAccountPool {
     entry.provider.forgetConversations?.();
     this.store.delete(id);
     this.entries.delete(id);
-    for (const [key, value] of this.sessions) if (value.accountId === id) this.sessions.delete(key);
+    this.cleanupSessions();
     this.saveSessions();
     return { id, deleted: true, providerType: 'robin' };
   }
@@ -600,53 +613,59 @@ class RobinAccountPool {
     return { account: this.status().find((account) => account.id === id) };
   }
 
-  bind(routingKey, accountId) {
+  bind(routingKey, accountId, model = '') {
     if (!routingKey || !accountId) return;
-    const previous = this.sessions.get(routingKey);
-    if (previous?.accountId === accountId && affinityActive(previous, this.now())) return;
-    this.sessions.set(routingKey, { accountId, at: this.now() });
+    this.reserveSession(routingKey, accountId, model)(true);
     this.saveSessions();
   }
 
+  scheduleAffinitySave() {
+    if (this.affinitySaveTimer) return;
+    this.affinitySaveTimer = setTimeout(() => this.saveSessions(), 1000);
+    this.affinitySaveTimer.unref?.();
+  }
+
+  reserveSession(routingKey, accountId, model, { bindRouting = true, retainOwner = false } = {}) {
+    const bound = affinityBinding(this.sessions.get(routingKey), model, 'robin');
+    if (!bindRouting && bound?.accountId !== accountId) return () => {};
+    const entry = this.entries.get(accountId);
+    const limit = affinityTurnLimit(entry && this.quotaSnapshot(entry.account), this.now(), model, 'robin');
+    return reserveAffinity(this.sessions, routingKey, accountId, model, 'robin', this.now(), limit, () => this.scheduleAffinitySave(), { retainOwner });
+  }
+
   cleanupSessions() {
-    const now = this.now();
-    let changed = false;
-    for (const [key, value] of this.sessions) {
-      if (value.at < now - ROBIN_SESSION_TTL_MS || !this.entries.has(value.accountId)) {
-        this.sessions.delete(key);
-        changed = true;
-      }
-    }
-    while (this.sessions.size > SESSION_CAPACITY) {
-      this.sessions.delete(this.sessions.keys().next().value);
-      changed = true;
-    }
+    const changed = pruneAffinities(this.sessions, this.entries, this.now());
     if (changed) this.saveSessions();
   }
 
-  deleteSession(routingKey) {
-    if (routingKey && this.sessions.delete(routingKey)) this.saveSessions();
+  deleteSession(routingKey, model, expectedAccountId) {
+    if (routingKey && deleteAffinity(this.sessions, routingKey, model, 'robin', expectedAccountId)) this.saveSessions();
   }
 
   loadSessions() {
     try {
       const body = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
       for (const [key, value] of Object.entries(body.sessions || {})) {
-        if (value?.accountId && Number.isFinite(value?.at)) this.sessions.set(key, value);
+        const binding = normalizeAffinity(value);
+        if (binding) this.sessions.set(key, binding);
       }
     } catch { /* no prior Robin affinity state */ }
   }
 
   saveSessions() {
+    clearTimeout(this.affinitySaveTimer);
+    this.affinitySaveTimer = null;
     try {
       fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
       const temporary = `${this.stateFile}.${process.pid}.tmp`;
-      fs.writeFileSync(temporary, `${JSON.stringify({ sessions: Object.fromEntries(this.sessions) }, null, 2)}\n`);
+      fs.writeFileSync(temporary, `${JSON.stringify({ sessions: Object.fromEntries([...this.sessions].map(([key, value]) => [key, normalizeAffinity(value)])) }, null, 2)}\n`);
       fs.renameSync(temporary, this.stateFile);
     } catch { /* affinity persistence is best effort */ }
   }
 
   stop() {
+    this.cleanupSessions();
+    this.saveSessions();
     if (this.quotaTimer) clearInterval(this.quotaTimer);
     this.quotaTimer = null;
     this.quotaController.abort();
