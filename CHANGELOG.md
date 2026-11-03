@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.6 - 2026-11-03
+
+- Reserve the last 5% of each model group's reported five-hour and weekly quota. New dispatches, affinity, queued work and last-resort selection cannot use an account at or below the reserve; unrelated model groups remain independent.
+- Keep known low readings protected through cache expiry until their own reset or a newer reading. Held Robin/Windows tool tasks retain account ownership and return `quota_reserve_reached` instead of migrating or consuming the reserve.
+- Refresh active-account quota summaries at one-minute intervals, or 15 seconds when the selected group has 20% or less remaining. Coalesce and throttle metadata requests without adding per-request timers or changing execution capacity. Management overview exposes the effective quota policy.
+- Protection uses upstream telemetry. Already running requests and delayed or unknown readings prevent an exact final-balance guarantee.
+
 ## 1.7.1-bailey.5 - 2026-11-03
 
 - Keep Responses tool-output attachments exclusively in native media parts. Remove attachment blocks from the accompanying JSON text while preserving other structured output and literal strings, avoiding Base64 duplication in long multimodal conversations.

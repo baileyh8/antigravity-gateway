@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { QUOTA_TTL_MS: REFRESH_INTERVAL_MS,
-  QUOTA_RETRY_MS: TARGETED_REFRESH_MIN_INTERVAL_MS } = require('./account-scheduling');
+  QUOTA_RETRY_MS: TARGETED_REFRESH_MIN_INTERVAL_MS, boundedQuotaRefreshMs } = require('./account-scheduling');
 const LOAD_PATH = '/v1internal:loadCodeAssist';
 const MODELS_PATH = '/v1internal:fetchAvailableModels';
 const USAGE_PATH = '/v1internal:retrieveUserQuotaSummary';
@@ -192,7 +192,7 @@ class QuotaManager {
     return this.snapshots;
   }
 
-  refreshAccount(accountId, { force = false, summaryOnly = true } = {}) {
+  refreshAccount(accountId, { force = false, summaryOnly = true, minIntervalMs = TARGETED_REFRESH_MIN_INTERVAL_MS } = {}) {
     const entry = this.currentEntry(accountId);
     if (!this.usableEntry(entry)) return Promise.resolve(null);
     const pending = this.refreshingAccounts.get(accountId);
@@ -208,7 +208,7 @@ class QuotaManager {
       return pending.promise;
     }
     const last = this.refreshAttempts.get(accountId);
-    if (!force && last?.provider === entry.provider && this.now() - last.at < TARGETED_REFRESH_MIN_INTERVAL_MS) {
+    if (!force && last?.provider === entry.provider && this.now() - last.at < boundedQuotaRefreshMs(minIntervalMs)) {
       return Promise.resolve(this.snapshots[accountId] || null);
     }
     this.refreshAttempts.set(accountId, { at: this.now(), provider: entry.provider });

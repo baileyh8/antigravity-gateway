@@ -17,7 +17,7 @@ async function waitFor(predicate, message, timeout = 5000) {
     if (await predicate()) return;
     await delay(10);
   }
-  assert.fail(message);
+  assert.fail(typeof message === 'function' ? message() : message);
 }
 
 async function freePort() {
@@ -68,7 +68,7 @@ test('SIGTERM 排空 HTTP 已断开但尚未结束的真实请求事务', { time
   const request = http.request(`http://127.0.0.1:${port}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json' } });
   request.on('error', () => {});
   request.end(JSON.stringify({ model: 'gemini-test-high', max_tokens: 32, messages: [{ role: 'user', content: '夹具请求' }] }));
-  await waitFor(() => fs.existsSync(path.join(dir, 'transaction-started')), '未进入上游事务');
+  await waitFor(() => fs.existsSync(path.join(dir, 'transaction-started')), () => `未进入上游事务\n${child.output}`);
   request.destroy();
   await delay(30);
   child.kill('SIGTERM');
@@ -106,7 +106,7 @@ test('SIGTERM 排空超过十秒的后台事务后才交接目录', { timeout: 2
   const request = http.request(`http://127.0.0.1:${port}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json' } });
   request.on('error', () => {});
   request.end(JSON.stringify({ model: 'gemini-test-high', max_tokens: 32, messages: [{ role: 'user', content: '夹具请求' }] }));
-  await waitFor(() => fs.existsSync(path.join(dir, 'transaction-started')), '未进入上游事务');
+  await waitFor(() => fs.existsSync(path.join(dir, 'transaction-started')), () => `未进入上游事务\n${child.output}`);
   request.destroy();
   await delay(30);
   child.kill('SIGTERM');

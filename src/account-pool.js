@@ -10,8 +10,15 @@ const { errorDetails, maskEmail } = require('./diagnostic-log');
 const { ManagedAccountAuthProvider } = require('./managed-account-auth');
 
 const { SESSION_TTL_MS, SESSION_CAPACITY, TRANSIENT_COOLDOWN_MS, durationMs, retryDelay, affinityActive, geminiWeeklyPressure,
-  geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks } = require('./account-scheduling');
+  geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks,
+  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS } = require('./account-scheduling');
 const ACCOUNT_HEALTH_STATES = new Set(['verification_required', 'authentication_error', 'access_denied']);
+
+function quotaReserveError() {
+  return new DirectProviderError('对应模型组已进入 5% 额度保留区，请等待额度恢复后重试。', {
+    code: 'quota_reserve_reached', status: 429
+  });
+}
 
 function errorCategory(error) {
   const status = Number(error?.status) || 0;
@@ -246,6 +253,8 @@ class AccountPool {
   canUseFallback() { return this.removedIdentities.size === 0; }
 
   noAccountError(model = '') {
+    if (model && [...this.entries.values()].some(entry => entry.account.enabled !== false
+      && this.isAccountHealthy(entry) && this.quotaProtected(entry, model))) return quotaReserveError();
     const now = this.now();
     if (now - this.lastUnavailableDiagnosticAt >= 10_000) {
       this.lastUnavailableDiagnosticAt = now;
@@ -469,6 +478,7 @@ class AccountPool {
       && (entry.modelCooldowns.get(model) || 0) <= now
       && (!knownSupporters?.size || knownSupporters.has(entry.account.id))
       && (!(entry.supportedModels instanceof Set) || entry.supportedModels.has(model))
+      && !this.quotaProtected(entry, model, now)
     );
   }
 
@@ -540,7 +550,32 @@ class AccountPool {
     // Scheduling never waits for quota I/O. QuotaManager coalesces and limits
     // targeted refreshes; older custom managers can continue without them.
     if (!this.quotaManager?.refreshAccount || !this.isAccountHealthy(entry)) return;
-    void this.quotaManager.refreshAccount(entry.account.id, options).catch(() => {});
+    const minimum = boundedQuotaRefreshMs(options.minIntervalMs);
+    const now = this.now();
+    if (!options.force && now - (entry.quotaRefreshRequestedAt ?? -Infinity) < minimum) return;
+    entry.quotaRefreshRequestedAt = now;
+    void this.quotaManager.refreshAccount(entry.account.id, { ...options, minIntervalMs: minimum }).catch(() => {});
+  }
+
+  reserveSnapshot(entry) {
+    // peek retains known low readings even after cache expiry, until their
+    // own reset or a newer reading. No I/O or account scan on the sticky path.
+    return this.quotaManager?.peek?.(entry.account.id)
+      ?? this.quotaManager?.getSchedulingSnapshot?.(entry.account.id, this.now())
+      ?? this.quotaManager?.get?.(entry.account.id) ?? null;
+  }
+
+  quotaProtected(entry, model, now = this.now()) {
+    const blocked = quotaReserveReached(this.reserveSnapshot(entry), now, model, 'cloudcode');
+    if (blocked) this.refreshAccountQuota(entry, { minIntervalMs: LOW_QUOTA_REFRESH_MS });
+    return blocked;
+  }
+
+  refreshSelectedAccount(entry, model) {
+    if (entry) this.refreshAccountQuota(entry, {
+      minIntervalMs: quotaRefreshInterval(this.reserveSnapshot(entry), this.now(), model, 'cloudcode')
+    });
+    return entry;
   }
 
   geminiFiveHourResetTime(snapshot, now) {
@@ -580,13 +615,13 @@ class AccountPool {
     if (allowSticky) {
       const now = this.now();
       const preferred = preferredAccountId ? this.entries.get(preferredAccountId) : null;
-      if (preferred && this.admission.available('cloudcode', preferred.account.id) && this.isEntryEligible(preferred, model, excluded, now)) return preferred;
+      if (preferred && this.admission.available('cloudcode', preferred.account.id) && this.isEntryEligible(preferred, model, excluded, now)) return this.refreshSelectedAccount(preferred, model);
       const bound = routingKey ? this.sessions.get(routingKey) : null;
       const sticky = bound ? this.entries.get(bound.accountId) : null;
       const active = affinityActive(bound, now);
-      // The hot path is an O(1) local-state lookup: no quota snapshots, sorting,
-      // refresh I/O, or account-list scan occurs during a healthy affinity window.
-      if (active && sticky && this.admission.available('cloudcode', sticky.account.id) && this.isEntryEligible(sticky, model, excluded, now)) return sticky;
+      // Affinity still avoids ranking and account scans, but must check the
+      // cached reserve. Active-account summary refreshes are throttled/coalesced.
+      if (active && sticky && this.admission.available('cloudcode', sticky.account.id) && this.isEntryEligible(sticky, model, excluded, now)) return this.refreshSelectedAccount(sticky, model);
       if (bound && routingKey && (!active || !sticky || !this.isEntryEligible(sticky, model, excluded, now))) this.deleteSession(routingKey);
     }
 
@@ -594,7 +629,7 @@ class AccountPool {
     const candidates = this.eligible(model, excluded).filter(entry => this.admission.available('cloudcode', entry.account.id));
     const ranks = this.quotaRanks(model, candidates);
     if (!ranks.length) return null;
-    return this.weightedPickWithRanks(ranks);
+    return this.refreshSelectedAccount(this.weightedPickWithRanks(ranks), model);
   }
 
   attemptReporter(accountId, model) {
@@ -608,8 +643,12 @@ class AccountPool {
   async send(normalized, model, options = {}) {
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
+      const localEntry = { account: { id: 'local-agy-session' }, healthState: 'available' };
+      if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
+      this.refreshSelectedAccount(localEntry, model);
       const releaseFallback = await this.admission.acquire(options.signal);
       try {
+        if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
         options.onAccountSelected?.({
           accountId: 'local-agy-session',
           email: '',
@@ -693,8 +732,12 @@ class AccountPool {
     const model = 'gemini-3.1-flash-image';
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
+      const localEntry = { account: { id: 'local-agy-session' }, healthState: 'available' };
+      if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
+      this.refreshSelectedAccount(localEntry, model);
       const releaseFallback = await this.admission.acquire(options.signal);
       try {
+        if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
         options.onAccountSelected?.({ accountId: 'local-agy-session', email: '', source: 'local-agy-session', attempt: 1 });
         let responseSeen = false;
         const result = await this.fallbackProvider.generateImage(request, {

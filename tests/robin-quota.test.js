@@ -162,27 +162,28 @@ test('Robin background quota checks skip disabled and unhealthy accounts', async
   await pool.refreshQuotas(); assert.equal(calls, 0);
 });
 
-test('Robin depleted quota is a last-resort fallback, not an account health failure', async t => {
+test('Robin depleted quota is held without marking account health as failed', async t => {
   const { pool, store, advance } = harness(t, async () => robinQuotaSnapshot(budget(1, 1), now));
   store.update('r', { capabilities: [ARGON_MODEL] });
   pool.entries.get('r').models.add(ARGON_MODEL);
   await pool.refreshQuota('r');
-  assert.equal(pool.selectAccount(ARGON_MODEL, 'one').account.id, 'r');
+  assert.equal(pool.selectAccount(ARGON_MODEL, 'one'), null);
   assert.equal(pool.status()[0].state, 'available');
   assert.equal(pool.status()[0].quotaDepleted, true);
   assert.equal(store.list()[0].providerMetadata.robinHealth, undefined);
   let calls = 0;
   pool.entries.get('r').provider.send = async () => { calls++; return { text: 'recovered', toolCalls: [] }; };
-  assert.equal((await pool.send({ messages: [], tools: [] }, ARGON_MODEL, { clientId: 'c', sessionId: 's' })).text, 'recovered');
-  assert.equal(calls, 1);
+  await assert.rejects(pool.send({ messages: [], tools: [] }, ARGON_MODEL, { clientId: 'c', sessionId: 's' }),
+    { code: 'quota_reserve_reached', status: 429 });
+  assert.equal(calls, 0);
   advance(3600000);
   assert.equal(pool.status()[0].state, 'available');
   assert.equal(pool.status()[0].quotaDepleted, false);
   assert.equal(pool.selectAccount(ARGON_MODEL, 'one').account.id, 'r');
 });
 
-test('Robin quota snapshot never breaks an already executing client tool task', async t => {
-  const { pool, store } = harness(t, async () => robinQuotaSnapshot(budget(2, 1), now));
+test('Robin retains a protected tool task and resumes on its owner after quota reset', async t => {
+  const { pool, store, advance } = harness(t, async () => robinQuotaSnapshot(budget(2, 1), now));
   store.update('r', { capabilities: [ARGON_MODEL] });
   pool.entries.get('r').models.add(ARGON_MODEL);
   const options = { clientId: 'c', sessionId: 's' };
@@ -192,6 +193,9 @@ test('Robin quota snapshot never breaks an already executing client tool task', 
   };
   pool.activeTasks.set(JSON.stringify(['c', 's']), 'r');
   await pool.refreshQuota('r');
+  await assert.rejects(pool.send({ messages: [], tools: [] }, ARGON_MODEL, options), { code: 'quota_reserve_reached' });
+  assert.equal(pool.activeTasks.get(JSON.stringify(['c', 's'])), 'r');
+  advance(3600000);
   const result = await pool.send({ messages: [], tools: [] }, ARGON_MODEL, options);
   assert.equal(result.text, 'done');
   assert.equal(pool.activeTasks.size, 0);

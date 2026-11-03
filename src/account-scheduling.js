@@ -10,6 +10,10 @@ const SESSION_TTL_MS = Math.max(0, Number.isFinite(configuredSeconds)
 const SESSION_CAPACITY = 2000;
 const QUOTA_TTL_MS = 30 * 60_000;
 const QUOTA_RETRY_MS = 5 * 60_000;
+const QUOTA_RESERVE_FRACTION = 0.05;
+const QUOTA_FRACTION_EPSILON = 1e-7; // Native Float32 usage can encode 95% just below .95.
+const ACTIVE_QUOTA_REFRESH_MS = 60_000;
+const LOW_QUOTA_REFRESH_MS = 15_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
 const DEFAULT_COOLDOWN_MS = 60_000;
 const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60_000;
@@ -77,6 +81,22 @@ function activeBuckets(group, now) {
   });
 }
 
+function quotaReserveReached(snapshot, now, model = '', provider = '') {
+  return activeBuckets(quotaGroup(snapshot, model, provider), now)
+    .some(bucket => Number(bucket.remainingFraction) <= QUOTA_RESERVE_FRACTION + QUOTA_FRACTION_EPSILON || bucket.available === false);
+}
+
+function quotaRefreshInterval(snapshot, now, model = '', provider = '') {
+  return activeBuckets(quotaGroup(snapshot, model, provider), now)
+    .some(bucket => Number(bucket.remainingFraction) <= .2 + QUOTA_FRACTION_EPSILON) ? LOW_QUOTA_REFRESH_MS : ACTIVE_QUOTA_REFRESH_MS;
+}
+
+function boundedQuotaRefreshMs(value = QUOTA_RETRY_MS) {
+  const milliseconds = Number(value);
+  return Number.isFinite(milliseconds) && milliseconds > 0
+    ? Math.max(LOW_QUOTA_REFRESH_MS, Math.min(QUOTA_RETRY_MS, milliseconds)) : QUOTA_RETRY_MS;
+}
+
 function weeklyPressure(group, now) {
   const bucket = (group?.buckets || []).find(item => String(item.window || '').toLowerCase() === 'weekly' || /-weekly$/i.test(item.id || ''));
   const raw = bucket?.remainingFraction;
@@ -104,6 +124,7 @@ function quotaRank(entry, snapshot, now, depleted = false, model = '', provider 
   const exhausted = buckets.some(bucket => Number(bucket.remainingFraction) <= 0 || bucket.available === false);
   return {
     entry, group: `${provider}:${modelGroup(model)}`, depleted: depleted || exhausted ? 1 : 0,
+    reserveBlocked: quotaReserveReached(snapshot, now, model, provider),
     lane: exhausted ? 2 : { pressure: 0, unknown: 1, exhausted: 2 }[weekly.kind],
     band: weekly.band, resetTime: fiveHourResetTime(group, now)
   };
@@ -117,9 +138,10 @@ function compareQuotaRanks(left, right) {
 }
 
 function weightedPickWithRanks(ranks, weights) {
+  ranks = ranks.filter(rank => !rank.reserveBlocked);
   if (!ranks.length) return null;
-  // A snapshot is advisory: exhausted accounts are last-resort fallbacks, not
-  // permanent exclusions. Real upstream failures are handled by pool cooldowns.
+  // Unknown telemetry retains its advisory lane. Known reserve readings are
+  // excluded above and can never return through the last-resort fallback.
   let candidates = ranks.filter((rank) => !rank.depleted && rank.lane !== 2);
   if (!candidates.length) candidates = ranks.filter((rank) => !rank.depleted);
   if (!candidates.length) candidates = ranks;
@@ -161,6 +183,8 @@ function weightedPickWithRanks(ranks, weights) {
 
 module.exports = {
   SESSION_TTL_MS, SESSION_CAPACITY, QUOTA_TTL_MS, QUOTA_RETRY_MS, TRANSIENT_COOLDOWN_MS,
+  QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS,
+  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs,
   durationMs, retryDelay, affinityActive,
   modelGroup, quotaGroup, geminiWeeklyPressure, geminiFiveHourResetTime, quotaRank, compareQuotaRanks, weightedPickWithRanks
 };

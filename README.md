@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.5 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.6 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.5
+### 当前源码版本：1.7.1-bailey.6
+
+各模型组的有效 5h、周额度任一剩余不高于 **5%** 时，停止向该账号派发对应组的新请求；粘连、排队和兜底选择均遵守这条线，其他组独立使用。全部账号进入保留区时返回 `quota_reserve_reached`（429），额度重置或新读数恢复后重新参与调度。活跃账号每分钟刷新摘要，所选组剩余不高于 20% 时每 15 秒刷新；读数未知时触发有节制的刷新，不伪造剩余额度。在途请求和上游读数延迟可能使最终余额低于 5%，这不是可精确锁定的余额。
 
 Responses 工具结果中的图片等附件只通过原生媒体传递，不再将 Base64 编码重复放入结果正文。Cloud Code 输入超限明确返回 `context_length_exceeded`；已经开启的 Responses 流通过标准 `response.failed.response.error` 返回原因，保留响应 ID、事件序号和已输出内容。
 
@@ -439,11 +441,11 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
   --prompt "分析这段视频并回答我的问题"
 ```
 
-网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性。软黏性映射会在本地保存固定 5 小时（可通过 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整），网关重启后仍会优先恢复当前窗口内的账号；窗口内的后续请求只检查本地可用状态，不重复读取或排序额度。窗口到期、账号额度耗尽、网络异常、凭据失效、访问受限或 Google 要求安全核验时会重新按请求所属模型组的周额度压力、5小时重置时间和账号权重加权选择，避免单一高压力账号独占全部新流量。认证和账号风控会把账号标记为异常并停止继续尝试；重新授权导致凭据变化时自动恢复，也可以在看板中点击“重新检测”，以不生成内容、不消耗模型 Token 的轻量鉴权确认核验结果。网络瞬态故障仍由直连传输重试，失败后只进入短暂冷却。
+网关分别管理客户端身份、独立对话和账号黏性：同一对话及其工具调用优先使用同一账号；子 Agent 使用独立会话状态，但通过父会话继承账号黏性。软黏性映射会在本地保存固定 5 小时（可通过 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整），网关重启后仍会优先恢复当前窗口内的账号；窗口内的后续请求检查本地可用状态和缓存额度保留线，不重新进行额度排序。窗口到期、账号额度耗尽、网络异常、凭据失效、访问受限或 Google 要求安全核验时会重新按请求所属模型组的周额度压力、5小时重置时间和账号权重加权选择，避免单一高压力账号独占全部新流量。认证和账号风控会把账号标记为异常并停止继续尝试；重新授权导致凭据变化时自动恢复，也可以在看板中点击“重新检测”，以不生成内容、不消耗模型 Token 的轻量鉴权确认核验结果。网络瞬态故障仍由直连传输重试，失败后只进入短暂冷却。
 
-首次选择账号或故障转移时，按请求的模型匹配 Gemini、Claude/GPT 或 Argon 额度组，使用该组的周额度计算 `Pressure = remainingFraction / 距周重置小时数`，以 `floor(log2(Pressure))` 分档。最高档、相邻档和其余可用档分别获得4、2、1倍权重；同档中该组5小时额度最早重置的账号再获得2倍权重，最后叠加账号权重。当前组任一有效窗口耗尽时降为兜底，已过重置时间的窗口不继续视为耗尽。各组轮询状态独立；缺失的组额度不借用其他组。亲和账号有空位时直接续接，满载时按同组权重改选其他空闲账号。
+首次选择账号或故障转移时，按请求的模型匹配 Gemini、Claude/GPT 或 Argon 额度组，使用该组的周额度计算 `Pressure = remainingFraction / 距周重置小时数`，以 `floor(log2(Pressure))` 分档。最高档、相邻档和其余可用档分别获得4、2、1倍权重；同档中该组5小时额度最早重置的账号再获得2倍权重，最后叠加账号权重。当前组任一有效窗口剩余不高于5%时硬排除，已过重置时间的窗口不继续视为低额度。各组轮询状态独立；缺失的组额度不借用其他组。亲和账号有空位时直接续接，满载时按同组权重改选其他空闲账号。
 
-选号只读取内存中的真实上游额度快照，不等待联网查询，也不根据 Token 用量推算余额。有效的当前模型组周压力档位优先，未知压力账号随后，已知周额度耗尽账号保留为最终兜底。快照过期、周重置已到或字段缺失时按未知处理，并异步补刷新；同档未知的 5 小时重置时间仍退回加权轮询。后台保留约 30 分钟一次的完整刷新；缺失/失效快照及实际额度失败只补查相关账号的额度汇总，普通补刷新每账号至少间隔 5 分钟，重复请求合并，最多同时刷新两个账号。新增账号、凭据变化及重新检测成功会触发该账号的完整刷新。额度汇总单独记录观测时间，套餐或模型目录查询成功不会把旧额度标记为最新。
+选号只读取内存中的真实上游额度快照，不等待联网查询，也不根据 Token 用量推算余额。有效的当前模型组周压力档位优先，未知压力账号随后，已知任一有效窗口剩余不高于5%的账号不再作为兜底。快照过期、重置已到或字段缺失时补刷新；已知低额度在其窗口重置或更新读数前继续保护；同档未知的 5 小时重置时间仍退回加权轮询。后台保留约 30 分钟一次的完整刷新；缺失/失效快照及实际额度失败只补查相关账号的额度汇总，普通补刷新每账号至少间隔5分钟；活跃账号最短间隔1分钟，当前组剩余不高于20%时缩短为15秒。重复请求合并，最多同时刷新两个账号。新增账号、凭据变化及重新检测成功会触发该账号的完整刷新。额度汇总单独记录观测时间，套餐或模型目录查询成功不会把旧额度标记为最新。
 
 支持客户端显式发送 `x-client-id`/`x-agent-id`、`x-session-id`/`x-conversation-id`、`x-parent-session-id` 和 `x-routing-affinity-id`；未提供时继续兼容现有 Claude、Codex、OpenAI 和 Anthropic 客户端字段。所有原始标识仅用于本地路由，提交上游的会话值是不可逆哈希，不会写入模型提示词。日志中的 request、client、session 和 affinity 短标识可用于区分并发链路。
 
@@ -460,7 +462,7 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
 - **Anthropic 协议**：`input_tokens` 自动扣除缓存读取量（`prompt - cache_read`），避免客户端双重计费；缓存读取量通过 `cache_read_input_tokens` 上报。
 - **OpenAI 协议（Chat Completions）**：`prompt_tokens` 保持包含缓存的前缀总数，并通过标准 `prompt_tokens_details.cached_tokens` 上报缓存读取量，通过 `completion_tokens_details.reasoning_tokens` 上报思考/推理 Token，完美兼容 DeepSeek Harness (DSH)、Cursor、OpenRouter 等下游客户端的缓存命中与统计展示。
 
-输入 `usage` 查看实时明细，输入 `status` 刷新展示。用量每5分钟保存一次，24小时图表每小时更新，历史总量展示每24小时更新。额度快照约每30分钟刷新；上游实时返回始终是最终依据。
+输入 `usage` 查看实时明细，输入 `status` 刷新展示。用量每5分钟保存一次，24小时图表每小时更新，历史总量展示每24小时更新。完整额度快照约每30分钟刷新，活跃账号会按上述1分钟/15秒间隔补查摘要；上游实时返回始终是最终依据。
 
 另开终端可通过下面的命令输出本地用量摘要：
 
@@ -678,7 +680,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.5
+### Current source version: 1.7.1-bailey.6
+
+An account stops receiving new work for a model group when any valid five-hour or weekly reading is at or below **5%** remaining. Affinity, queued dispatch and fallback cannot bypass the reserve; other groups remain independent. A fully protected pool returns `quota_reserve_reached` (429), and becomes eligible again after the relevant reset or an improved reading. Active-account summaries refresh every minute, or every 15 seconds at 20% or less remaining in the selected group. Unknown readings trigger throttled refreshes rather than fabricated balances. In-flight requests and delayed upstream telemetry prevent an exact final-balance guarantee.
 
 Responses tool-output attachments travel only as native media, without duplicating Base64 in the accompanying text. Cloud Code input overflows report `context_length_exceeded`; open Responses streams return the reason in `response.failed.response.error`, retaining the response ID, event sequence and delivered partial output.
 
@@ -963,9 +967,9 @@ curl http://127.0.0.1:9897/v1/files \
 
 Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Healthy continuations use an O(1) local affinity lookup without recalculating quota ranks; expiry or failure triggers weighted selection using the requested group’s weekly pressure, five-hour reset time, and configured account weights without starving lower-ranked healthy accounts. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
 
-New bindings and failover match the requested Gemini, Claude/GPT or Argon quota group. Weekly pressure is `floor(log2(remainingFraction / hoursUntilWeeklyReset))`, with a one-minute minimum denominator. The highest, adjacent and other usable bands receive 4x, 2x and 1x weights; the earliest five-hour reset in the same group/band receives another 2x multiplier. Rotation state is independent per group. An exhausted active window is an advisory fallback; passed reset windows become unknown. Missing groups never borrow unrelated budgets. Healthy affinity accounts keep their slot when available; busy accounts may switch before dispatch. Robin/Windows Argon uses its native GXU group and unfinished tool tasks retain their owner.
+New bindings and failover match the requested Gemini, Claude/GPT or Argon quota group. Weekly pressure is `floor(log2(remainingFraction / hoursUntilWeeklyReset))`, with a one-minute minimum denominator. The highest, adjacent and other usable bands receive 4x, 2x and 1x weights; the earliest five-hour reset in the same group/band receives another 2x multiplier. Rotation state is independent per group. An active window at or below 5% is excluded even from fallback; passed reset windows become unknown. Missing groups never borrow unrelated budgets. Healthy affinity accounts keep their slot when available; busy accounts may switch before dispatch. Robin/Windows Argon uses its native GXU group and unfinished tool tasks retain their owner.
 
-Scheduling reads fresh in-memory quota summaries without waiting for network queries or estimating quota from Token counts. Unknown/expired weekly data follows known positive pressure, and exhausted snapshots remain advisory fallbacks. Full background refreshes remain approximately half-hourly. Missing/expired data and live quota failures trigger asynchronous per-account summary refreshes, coalesced and throttled to once per five minutes with two accounts refreshed concurrently; account additions, changed credentials and successful authentication rechecks trigger full account refreshes. Summary freshness is tracked independently, so successful plan/catalog queries cannot renew stale quota data.
+Scheduling reads fresh in-memory quota summaries without waiting for network queries or estimating quota from Token counts. Unknown/expired weekly data follows known positive pressure, and known reserves are excluded rather than used as fallbacks. Full background refreshes remain approximately half-hourly. Missing/expired data and live quota failures trigger asynchronous per-account summary refreshes, coalesced with two accounts refreshed concurrently. Ordinary retries have a five-minute minimum; active accounts use one minute, shortened to 15 seconds when the selected group has at most 20% left. Known low readings remain protected through cache expiry until their own reset or a newer reading; account additions, changed credentials and successful authentication rechecks trigger full account refreshes. Summary freshness is tracked independently, so successful plan/catalog queries cannot renew stale quota data.
 
 Generated-image responses include a readable text receipt, Markdown, an accessible URL, the absolute path on the gateway host, and structured `artifacts` metadata for each protocol. Clients that ignore extension fields can still obtain the delivery address from the assistant text. File content supports both `GET` and `HEAD`.
 
