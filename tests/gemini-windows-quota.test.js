@@ -228,7 +228,8 @@ test('depleted Windows quota does not migrate a tool task already owned by that 
     assert.equal(opts.requireExistingTurn, true); return { text: 'done', toolCalls: [], usageKnown: false };
   };
   pool.entries.get('two').provider.send = async () => assert.fail('No tool replay');
-  assert.equal((await pool.send({ messages: [], tools: [] }, 'gemini-4-argon', options)).accountId, 'one');
+  await assert.rejects(pool.send({ messages: [], tools: [] }, 'gemini-4-argon', options), { code: 'quota_reserve_reached' });
+  assert.equal(pool.activeTasks.get(JSON.stringify(['client', 'tool-task'])), 'one');
 });
 
 test('Windows account reauthorization clears old quota and starts a nonblocking refresh after saving', async t => {

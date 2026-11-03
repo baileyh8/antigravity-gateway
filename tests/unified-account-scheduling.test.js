@@ -109,16 +109,16 @@ test('all three channels produce the same complete weighted sequence, not just t
   }
 });
 
-test('all channels preserve sticky bindings without quota reads, weight spending, or sliding renewal', t => {
+test('all channels preserve safe affinity without weight spending or sliding renewal while checking reserves', t => {
   for (const channel of CHANNELS) {
-    const state = fixture(t, channel, [{ remaining: 0 }, { remaining: 1, weeklyHours: 1 }]);
+    const state = fixture(t, channel, [{ remaining: .5 }, { remaining: 1, weeklyHours: 1 }]);
     state.bind('family', 'account-0');
     const beforeReads = state.reads(), beforeWeights = [...state.pool.weights];
     state.advance(1000);
     assert.equal(state.pick('family'), 'account-0', channel);
     state.bind('family', 'account-0');
     assert.equal(state.pool.sessions.get('family').at, NOW);
-    assert.equal(state.reads(), beforeReads);
+    assert.ok(state.reads() > beforeReads, 'cached quota is checked even for affinity');
     assert.deepEqual([...state.pool.weights], beforeWeights);
     state.advance(SESSION_TTL_MS - 1000);
     assert.equal(state.pick('family'), 'account-0', 'same boundary semantics');
@@ -130,12 +130,12 @@ test('all channels preserve sticky bindings without quota reads, weight spending
   }
 });
 
-test('all channels skip depleted budgets with alternatives and retain the final fallback', t => {
+test('all channels skip depleted budgets and never spend their final reserve as a fallback', t => {
   for (const channel of CHANNELS) {
     const state = fixture(t, channel, [{ fiveRemaining: 0 }, { remaining: 0 }, {}]);
     for (let i = 0; i < 10; i++) assert.equal(state.pick(), 'account-2', channel);
-    assert.equal(state.pick('', new Set(['account-1', 'account-2'])), 'account-0');
-    assert.equal(state.pick('', new Set(['account-0', 'account-2'])), 'account-1');
+    assert.equal(state.pick('', new Set(['account-1', 'account-2'])), undefined);
+    assert.equal(state.pick('', new Set(['account-0', 'account-2'])), undefined);
     assert.equal(state.pick('', new Set(['account-0', 'account-1', 'account-2'])), undefined);
     assert.ok(state.pool.entries.size === 3, 'advisory exhaustion never removes credentials');
   }

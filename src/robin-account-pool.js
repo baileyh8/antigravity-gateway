@@ -12,7 +12,14 @@ const { GeminiWindowsProvider } = require('./gemini-windows-provider');
 
 const { SESSION_TTL_MS: ROBIN_SESSION_TTL_MS, SESSION_CAPACITY,
   QUOTA_TTL_MS: ROBIN_QUOTA_TTL_MS, QUOTA_RETRY_MS: ROBIN_QUOTA_RETRY_MS,
-  TRANSIENT_COOLDOWN_MS, retryDelay, affinityActive, quotaRank, compareQuotaRanks, weightedPickWithRanks } = require('./account-scheduling');
+  TRANSIENT_COOLDOWN_MS, retryDelay, affinityActive, quotaRank, compareQuotaRanks, weightedPickWithRanks,
+  quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs, LOW_QUOTA_REFRESH_MS } = require('./account-scheduling');
+
+function quotaReserveError() {
+  return new RobinProviderError('对应模型组已进入 5% 额度保留区，请等待额度恢复后重试。', {
+    code: 'quota_reserve_reached', status: 429
+  });
+}
 
 function quotaKey(account) {
   return account.authMethod === 'gemini-windows-session' ? 'geminiWindowsQuota' : 'robinQuota';
@@ -149,6 +156,7 @@ class RobinAccountPool {
     return [...this.entries.values()].filter((entry) => {
       if (!entry.account.enabled || excluded.has(entry.account.id) || entry.unhealthyUntil > now) return false;
       if (!model) return true;
+      if (this.quotaProtected(entry, model)) return false;
       return entry.models.has(model) || (!entry.catalogKnown && (entry.account.capabilities || []).includes(model));
     });
   }
@@ -180,10 +188,22 @@ class RobinAccountPool {
     }).sort(compareQuotaRanks);
   }
 
-  refreshAccountQuota(entry) {
+  refreshAccountQuota(entry, options = {}) {
     // Never await quota I/O on the request path. Refreshes coalesce and retain
     // the same per-account five-minute throttle as Cloud Code.
-    void this.refreshQuota(entry.account.id, { refreshFresh: true }).catch(() => {});
+    void this.refreshQuota(entry.account.id, { refreshFresh: true, ...options }).catch(() => {});
+  }
+
+  quotaProtected(entry, model) {
+    const blocked = quotaReserveReached(this.quotaSnapshot(entry.account), this.now(), model, 'robin');
+    if (blocked) this.refreshAccountQuota(entry, { minIntervalMs: LOW_QUOTA_REFRESH_MS });
+    return blocked;
+  }
+
+  refreshSelectedAccount(entry, model) {
+    if (entry) this.refreshAccountQuota(entry, { minIntervalMs:
+      quotaRefreshInterval(this.quotaSnapshot(entry.account), this.now(), model, 'robin') });
+    return entry;
   }
 
   selectAccount(model, routingKey, excluded = new Set(), { preferredAccountId = '', allowSticky = true } = {}) {
@@ -192,13 +212,13 @@ class RobinAccountPool {
     if (!candidates.length) return null;
     if (allowSticky) {
       const preferred = preferredAccountId && candidates.find((entry) => entry.account.id === preferredAccountId);
-      if (preferred) return preferred;
+      if (preferred) return this.refreshSelectedAccount(preferred, model);
       const bound = routingKey ? this.sessions.get(routingKey) : null;
       const sticky = bound && candidates.find((entry) => entry.account.id === bound.accountId);
-      if (sticky && affinityActive(bound, this.now())) return sticky;
+      if (sticky && affinityActive(bound, this.now())) return this.refreshSelectedAccount(sticky, model);
       if (bound) this.deleteSession(routingKey);
     }
-    return weightedPickWithRanks(this.quotaRanks(model, candidates), this.weights);
+    return this.refreshSelectedAccount(weightedPickWithRanks(this.quotaRanks(model, candidates), this.weights), model);
   }
 
   async send(normalized, model, options = {}) {
@@ -243,13 +263,18 @@ class RobinAccountPool {
     let lastError = null, attempts = 0;
     while (true) {
       options.signal?.throwIfAborted();
-      const lease = await this.admission.acquireAccount(() => taskAccount
-        ? this.admission.available('robin', taskAccount.account.id) ? taskAccount : null
-        : this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 }),
+      const lease = await this.admission.acquireAccount(() => {
+        if (!taskAccount) return this.selectAccount(model, routingKey, excluded, { allowSticky: attempts === 0 });
+        // Keep native tool ownership, but do not dispatch another turn while
+        // its owner's quota is reserved. The task can resume after reset.
+        if (this.quotaProtected(taskAccount, model)) throw quotaReserveError();
+        return this.admission.available('robin', taskAccount.account.id) ? this.refreshSelectedAccount(taskAccount, model) : null;
+      },
       { signal: options.signal, provider: 'robin', hasCandidates: () => Boolean(taskAccount) || this.eligible(model, excluded).length > 0 });
       const entry = lease?.entry;
       if (!entry) {
         if (lastError) throw lastError;
+        if ([...this.entries.values()].some(candidate => candidate.account.enabled && this.quotaProtected(candidate, model))) throw quotaReserveError();
         throw new RobinProviderError(`没有可用于模型 ${model} 的 Gemini 账号。`, { code: 'robin_model_unavailable', status: 503 });
       }
       excluded.add(entry.account.id);
@@ -429,7 +454,7 @@ class RobinAccountPool {
     )));
   }
 
-  async refreshQuota(id, { signal, refreshFresh = false } = {}) {
+  async refreshQuota(id, { signal, refreshFresh = false, minIntervalMs = ROBIN_QUOTA_RETRY_MS } = {}) {
     if (this.quotaController.signal.aborted) return null;
     if (this.quotaRefreshes.has(id)) return this.quotaRefreshes.get(id);
     this.reload();
@@ -437,7 +462,7 @@ class RobinAccountPool {
     if (!entry?.account.enabled || entry.unhealthyUntil > this.now() || !entry.provider.getQuota) return null;
     const snapshot = this.quotaSnapshot(entry.account);
     if (snapshot && !snapshot.stale && !refreshFresh) return snapshot;
-    if (this.now() - (this.quotaAttempts.get(id) ?? -Infinity) < ROBIN_QUOTA_RETRY_MS) return snapshot;
+    if (this.now() - (this.quotaAttempts.get(id) ?? -Infinity) < boundedQuotaRefreshMs(minIntervalMs)) return snapshot;
     this.quotaAttempts.set(id, this.now());
     const controllerSignal = this.quotaController.signal;
     const expectedAuthorization = entryAuthorizationKey(entry);

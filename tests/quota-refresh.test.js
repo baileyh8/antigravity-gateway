@@ -56,6 +56,24 @@ test('targeted quota refresh fetches only the summary, shares concurrent jobs, a
   assert.equal(requests.length, 2);
 });
 
+test('active-account refreshes allow one-minute intervals and clamp low-quota polling to 15 seconds', async t => {
+  const { manager, requests, advance } = fixture(t);
+  await manager.refreshAccount('0', { minIntervalMs: 60000 });
+  advance(59999);
+  await manager.refreshAccount('0', { minIntervalMs: 60000 });
+  assert.equal(requests.length, 1);
+  advance(1);
+  await manager.refreshAccount('0', { minIntervalMs: 60000 });
+  assert.equal(requests.length, 2);
+  advance(14999);
+  await manager.refreshAccount('0', { minIntervalMs: 1 });
+  assert.equal(requests.length, 2);
+  advance(1);
+  await manager.refreshAccount('0', { minIntervalMs: 1 });
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every(request => request.url.endsWith(':retrieveUserQuotaSummary')));
+});
+
 test('background full refresh fetches plan, catalog and summary and preserves legacy scheduling snapshots', async (t) => {
   const { manager, requests } = fixture(t);
   await manager.refresh();

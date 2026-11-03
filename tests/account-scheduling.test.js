@@ -110,16 +110,16 @@ test('missing Gemini weekly data falls back to five-hour resets and never uses 3
   assert.equal(pool.orderedCandidates('gemini-test', '')[0].account.id, accounts[1].id);
 });
 
-test('unknown pressure and weekly exhaustion remain advisory fallback lanes', async (t) => {
+test('unknown pressure remains advisory while known weekly reserves are excluded', async (t) => {
   const { pool, accounts, snapshots } = fixture(t, [
     { remaining: 0, weeklyHours: 1, fiveHours: 0.1 },
     { groups: [] },
     { remaining: 0.5, weeklyHours: 24, fiveHours: 4 }
   ]);
-  assert.deepEqual(pool.orderedCandidates('gemini-test', '').map((entry) => entry.account.id), [accounts[2].id, accounts[1].id, accounts[0].id]);
+  assert.deepEqual(pool.orderedCandidates('gemini-test', '').map((entry) => entry.account.id), [accounts[2].id, accounts[1].id]);
   pool.entries.get(accounts[2].id).account.enabled = false;
   pool.entries.get(accounts[1].id).account.enabled = false;
-  assert.equal((await pool.send({}, 'gemini-test')).accountId, accounts[0].id);
+  await assert.rejects(pool.send({}, 'gemini-test'), { code: 'quota_reserve_reached', status: 429 });
   pool.entries.get(accounts[2].id).account.enabled = true;
   snapshots.get(accounts[2].id).models = { 'gemini-test': { available: false } };
   assert.ok(pool.quotaRanks('gemini-test', pool.eligible('gemini-test')).every(rank => rank.depleted));
@@ -148,7 +148,7 @@ test('configured weights apply only to accounts tied in both quota priorities', 
   assert.deepEqual(counts, [20, 40, 60]);
 });
 
-test('successful sticky, child, tool and preferred image continuations skip pressure and rotation', async (t) => {
+test('sticky, child, tool and preferred image continuations check reserves without reranking', async (t) => {
   const { pool, accounts, reads, refreshes } = fixture(t, [{ remaining: 0.5, weeklyHours: 168 }, { remaining: 0.9, weeklyHours: 1 }]);
   pool.sessions.set('family', { accountId: accounts[0].id, at: NOW });
   const before = [...pool.weights];
@@ -156,8 +156,8 @@ test('successful sticky, child, tool and preferred image continuations skip pres
     assert.equal((await pool.send({}, 'gemini-test', { routingKey: 'family', sessionId })).accountId, accounts[0].id);
   }
   assert.equal((await pool.generateImage({}, { routingKey: 'family', accountId: accounts[0].id, bindRouting: false })).accountId, accounts[0].id);
-  assert.equal(reads(), 0);
-  assert.equal(refreshes.length, 0);
+  assert.ok(reads() > 0, 'affinity checks cached quota');
+  assert.equal(refreshes.length, 1, 'summary refresh is locally throttled across continuations');
   assert.deepEqual([...pool.weights], before);
 });
 
