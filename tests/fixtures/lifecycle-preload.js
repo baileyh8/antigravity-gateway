@@ -16,6 +16,10 @@ AccountPool.prototype.reload = function (...args) {
 };
 globalThis.fetch = async () => { throw new Error('生命周期测试禁止访问外部上游'); };
 QuotaManager.prototype.start = () => {};
+// Request-driven quota refreshes are independent of the background timer.
+// This fixture owns only the blocked inference transaction, never real auth
+// or quota I/O, including during graceful shutdown.
+QuotaManager.prototype.refreshAccount = async () => null;
 RobinAccountPool.prototype.start = () => {};
 LocalAccountImporter.prototype.importIfNew = async () => ({ status: 'none' });
 DirectAntigravityProvider.prototype.isConfigured = () => true;
