@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.9 - 2026-11-04
+
+- End admitted Responses streams with a standard `response.failed` carrying `request_timeout` on the overall request deadline, retaining response identity, event sequence and delivered partial output. Empty and buffered tool streams receive the same explicit terminal instead of an ambiguous EOF.
+- Record effective failure status and error code after streaming headers have been sent; a timed-out SSE is classified as 504/request_timeout rather than a successful HTTP 200, and subsequent abort handling preserves that cause.
+- Make Responses terminals final so late deltas, abort errors or provider completions cannot append a second result. Preserve the existing 300-second deadline, account routing, quota reserves and capacity limits.
+
 ## 1.7.1-bailey.8 - 2026-11-04
 
 - Reserve 10% of each valid five-hour quota window and 5% of weekly quota. Both Cloud Code and Robin/Windows guards cover sticky, queued, image, local fallback and unfinished native-task dispatch; past reset windows no longer block. Unknown window labels retain the legacy 5% floor.

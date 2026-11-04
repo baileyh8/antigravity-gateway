@@ -1372,6 +1372,7 @@ function createResponsesTextEmitter(res, model, responseId) {
   const createdAt = Math.floor(Date.now() / 1000);
   let sequence = 0;
   let started = false;
+  let terminated = false;
   const states = new Map();
   const emit = (event) => sendSse(res, null, { ...event, sequence_number: sequence++ });
   const start = () => {
@@ -1383,6 +1384,7 @@ function createResponsesTextEmitter(res, model, responseId) {
     } });
   };
   const emitDelta = (kind, value) => {
+    if (terminated) return;
     const text = String(value || '');
     if (!text) return;
     start();
@@ -1404,6 +1406,8 @@ function createResponsesTextEmitter(res, model, responseId) {
       item_id: state.id, output_index: state.index, ...(kind === 'reasoning' ? { summary_index: 0 } : { content_index: 0 }), delta: text });
   };
   return { onDelta: value => { emitDelta('message', value); return streamReady(res); }, onThinkingDelta: value => { emitDelta('reasoning', value); return streamReady(res); }, fail(error) {
+    if (terminated) return;
+    terminated = true;
     start();
     const output = [...states].map(([kind, state]) => kind === 'reasoning'
       ? { id: state.id, type: 'reasoning', status: 'incomplete', summary: [{ type: 'summary_text', text: state.text }] }
@@ -1416,6 +1420,7 @@ function createResponsesTextEmitter(res, model, responseId) {
     } });
     endStream(res);
   }, finish(body) {
+    if (terminated) return;
     start();
     body.id = responseId;
     body.created_at = createdAt;
@@ -1442,6 +1447,7 @@ function createResponsesTextEmitter(res, model, responseId) {
       && !(item === reasoning && states.has('reasoning')));
     body.output = [...completed, ...remaining];
     remaining.forEach((item, index) => emitResponsesItem(emit, item, completed.length + index));
+    terminated = true;
     emit({ type: 'response.completed', response: body });
     writeStream(res, 'data: [DONE]\n\n');
     endStream(res);
@@ -1777,10 +1783,22 @@ async function requestHandler(req, res) {
   let releaseUpload, releaseRoute, releaseFileRequest;
   const deadline = setTimeout(() => {
     timedOut = true;
-    controller.abort(new GatewayError('网关请求超时。', { code: 'request_timeout', status: 504 }));
+    const error = new GatewayError('网关请求超时。', { code: 'request_timeout', status: 504 });
+    const logContext = requestContext();
+    if (logContext) { logContext.status = error.status; logContext.code = error.code; }
+    controller.abort(error);
     // Uploads may be stalled; aborting upstream alone does not end readJson.
-    if (!res.headersSent) sendJson(res, 504, errorBody(controller.signal.reason, protocol));
-    else if (!res.destroyed) { try { sendSse(res, 'error', errorBody(controller.signal.reason, protocol)); endStream(res); } catch { res.destroy(); } }
+    if (!res.headersSent) sendJson(res, 504, errorBody(error, protocol));
+    else if (!res.destroyed) {
+      try {
+        if (route === '/v1/responses' && res[RESPONSES_FAILURE]) res[RESPONSES_FAILURE](error);
+        else {
+          if (protocol === 'anthropic') sendSse(res, 'error', errorBody(error, protocol));
+          else sendSse(res, null, { type: 'error', error: errorBody(error, protocol).error });
+          endStream(res);
+        }
+      } catch { res.destroy(); }
+    }
   }, REQUEST_TIMEOUT);
   deadline.unref();
   res.on('finish', () => { if (timedOut) req.destroy(); });
@@ -1869,7 +1887,7 @@ async function requestHandler(req, res) {
   } catch (rawError) {
     const error = mapAgyError(rawError);
     const logContext = requestContext();
-    if (logContext) logContext.code = error.code || '';
+    if (logContext && !timedOut) logContext.code = error.code || '';
     // Claude Code may cancel an in-flight classifier/tool request as soon as a
     // newer branch wins. That is normal client control flow, not a gateway
     // failure, and the socket is already gone so no error body can be sent.
@@ -1879,6 +1897,7 @@ async function requestHandler(req, res) {
       }
       return;
     }
+    if (logContext) logContext.status = error.status || 500;
     const diagnostic = process.env.ANTIGRAVITY_GATEWAY_DEBUG === '1' && error.details ? ` (${error.details})` : '';
     gatewayError(`[Antigravity Gateway Error] ${error.message}${diagnostic}`);
     if (!res.headersSent) {
@@ -1929,7 +1948,8 @@ function createServer({ directoryGuard = null } = {}) {
     });
     if (logContext) {
       res.once('finish', () => {
-        logContext.status = res.statusCode;
+        // SSE headers are already HTTP 200 when a later upstream failure occurs.
+        logContext.status = logContext.status || res.statusCode;
         logContext.latencyMs = Date.now() - logContext.at;
         USAGE_STORE.recordRequestMetrics(logContext);
         KEY_STORE.recordLatency(logContext);

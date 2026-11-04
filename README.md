@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.8 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.9 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.8
+### 当前源码版本：1.7.1-bailey.9
+
+请求总超时后，Responses 流明确返回 `response.failed` / `request_timeout`，保留响应 ID、事件序号和已输出内容；日志按有效失败状态 504 记录，SSE 已发出的 HTTP 200 响应头不变。迟到的上游回调不能再补发成功结束。总超时仍为默认 300 秒。
 
 新会话与换号优先使用对应组剩余额度较多的账号，两窗口一高一低时先照顾较紧的一项；**5h保留10%，周保留5%**。详细比较方式见下文账号调度说明。
 
@@ -684,7 +686,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.8
+### Current source version: 1.7.1-bailey.9
+
+On the overall request deadline, Responses streams end with `response.failed` / `request_timeout`, preserving response IDs, event sequence and partial output. Logs record the effective failure status 504 even when SSE headers were already sent as HTTP 200. Late provider callbacks cannot append a successful completion. The default overall deadline remains 300 seconds.
 
 New sessions and rebalancing prefer larger remaining quota in the requested group, comparing the tighter window first. **Reserve 10% of five-hour quota and 5% of weekly quota.**
 
