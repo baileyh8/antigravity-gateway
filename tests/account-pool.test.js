@@ -218,6 +218,7 @@ test('model capability filtering leaves existing ranking rules unchanged among s
         displayName: 'Claude and GPT models',
         buckets: [{
           window: '5h',
+          remainingFraction: id === soon.id ? .9 : id === late.id ? .7 : 1,
           resetTime: new Date(now + (id === soon.id ? 60 : id === late.id ? 240 : 10) * 60_000).toISOString()
         }]
       }]
@@ -630,7 +631,7 @@ test('quota snapshots prioritize healthy accounts but never hard-block the last 
   assert.match(fallback.text, /@example\.com$/);
 });
 
-test('account selection uses the requested family five-hour reset', (t) => {
+test('account selection uses the requested family remaining quota', (t) => {
   const store = tempStore(t);
   const soon = store.save(account('soon@example.com'));
   const middle = store.save(account('middle@example.com'));
@@ -650,9 +651,9 @@ test('account selection uses the requested family five-hour reset', (t) => {
     get: (id) => ({
       available: true,
       groups: [{
-        id: 'gemini', displayName: 'Gemini Models', buckets: [{ window: '5h', resetTime: new Date(resets[id]).toISOString() }]
+        id: 'gemini', displayName: 'Gemini Models', buckets: [{ window: '5h', remainingFraction: id === soon.id ? .9 : .6, resetTime: new Date(resets[id]).toISOString() }]
       }, {
-        id: '3p', displayName: 'Claude and GPT models', buckets: [{ window: '5h', resetTime: new Date(now + (id === middle.id ? 30 : 240) * 60_000).toISOString() }]
+        id: '3p', displayName: 'Claude and GPT models', buckets: [{ window: '5h', remainingFraction: id === middle.id ? .9 : .6, resetTime: new Date(now + (id === middle.id ? 30 : 240) * 60_000).toISOString() }]
       }]
     })
   };
@@ -666,7 +667,7 @@ test('account selection uses the requested family five-hour reset', (t) => {
   assert.equal(pool.orderedCandidates('gemini-3.8-flash-high', 'sticky-session')[0].account.id, late.id);
 });
 
-test('account failover chooses the remaining account whose five-hour quota resets first', async (t) => {
+test('account failover chooses the remaining account with more five-hour quota', async (t) => {
   const store = tempStore(t);
   const current = store.save(account('current@example.com'));
   const soon = store.save(account('soon@example.com'));
@@ -695,6 +696,7 @@ test('account failover chooses the remaining account whose five-hour quota reset
       groups: [{
         id: 'gemini', displayName: 'Gemini Models', buckets: [{
           window: '5h',
+          remainingFraction: id === soon.id ? .9 : .6,
           resetTime: new Date(now + (id === soon.id ? 60 : id === late.id ? 240 : 300) * 60_000).toISOString()
         }]
       }]

@@ -16,7 +16,7 @@ const { normalizeAffinity, affinityBinding, withinAffinity, reserveAffinity, del
 const ACCOUNT_HEALTH_STATES = new Set(['verification_required', 'authentication_error', 'access_denied']);
 
 function quotaReserveError() {
-  return new DirectProviderError('对应模型组已进入 5% 额度保留区，请等待额度恢复后重试。', {
+  return new DirectProviderError('对应模型组已进入额度保留区（5h保留10%，周保留5%），请等待额度恢复后重试。', {
     code: 'quota_reserve_reached', status: 429
   });
 }
@@ -590,7 +590,7 @@ class AccountPool {
       const depleted = modelQuota?.models?.[model]?.available === false
         || !modelQuota?.groups?.length && modelQuota?.available === false;
       const rank = quotaRank(entry, snapshot, now, depleted, model, 'cloudcode');
-      if (!snapshot || rank.lane === 1) this.refreshAccountQuota(entry);
+      if (!snapshot || rank.quotaUnknown) this.refreshAccountQuota(entry);
       return rank;
     }).sort(compareQuotaRanks);
   }

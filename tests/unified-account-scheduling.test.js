@@ -93,9 +93,9 @@ function fixture(t, channel, definitions, send) {
 test('all three channels produce the same complete weighted sequence, not just the same first pick', t => {
   const cases = [
     { definitions: [{ remaining: 0.6, weeklyHours: 12, fiveHours: 1 },
-      { remaining: 0.8, weeklyHours: 20, fiveHours: 0.5 }, { remaining: 0.2, weeklyHours: 2, fiveHours: 4 }], counts: [20, 40, 80] },
+      { remaining: 0.8, weeklyHours: 20, fiveHours: 0.5 }, { remaining: 0.2, weeklyHours: 2, fiveHours: 4 }], counts: [0, 140, 0] },
     { definitions: [{ weight: 1 }, { weight: 2 }, { weight: 3 }], counts: [20, 40, 60], length: 120 },
-    { definitions: [{ fiveHours: 1 }, { fiveHours: 3 }, { fiveHours: 4 }], counts: [70, 35, 35] },
+    { definitions: [{ fiveHours: 1 }, { fiveHours: 3 }, { fiveHours: 4 }], counts: [47, 47, 46] },
     { definitions: [{ unknown: true }, { unknown: true }, { unknown: true }], counts: [40, 40, 40], length: 120 }
   ];
   for (const { definitions, counts, length = 140 } of cases) {
@@ -148,7 +148,7 @@ test('all channels re-read quota on failover and try each account at most once',
     state = fixture(t, channel, [{}, { remaining: 0.9, weeklyHours: 1 }, { remaining: 0.5, weeklyHours: 168 }], async id => {
       calls.push(id);
       if (id === 'account-0') {
-        state.setQuota('account-2', { remaining: 0.9, weeklyHours: 0.1 });
+        state.setQuota('account-2', { remaining: 1, fiveRemaining: .9, weeklyHours: 0.1 });
         throw Object.assign(new Error('quota exhausted'), { status: 429 });
       }
     });
@@ -218,11 +218,11 @@ test('all channels filter disabled, unsupported and unhealthy credentials before
   }
 });
 
-test('OAuth and Windows accounts in one pool receive the same quota-derived weights', t => {
+test('OAuth and Windows accounts with equal balances rotate equally regardless of reset times', t => {
   const state = fixture(t, 'mixed', [{ fiveHours: 1 }, { fiveHours: 1 }, { fiveHours: 4 }, { fiveHours: 4 }]);
   const counts = [0, 0, 0, 0];
   for (let i = 0; i < 120; i++) counts[Number(state.pick().split('-')[1])]++;
-  assert.deepEqual(counts, [40, 40, 20, 20]);
+  assert.deepEqual(counts, [30, 30, 30, 30]);
 });
 
 test('Gemini scheduling starts missing-quota refresh without waiting and throttles it for five minutes', async t => {

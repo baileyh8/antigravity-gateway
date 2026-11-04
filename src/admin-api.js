@@ -7,6 +7,7 @@ const { reverseLines } = require('./log-reader');
 const { zeroCounters } = require('./usage-store');
 const { maskEmail } = require('./account-format');
 const { QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS,
+  FIVE_HOUR_RESERVE_FRACTION,
   AFFINITY_MAX_TURNS, AFFINITY_LOW_QUOTA_TURNS, LOW_QUOTA_FRACTION, SESSION_TTL_MS } = require('./account-scheduling');
 
 const API_VERSION = 1;
@@ -161,6 +162,8 @@ function overview(deps) {
     transport: deps.transport,
     defaultModel: deps.defaultModel,
     quotaPolicy: { reservePercent: QUOTA_RESERVE_FRACTION * 100,
+      reservePercentByWindow: { '5h': FIVE_HOUR_RESERVE_FRACTION * 100, weekly: QUOTA_RESERVE_FRACTION * 100 },
+      selection: 'remaining_headroom',
       activeRefreshMs: ACTIVE_QUOTA_REFRESH_MS, lowQuotaRefreshMs: LOW_QUOTA_REFRESH_MS },
     affinityPolicy: { maxTurns: AFFINITY_MAX_TURNS, lowQuotaMaxTurns: AFFINITY_LOW_QUOTA_TURNS,
       lowQuotaPercent: LOW_QUOTA_FRACTION * 100, ttlSeconds: SESSION_TTL_MS / 1000 },

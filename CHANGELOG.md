@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.8 - 2026-11-04
+
+- Reserve 10% of each valid five-hour quota window and 5% of weekly quota. Both Cloud Code and Robin/Windows guards cover sticky, queued, image, local fallback and unfinished native-task dispatch; past reset windows no longer block. Unknown window labels retain the legacy 5% floor.
+- Prefer larger remaining usable quota for new sessions and rebalancing. Compare the tighter normalized headroom first, then the other window; complete readings precede partial and unknown data. Equal balances rotate by configured account weight regardless of reset time. Weekly-only Argon uses its actual weekly reading.
+- Preserve 20/five-turn affinity, task ownership, disabled-account exclusion and existing execution, queue and memory bounds. No new dependencies or network I/O on selection.
+- Management overview adds per-window reserve percentages and the `remaining_headroom` selection policy. The legacy `reservePercent` field remains the minimum fallback floor; use `reservePercentByWindow` for the effective 5h/weekly policy.
+
 ## 1.7.1-bailey.7 - 2026-11-03
 
 - Limit account affinity to 20 successful model requests, shortened to five when any valid quota window in the requested group has 20% or less remaining. Gemini, Claude/GPT and Argon retain independent bindings and counters; the fixed five-hour deadline and 5% reserve remain effective.
