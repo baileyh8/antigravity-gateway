@@ -114,6 +114,25 @@ test('queued dispatch rechecks the reserve before consuming an account slot', as
   assert.equal(pool.admission.waiters.length, 0);
 });
 
+test('five-hour 10% reserve blocks sticky, image and queued dispatch independently of weekly quota', async t => {
+  const { pool, accounts, snapshots, calls } = cloud(t, .8);
+  for (const value of snapshots.values()) value.groups[0].buckets.push(...group('gemini', .1, '5h').buckets);
+  pool.bindSession('family', accounts[0].id);
+  await assert.rejects(pool.send({}, 'gemini-test', { routingKey:'family' }), { code:'quota_reserve_reached' });
+  await assert.rejects(pool.generateImage({}, { routingKey:'family',accountId:accounts[0].id }), { code:'quota_reserve_reached' });
+  assert.equal(calls(),0);
+  assert.equal((await pool.send({},'claude-test',{routingKey:'family'})).accountId,accounts[0].id);
+  for (const value of snapshots.values()) value.groups[0].buckets[1].remainingFraction=.2;
+  pool.admission = new ExecutionSlots({ limit:1,accountLimit:1 });
+  const release=await pool.admission.acquire();
+  const before=calls();
+  const rejected=assert.rejects(pool.send({},'gemini-test'),{code:'quota_reserve_reached'});
+  await new Promise(resolve=>setImmediate(resolve));
+  for (const value of snapshots.values()) value.groups[0].buckets[1].remainingFraction=.1;
+  release();await rejected;
+  assert.equal(calls(),before);
+});
+
 test('queued local fallback also checks the reserve again after admission', async t => {
   const { pool } = cloud(t);
   pool.hasManagedAccounts = () => false;
@@ -132,14 +151,15 @@ test('queued local fallback also checks the reserve again after admission', asyn
 });
 
 for (const windows of [false, true]) {
-  test(`${windows ? 'Windows' : 'Robin OAuth'} respects reserve affinity and retains held task ownership`, async t => {
+  for (const window of ['weekly','5h']) {
+  test(`${windows ? 'Windows' : 'Robin OAuth'} respects ${window} reserve affinity and retains held task ownership`, async t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-robin-reserve-'));
     const store = new AccountStore({ configDir: directory, directoryName: 'robin-accounts' });
     const quotaKey = windows ? 'geminiWindowsQuota' : 'robinQuota';
     const accounts = ['a', 'b'].map(id => store.save({ id, subjectId: id, accessToken: 'synthetic',
       providerType: 'robin', accountType: 'gemini-app', ...(windows ? { authMethod: 'gemini-windows-session' } : {}),
       capabilities: ['gemini-4-argon'], providerMetadata: { [quotaKey]: { fetchedAt: new Date(NOW).toISOString(),
-        groups: [group('gemini-robin', id === 'a' ? .05 : .8)] } } }));
+        groups: [group('gemini-robin', id === 'a' ? window === '5h' ? .1 : .05 : .8, window)] } } }));
     let calls = 0;
     const pool = new RobinAccountPool({ store, now: () => NOW, providerFactory: () => ({
       send: async () => { calls++; return { text: 'OK', toolCalls: [], usage: {} }; }
@@ -154,4 +174,5 @@ for (const windows of [false, true]) {
     assert.equal(pool.activeTasks.get(requestKey), accounts[0].id);
     assert.equal(calls, 0);
   });
+  }
 }

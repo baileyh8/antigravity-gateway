@@ -17,7 +17,7 @@ const { SESSION_TTL_MS: ROBIN_SESSION_TTL_MS,
 const { normalizeAffinity, affinityBinding, withinAffinity, reserveAffinity, deleteAffinity, pruneAffinities } = require('./session-affinity');
 
 function quotaReserveError() {
-  return new RobinProviderError('对应模型组已进入 5% 额度保留区，请等待额度恢复后重试。', {
+  return new RobinProviderError('对应模型组已进入额度保留区（5h保留10%，周保留5%），请等待额度恢复后重试。', {
     code: 'quota_reserve_reached', status: 429
   });
 }
@@ -184,7 +184,7 @@ class RobinAccountPool {
       // are evaluated separately: a 5h reset must not renew the weekly budget.
       const current = Number.isFinite(fetchedAt) && now - fetchedAt < ROBIN_QUOTA_TTL_MS ? snapshot : null;
       const rank = quotaRank(entry, current, now, this.quotaDepleted(entry.account), model, 'robin');
-      if (!current || rank.lane === 1) this.refreshAccountQuota(entry);
+      if (!current || rank.quotaUnknown) this.refreshAccountQuota(entry);
       return rank;
     }).sort(compareQuotaRanks);
   }

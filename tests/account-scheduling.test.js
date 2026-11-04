@@ -66,29 +66,29 @@ test('Gemini weekly pressure uses fractional values, logarithmic bands, and a on
   assert.equal(geminiWeeklyPressure({ groups: [denied] }, NOW).kind, 'exhausted');
 });
 
-test('Gemini requests use Gemini weekly bands and resets', async (t) => {
+test('Gemini requests prefer larger Gemini balances independently of other quota groups', async (t) => {
   const { pool, accounts } = fixture(t, [
     { groups: [group('gemini', 0.6, 12, 1), group('3p', 0.9, 0.1, 0.1)] },
     { groups: [group('gemini', 0.8, 20, 0.5), group('3p', 0, 24, 0.1)] },
     { groups: [group('gemini', 0.2, 2, 4), group('3p', 0.1, 168, 4)] }
   ]);
   for (const model of ['gemini-test']) {
-    assert.deepEqual(pool.orderedCandidates(model, '').map((entry) => entry.account.id), [accounts[2].id, accounts[1].id, accounts[0].id]);
+    assert.deepEqual(pool.orderedCandidates(model, '').map((entry) => entry.account.id), [accounts[1].id, accounts[0].id, accounts[2].id]);
     pool.weights.clear();
     const counts = new Map(accounts.map((account) => [account.id, 0]));
     for (let index = 0; index < 14; index++) {
       const selected = await pool.send({}, model);
       counts.set(selected.accountId, counts.get(selected.accountId) + 1);
     }
-    assert.deepEqual(accounts.map((account) => counts.get(account.id)), [2, 4, 8]);
+    assert.deepEqual(accounts.map((account) => counts.get(account.id)), [0, 14, 0]);
   }
 });
 
-test('better weekly pressure and five-hour reset increase share without starving healthy accounts', async (t) => {
+test('higher remaining quota stays preferred until its balance or availability changes', async (t) => {
   const { pool, accounts } = fixture(t, [
     { remaining: 0.8, weeklyHours: 24, fiveHours: 1 },
-    { remaining: 0.8, weeklyHours: 48, fiveHours: 2 },
-    { remaining: 0.8, weeklyHours: 120, fiveHours: 4 }
+    { remaining: 0.6, weeklyHours: 48, fiveHours: 2 },
+    { remaining: 0.4, weeklyHours: 120, fiveHours: 4 }
   ]);
   const counts = new Map(accounts.map((account) => [account.id, 0]));
   for (let index = 0; index < 70; index++) {
@@ -96,16 +96,13 @@ test('better weekly pressure and five-hour reset increase share without starving
     counts.set(selected.accountId, counts.get(selected.accountId) + 1);
   }
   const values = accounts.map((account) => counts.get(account.id));
-  assert.ok(values[0] > values[1]);
-  assert.ok(values[1] > 0);
-  assert.ok(values[2] > 0);
-  assert.equal(values.reduce((sum, value) => sum + value, 0), 70);
+  assert.deepEqual(values, [70, 0, 0]);
 });
 
-test('missing Gemini weekly data falls back to five-hour resets and never uses 3p weekly data', (t) => {
+test('missing Gemini weekly data uses known five-hour balances and never borrows 3p data', (t) => {
   const { pool, accounts } = fixture(t, [
     { groups: [{ id: 'gemini', buckets: [group('gemini', 0.5, 24, 3).buckets[1]] }, group('3p', 0.9, 0.1, 0.1)] },
-    { groups: [{ id: 'gemini', buckets: [group('gemini', 0.5, 24, 1).buckets[1]] }, group('3p', 0, 24, 4)] }
+    { groups: [{ id: 'gemini', buckets: [{ ...group('gemini', 0.5, 24, 1).buckets[1], remainingFraction: .8 }] }, group('3p', 0, 24, 4)] }
   ]);
   assert.equal(pool.orderedCandidates('gemini-test', '')[0].account.id, accounts[1].id);
 });
@@ -125,7 +122,7 @@ test('unknown pressure remains advisory while known weekly reserves are excluded
   assert.ok(pool.quotaRanks('gemini-test', pool.eligible('gemini-test')).every(rank => rank.depleted));
 });
 
-test('same-band equal-reset accounts rotate fairly and candidate inspection does not alter weights', async (t) => {
+test('equal-quota accounts rotate fairly and candidate inspection does not alter weights', async (t) => {
   const { pool, accounts } = fixture(t, Array.from({ length: 10 }, () => ({})));
   const counts = new Map(accounts.map((account) => [account.id, 0]));
   for (let index = 0; index < 300; index++) {
@@ -161,14 +158,16 @@ test('sticky, child, tool and preferred image continuations check reserves witho
   assert.deepEqual([...pool.weights], before);
 });
 
-test('failover recomputes pressure from current snapshots and never retries an attempted account', async (t) => {
+test('failover recomputes remaining quota from current snapshots and never retries an attempted account', async (t) => {
   let state;
   const attempts = [];
   state = fixture(t, [{}, { remaining: 0.9, weeklyHours: 1 }, { remaining: 0.5, weeklyHours: 168 }], {
     send: async (record) => {
       attempts.push(record.id);
       if (record.id === state.accounts[0].id) {
-        state.snapshots.get(state.accounts[2].id).groups = [group('gemini', 0.9, 0.1, 2)];
+        const updated = group('gemini', 1, 0.1, 2);
+        updated.buckets[1].remainingFraction = .9;
+        state.snapshots.get(state.accounts[2].id).groups = [updated];
         throw Object.assign(new Error('quota exhausted'), { status: 429 });
       }
     }
@@ -180,7 +179,7 @@ test('failover recomputes pressure from current snapshots and never retries an a
   assert.equal(state.pool.sessions.get('family').accountId, result.accountId);
 });
 
-test('image failover uses weekly pressure without migrating an auxiliary parent affinity', async (t) => {
+test('image failover uses remaining quota without migrating an auxiliary parent affinity', async (t) => {
   let state;
   const attempts = [];
   state = fixture(t, [{}, { remaining: 0.9, weeklyHours: 1 }, { remaining: 0.5, weeklyHours: 168 }], {

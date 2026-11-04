@@ -10,7 +10,9 @@ const SESSION_TTL_MS = Math.max(0, Number.isFinite(configuredSeconds)
 const SESSION_CAPACITY = 2000;
 const QUOTA_TTL_MS = 30 * 60_000;
 const QUOTA_RETRY_MS = 5 * 60_000;
+// Legacy minimum floor: weekly and unclassified windows retain 5%.
 const QUOTA_RESERVE_FRACTION = 0.05;
+const FIVE_HOUR_RESERVE_FRACTION = 0.10;
 const QUOTA_FRACTION_EPSILON = 1e-7; // Native Float32 usage can encode 95% just below .95.
 const AFFINITY_MAX_TURNS = 20;
 const AFFINITY_LOW_QUOTA_TURNS = 5;
@@ -84,9 +86,21 @@ function activeBuckets(group, now) {
   });
 }
 
+function quotaWindow(bucket) {
+  const window = String(bucket?.window || '').trim().toLowerCase();
+  const id = String(bucket?.id || bucket?.bucketId || '').toLowerCase();
+  if (window === '5h' || /(?:^|-)5h$/.test(id)) return '5h';
+  if (window === 'weekly' || /(?:^|-)weekly$/.test(id)) return 'weekly';
+  return 'unknown';
+}
+
+function quotaReserveFraction(bucket) {
+  return quotaWindow(bucket) === '5h' ? FIVE_HOUR_RESERVE_FRACTION : QUOTA_RESERVE_FRACTION;
+}
+
 function quotaReserveReached(snapshot, now, model = '', provider = '') {
   return activeBuckets(quotaGroup(snapshot, model, provider), now)
-    .some(bucket => Number(bucket.remainingFraction) <= QUOTA_RESERVE_FRACTION + QUOTA_FRACTION_EPSILON || bucket.available === false);
+    .some(bucket => Number(bucket.remainingFraction) <= quotaReserveFraction(bucket) + QUOTA_FRACTION_EPSILON || bucket.available === false);
 }
 
 function quotaRefreshInterval(snapshot, now, model = '', provider = '') {
@@ -106,6 +120,7 @@ function boundedQuotaRefreshMs(value = QUOTA_RETRY_MS) {
     ? Math.max(LOW_QUOTA_REFRESH_MS, Math.min(QUOTA_RETRY_MS, milliseconds)) : QUOTA_RETRY_MS;
 }
 
+// Retained as a diagnostic helper for existing callers, not selection policy.
 function weeklyPressure(group, now) {
   const bucket = (group?.buckets || []).find(item => String(item.window || '').toLowerCase() === 'weekly' || /-weekly$/i.test(item.id || ''));
   const raw = bucket?.remainingFraction;
@@ -129,57 +144,59 @@ function geminiFiveHourResetTime(snapshot, now) { return fiveHourResetTime(quota
 function quotaRank(entry, snapshot, now, depleted = false, model = '', provider = '') {
   const group = quotaGroup(snapshot, model, provider);
   const buckets = activeBuckets(group, now);
-  const weekly = weeklyPressure(group, now);
   const exhausted = buckets.some(bucket => Number(bucket.remainingFraction) <= 0 || bucket.available === false);
+  const headrooms = [];
+  for (const window of ['weekly', '5h']) {
+    const matching = buckets.filter(bucket => quotaWindow(bucket) === window);
+    if (!matching.length) continue;
+    headrooms.push(Math.min(...matching.map(bucket => {
+      const reserve = quotaReserveFraction(bucket);
+      return Math.max(0, Math.min(1, (Number(bucket.remainingFraction) - reserve) / (1 - reserve)));
+    })));
+  }
+  headrooms.sort((a, b) => a - b);
   return {
     entry, group: `${provider}:${modelGroup(model)}`, depleted: depleted || exhausted ? 1 : 0,
     reserveBlocked: quotaReserveReached(snapshot, now, model, provider),
-    lane: exhausted ? 2 : { pressure: 0, unknown: 1, exhausted: 2 }[weekly.kind],
-    band: weekly.band, resetTime: fiveHourResetTime(group, now)
+    knownWindows: headrooms.length, quotaUnknown: !headrooms.length,
+    headroom: headrooms[0] ?? 0, secondaryHeadroom: headrooms[1] ?? headrooms[0] ?? 0,
+    resetTime: fiveHourResetTime(group, now)
   };
+}
+
+function descendingFraction(left, right) {
+  // Stable ties for native Float32 readings without a non-transitive epsilon
+  // comparator. A millionth of usable headroom is below display precision.
+  return Math.round(right * 1e6) - Math.round(left * 1e6);
 }
 
 function compareQuotaRanks(left, right) {
   return left.depleted - right.depleted
-    || left.lane - right.lane
-    || right.band - left.band
-    || (left.resetTime === right.resetTime ? 0 : left.resetTime < right.resetTime ? -1 : 1);
+    // Complete readings outrank partial/unknown ones. Missing windows are
+    // never fabricated as full, and an intentionally weekly-only pool still
+    // ranks its accounts by the one known window.
+    || right.knownWindows - left.knownWindows
+    || descendingFraction(left.headroom, right.headroom)
+    || descendingFraction(left.secondaryHeadroom, right.secondaryHeadroom);
 }
 
 function weightedPickWithRanks(ranks, weights) {
   ranks = ranks.filter(rank => !rank.reserveBlocked);
   if (!ranks.length) return null;
-  // Unknown telemetry retains its advisory lane. Known reserve readings are
-  // excluded above and can never return through the last-resort fallback.
-  let candidates = ranks.filter((rank) => !rank.depleted && rank.lane !== 2);
-  if (!candidates.length) candidates = ranks.filter((rank) => !rank.depleted);
+  // Unknown telemetry remains eligible behind known readings. Known reserves
+  // are excluded above and can never return through the last-resort fallback.
+  let candidates = ranks.filter((rank) => !rank.depleted);
   if (!candidates.length) candidates = ranks;
-
-  const pressureRanks = candidates.filter((rank) => rank.lane === 0);
-  const maxBand = pressureRanks.length ? Math.max(...pressureRanks.map((rank) => rank.band)) : null;
-  const nearestResetByBand = new Map();
-  for (const rank of candidates) {
-    if (!Number.isFinite(rank.resetTime)) continue;
-    const key = `${rank.lane}:${rank.band}`;
-    nearestResetByBand.set(key, Math.min(nearestResetByBand.get(key) ?? Infinity, rank.resetTime));
-  }
-  const effectiveWeight = (rank) => {
-    const accountWeight = Math.max(1, Number(rank.entry.account.weight) || 1);
-    let weeklyWeight = 1;
-    if (rank.lane === 0 && maxBand != null) {
-      const difference = rank.band - maxBand;
-      weeklyWeight = difference >= 0 ? 4 : difference === -1 ? 2 : 1;
-    }
-    const nearestReset = nearestResetByBand.get(`${rank.lane}:${rank.band}`);
-    const fiveHourWeight = Number.isFinite(nearestReset) && rank.resetTime === nearestReset ? 2 : 1;
-    return accountWeight * weeklyWeight * fiveHourWeight;
-  };
+  const best = candidates.reduce((best, rank) => compareQuotaRanks(rank, best) < 0 ? rank : best);
+  candidates = candidates.filter(rank => compareQuotaRanks(rank, best) === 0);
+  const effectiveWeight = rank => Math.max(1, Number(rank.entry.account.weight) || 1);
   const total = candidates.reduce((sum, rank) => sum + effectiveWeight(rank), 0);
   let selected = null;
   let selectedWeight = -Infinity;
   for (const rank of candidates) {
     const id = `${rank.group || 'gemini'}\0${rank.entry.account.id}`;
-    const current = (weights.get(id) || 0) + effectiveWeight(rank);
+    const previous = Math.max(-total, Math.min(total, weights.get(id) || 0));
+    const current = previous + effectiveWeight(rank);
     weights.set(id, current);
     if (current > selectedWeight) {
       selected = rank.entry;
@@ -193,6 +210,7 @@ function weightedPickWithRanks(ranks, weights) {
 module.exports = {
   SESSION_TTL_MS, SESSION_CAPACITY, QUOTA_TTL_MS, QUOTA_RETRY_MS, TRANSIENT_COOLDOWN_MS,
   QUOTA_RESERVE_FRACTION, ACTIVE_QUOTA_REFRESH_MS, LOW_QUOTA_REFRESH_MS,
+  FIVE_HOUR_RESERVE_FRACTION, quotaWindow, quotaReserveFraction,
   AFFINITY_MAX_TURNS, AFFINITY_LOW_QUOTA_TURNS, LOW_QUOTA_FRACTION, affinityTurnLimit,
   quotaReserveReached, quotaRefreshInterval, boundedQuotaRefreshMs,
   durationMs, retryDelay, affinityActive,
