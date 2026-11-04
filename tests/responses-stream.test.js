@@ -82,3 +82,15 @@ test('Responses failure retains the same response, event sequence and any delive
   assert.equal(all.some(event => event.type === 'response.completed'), false);
   assert.equal(res.ended, true);
 });
+
+test('Responses failure is terminal even when a late provider emits or completes after abort', () => {
+  const { emitter, events } = harness();
+  emitter.onDelta('Partial answer');
+  emitter.fail({ code: 'request_timeout', message: 'Synthetic deadline' });
+  const terminal = events();
+  emitter.onDelta('Late answer');
+  emitter.onThinkingDelta('Late reasoning');
+  emitter.fail({ code: 'request_aborted', message: 'Late abort' });
+  emitter.finish(responsesResponse('gemini-test', { text: 'Late completion', toolCalls: [], usage: {} }, 'resp_live'));
+  assert.deepEqual(events(), terminal, 'late callbacks cannot append a second terminal or partial output');
+});
