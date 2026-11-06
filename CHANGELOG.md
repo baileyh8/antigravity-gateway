@@ -1,15 +1,17 @@
 # Changelog
 
+当前版本 `1.7.1-bailey.20`。当天 `.10` 到 `.20` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+
 ## 1.7.1-bailey.20 - 2026-11-06
 
-- Set the default client identity to agy CLI 1.5.2 (`cl=1015175089`). Stage 0 captured a real Cloud Code direct-path request from the official 1.5.2 CLI and its ClientHello; the latter is field-for-field identical to this transport's on the path we use, so stating the current release no longer creates an HTTP-versus-handshake mismatch. The earlier 1.4.2 rollback was based on a gateway-mode ClientHello that this transport never emits.
+- Set the default client identity to agy CLI 1.5.2 (`cl=1015175089`). A capture of the official 1.5.2 Cloud Code direct-path ClientHello is field-for-field identical to this transport's, so stating the current release is accurate. The `.19` rollback compared against a gateway-mode handshake this transport never emits; that comparison is superseded by the direct-path capture.
 - Version and changelist remain paired and configurable via `ANTIGRAVITY_CLI_VERSION` and `ANTIGRAVITY_CLI_CHANGELIST`.
 - No change to tool translation, envelope fields, timeouts, quota, affinity or concurrency.
 
 ## 1.7.1-bailey.19 - 2026-11-06
 
-- Revert the default client identity to agy CLI 1.4.2 (`cl=1001591392`). A real ClientHello capture against the official 1.5.1 client shows the two handshakes agree on cipher suites, extension order, supported_groups, key_share groups and signature algorithms; the official client adds one ALPN extension (`h2`, `http/1.1`) that our transport omits. Claiming 1.5.1 in HTTP while the handshake says 1.4.2 is more conspicuous than an honest older identity. The earlier note attributing this to `boringcrypto` or a Go version gap was wrong: `crypto/tls` has no boringcrypto build branch, and both clients emit the same seven supported_groups.
-- Version and changelist remain configurable as a pair. Raise both only together with rebuilt native transports, and verify the ClientHello against the new official sample first.
+- Revert the default client identity to agy CLI 1.4.2 (`cl=1001591392`) as a temporary measure. This was based on a ClientHello from the official client's gateway-mode endpoint, which sends an ALPN extension this transport does not. Stage 0 later showed that endpoint is unrelated to the Cloud Code direct path this transport uses, so the rollback was unnecessary; `.20` restores the current identity. The earlier `boringcrypto` explanation was also wrong: `crypto/tls` has no boringcrypto build branch.
+- Version and changelist remain configurable as a pair.
 - No change to translation behaviour, timeouts, quota, affinity or concurrency.
 
 ## 1.7.1-bailey.18 - 2026-11-06
