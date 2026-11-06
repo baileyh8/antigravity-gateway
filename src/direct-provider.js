@@ -33,7 +33,12 @@ const IMAGE_ASPECT_RATIOS = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', 
 const MODEL_DISCOVERY_TIMEOUT_MS = Number(process.env.ANTIGRAVITY_DIRECT_MODEL_DISCOVERY_TIMEOUT_MS || 8000);
 const DEFAULT_MAX_RETRIES = Math.max(0, Number(process.env.ANTIGRAVITY_DIRECT_MAX_RETRIES || 1));
 const DEFAULT_RETRY_BASE_MS = Math.max(100, Number(process.env.ANTIGRAVITY_DIRECT_RETRY_BASE_MS || 1500));
-const DEFAULT_USER_AGENT = `antigravity/cli/${process.env.ANTIGRAVITY_CLI_VERSION || '1.4.2'} (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=1001591392; auth_method=consumer)`;
+// Keep (version, changelist) paired with the official agy CLI release. Google
+// stamps the same changelist into every platform binary of a release, and a
+// stale pair can hide Gemini quota groups or trigger upstream 404s.
+const AGY_CLI_VERSION = process.env.ANTIGRAVITY_CLI_VERSION || '1.5.1';
+const AGY_CLI_CHANGELIST = process.env.ANTIGRAVITY_CLI_CHANGELIST || '1014269460';
+const DEFAULT_USER_AGENT = `antigravity/cli/${AGY_CLI_VERSION} (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=${AGY_CLI_CHANGELIST}; auth_method=consumer)`;
 const MODEL_SLUG = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const THOUGHT_SIGNATURE_SENTINEL = 'skip_thought_signature_validator';
 // Only statuses observed in actual agy error/retry/recovery captures belong

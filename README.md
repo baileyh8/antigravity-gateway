@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.9 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.10 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.9
+### 当前源码版本：1.7.1-bailey.10
+
+默认客户端身份对齐官方 agy CLI 1.5.1 构建：`antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)`，替换陈旧的 1.4.2 / `cl=1001591392`。旧版本对可能让 Gemini 额度组不可见并触发上游 404。版本号与 changelist 必须成对，可用 `ANTIGRAVITY_CLI_VERSION` / `ANTIGRAVITY_CLI_CHANGELIST` 覆盖；`os_type`、`arch` 仍取运行时值。其余行为不变。
 
 请求总超时后，Responses 流明确返回 `response.failed` / `request_timeout`，保留响应 ID、事件序号和已输出内容；日志按有效失败状态 504 记录，SSE 已发出的 HTTP 200 响应头不变。迟到的上游回调不能再补发成功结束。总超时仍为默认 300 秒。
 
@@ -593,6 +595,8 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | 网关监听端口 |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | 空 | 自定义网关 Key；非本机监听时必须设置 |
 | `ANTIGRAVITY_CLI_PATH` | 自动查找 `agy` | 指定 agy 路径 |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.1` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1014269460` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
 | `ANTIGRAVITY_LOCAL_AUTH_FILE` | 自动读取本地登录态 | 指定本地 agy 凭据文件 |
 | `ANTIGRAVITY_GATEWAY_CONFIG_DIR` | `~/.antigravity-gateway` | 账号、额度、用量和客户端配置目录 |
 | `ANTIGRAVITY_DEFAULT_MODEL` | `gemini-3.8-flash-high` | 请求未提供模型时使用 |
@@ -686,7 +690,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.9
+### Current source version: 1.7.1-bailey.10
+
+The default Cloud Code client identity now matches the official agy CLI 1.5.1 build: `antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)` replaces the stale 1.4.2 / `cl=1001591392` pair, which can hide Gemini quota groups and trigger upstream 404s. Version and changelist are configurable as a pair; `os_type` and `arch` remain runtime values. All other behavior is unchanged.
 
 On the overall request deadline, Responses streams end with `response.failed` / `request_timeout`, preserving response IDs, event sequence and partial output. Logs record the effective failure status 504 even when SSE headers were already sent as HTTP 200. Late provider callbacks cannot append a successful completion. The default overall deadline remains 300 seconds.
 
@@ -1027,6 +1033,8 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | Listen port |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | empty | Custom gateway key; required for non-loopback binding |
 | `ANTIGRAVITY_CLI_PATH` | auto-detected | Custom agy path |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.1` | agy CLI version in the client identity; keep paired with the changelist |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1014269460` | Changelist (`cl`) of the same official build; update together with the version |
 | `ANTIGRAVITY_LOCAL_AUTH_FILE` | auto-detected | Custom local agy credential file |
 | `ANTIGRAVITY_GATEWAY_CONFIG_DIR` | `~/.antigravity-gateway` | Accounts, quota, usage, and generated client configuration |
 | `ANTIGRAVITY_DEFAULT_MODEL` | `gemini-3.8-flash-high` | Used only when a request omits `model` |

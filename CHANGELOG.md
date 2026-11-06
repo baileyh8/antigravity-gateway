@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.10 - 2026-11-06
+
+- Align the default Cloud Code client identity with the official agy CLI 1.5.1 build: `antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)` replaces the stale 1.4.2 / `cl=1001591392` pair. Community reproductions show a stale pair can hide Gemini quota groups and trigger upstream 404s.
+- `ANTIGRAVITY_CLI_VERSION` and `ANTIGRAVITY_CLI_CHANGELIST` are configurable and must be changed together. `os_type` and `arch` still come from the runtime and `ANTIGRAVITY_DIRECT_USER_AGENT` still takes precedence.
+- No change to timeouts, quota reserves, affinity, concurrency or model discovery. The native Cloud Code transport already strips the `Accept` header, so no header change is needed.
+
 ## 1.7.1-bailey.9 - 2026-11-04
 
 - End admitted Responses streams with a standard `response.failed` carrying `request_timeout` on the overall request deadline, retaining response identity, event sequence and delivered partial output. Empty and buffered tool streams receive the same explicit terminal instead of an ambiguous EOF.
