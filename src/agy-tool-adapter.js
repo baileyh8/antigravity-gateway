@@ -7,6 +7,13 @@ const { CODEX_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFI
 const { FINISH_METADATA } = require('./agy-structured-output');
 const { HERMES_CLIENT_PROFILE, capturedHermesTool, hermesSystemText, toolReferences } = require('./agy-hermes-profile');
 const { DSH_CLIENT_PROFILE, capturedDshBash, capturedDshTool, dshSystemText } = require('./agy-dsh-profile');
+const { classifyTool, buildRule } = require('./agy-tool-semantics');
+const { arbitrate } = require('./agy-tool-mapping');
+
+// Semantic mapping is opt-out rather than opt-in: an unrecognized client gains
+// translations it never had, so an operator must be able to restore the strict
+// passthrough behavior without editing code.
+const SEMANTIC_MAPPING = String(process.env.ANTIGRAVITY_TOOL_SEMANTICS || 'on').trim().toLowerCase() !== 'off';
 
 // Native names and metadata come from captured agy declarations. Only the
 // capabilities the actual client declares are exposed; this is not an agy
@@ -295,16 +302,33 @@ function providerCall(call, tool, rule, target) {
 }
 
 function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false, target = 'cloudcode' } = {}) {
-  const mappings = new Map(), source = new Map(), names = new Set((normalized.tools || []).map(t => t.name));
+  const names = new Set((normalized.tools || []).map(t => t.name));
   const profile = profiles[clientProfile];
   const recognized = !checkpoint && !normalized.autoMode && profile && normalized.protocol === profile.protocol
     && (target !== 'robin' || (![CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE].includes(clientProfile)));
+  const candidates = [];
   if (recognized) {
     for (const tool of normalized.tools || []) {
       const rule = profile.rules[tool.name];
-      if (rule && !names.has(rule.name) && supported(tool, rule)) { mappings.set(tool.name, rule);source.set(rule.name, tool); }
+      if (!rule || !supported(tool, rule)) continue;
+      candidates.push({ tool, rule, layer: 'profile' });
     }
   }
+  // Semantic layer. It runs only when no captured profile matched. A profile
+  // means we know exactly which client this is, and that client's own rules
+  // are authoritative: if one of its declarations fails the captured check,
+  // the right answer is to leave it alone, never to reinterpret it by shape.
+  // Without a profile, two distinct families are required, because a custom
+  // tool can resemble one family by accident.
+  if (SEMANTIC_MAPPING && !recognized && !checkpoint && !normalized.autoMode && target === 'cloudcode') {
+    const semantic = [];
+    for (const tool of normalized.tools || []) {
+      const classified = classifyTool(tool);
+      if (classified) semantic.push({ tool, rule: buildRule(classified), layer: 'semantic', family: classified.familyName });
+    }
+    if (new Set(semantic.map(item => item.family)).size >= 2) candidates.push(...semantic);
+  }
+  const { mappings, source } = arbitrate(candidates, names);
   const byNative = new Map([...mappings].map(([name, rule]) => [rule.name, rule]));
   let toolChoice = normalized.toolChoice;
   const choiceName = toolChoice?.name || toolChoice?.function?.name, translated = mappings.get(choiceName);
@@ -320,7 +344,9 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
       tools: (normalized.tools || []).map(t => mappings.has(t.name) ? declaration(t, mappings.get(t.name), mappings, target) : t) } : normalized,
     toClient: call => byNative.has(call.name) ? clientCall(call, source.get(call.name), byNative.get(call.name), target) : call,
     toProvider: call => mappings.has(call.name) ? providerCall(call, source.get(mappings.get(call.name).name), mappings.get(call.name), target) : call,
-    adapted: mappings.size > 0
+    adapted: mappings.size > 0,
+    mappingCount: mappings.size,
+    toolCount: (normalized.tools || []).length
   };
 }
 

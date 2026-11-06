@@ -86,6 +86,8 @@ class RequestLog {
       total: Number(usage.total_tokens) || 0,
       ip: entry.ip || '',
       ua: entry.ua || '',
+      tools: Number(entry.toolCount) || 0,
+      mapped: Number(entry.mappedCount) || 0,
       bytes: Number(entry.bytes) || 0
     });
     if (this.pendingBytes + Buffer.byteLength(line) > 256 * 1024) { this.dropped = (this.dropped || 0) + 1; return; }

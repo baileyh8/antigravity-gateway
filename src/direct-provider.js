@@ -19,6 +19,7 @@ const { agentEnvelope, generationProfile, nativeSchema } = require('./agy-reques
 const { prepareStructuredOutput, finishResult, finishResponse } = require('./agy-structured-output');
 const { nativeClientToolResponse } = require('./agy-tool-results');
 const { prepareToolAdapter } = require('./agy-tool-adapter');
+const { requestContext } = require('./request-log');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
 
 const DEFAULT_BASE_URL = 'https://cloudcode-pa.googleapis.com';
@@ -420,6 +421,14 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
 function buildDirectRequest(normalized, model, projectId, sessionId, repairInstruction = '', thoughtSignatures = null, native = {}) {
   native.toolAdapter = prepareToolAdapter(normalized, native);
   normalized = native.toolAdapter.normalized;
+  // Record the translation outcome on the request log so an operator can tell
+  // "not recognized" apart from "recognized but the declarations did not
+  // match". Neither field is derivable from the response.
+  const logContext = requestContext();
+  if (logContext) {
+    logContext.toolCount = native.toolAdapter.toolCount;
+    logContext.mappedCount = native.toolAdapter.mappingCount;
+  }
   const structured = prepareStructuredOutput(normalized, native);
   normalized = structured.normalized;
   native.structuredSchema = structured.schema;

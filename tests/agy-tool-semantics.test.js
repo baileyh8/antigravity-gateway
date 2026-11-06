@@ -1,0 +1,111 @@
+'use strict';
+
+const test = require('node:test'), assert = require('node:assert/strict');
+const { classifyTool, buildRule } = require('../src/agy-tool-semantics');
+const { isBijective, arbitrate } = require('../src/agy-tool-mapping');
+const { prepareToolAdapter } = require('../src/agy-tool-adapter');
+const { normalizeChat } = require('../src/protocol');
+
+// Declarations written the way an unfamiliar client would send them: no
+// capture, no known user agent, no recognized profile.
+const fn = (name, properties, required = []) => ({
+  type: 'function',
+  function: {
+    name, description: `${name} does something`,
+    parameters: { type: 'object', additionalProperties: false, properties, required }
+  }
+});
+const READ = fn('open_file', { path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, ['path']);
+const EXEC = fn('sh', { command: { type: 'string' }, workdir: { type: 'string' } }, ['command']);
+const WRITE = fn('save', { file_path: { type: 'string' }, content: { type: 'string' } }, ['file_path', 'content']);
+const payload = tools => ({ model: 'gemini-3.8-flash-high', messages: [{ role: 'user', content: 'hello' }], tools });
+const names = tools => tools.map(tool => tool.name);
+
+test('an unknown client gains read and exec mappings from the declaration shape alone', () => {
+  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(READ), structuredClone(EXEC)])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['view_file', 'run_command']);
+  const call = out.toClient({ id: 'c', name: 'view_file', arguments: { AbsolutePath: '/notes.md', StartLine: 5, EndLine: 9 } });
+  assert.deepEqual(call, { id: 'c', name: 'open_file', arguments: { path: '/notes.md', offset: 5, limit: 5 } });
+  const shell = out.toClient({ id: 's', name: 'run_command', arguments: { CommandLine: 'ls -la', Cwd: '/tmp' } });
+  assert.deepEqual(shell, { id: 's', name: 'sh', arguments: { command: 'ls -la', workdir: '/tmp' } });
+});
+
+test('a tool that merely shares a name is never translated', () => {
+  const custom = fn('read', { path: { type: 'string' }, encoding: { type: 'string' } }, ['path']);
+  assert.equal(classifyTool(normalizeChat(payload([custom])).tools[0]), null);
+  const out = prepareToolAdapter(normalizeChat(payload([custom, structuredClone(EXEC)])), { clientProfile: '' });
+  assert.ok(names(out.normalized.tools).includes('read'));
+});
+
+test('one family alone is too little evidence without a captured profile', () => {
+  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(READ)])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['open_file']);
+});
+
+test('two declarations competing for the same native tool are both left alone', () => {
+  const first = fn('open_a', { file_path: { type: 'string' } }, ['file_path']);
+  const second = fn('open_b', { path: { type: 'string' } }, ['path']);
+  const out = prepareToolAdapter(normalizeChat(payload([first, second, structuredClone(EXEC)])), { clientProfile: '' });
+  const result = names(out.normalized.tools);
+  assert.ok(result.includes('open_a') && result.includes('open_b'));
+  assert.ok(result.includes('run_command'));
+  assert.ok(!result.includes('view_file'));
+});
+
+test('a native name the client already declared is never shadowed', () => {
+  const occupied = fn('view_file', { path: { type: 'string' } }, ['path']);
+  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(READ), structuredClone(EXEC), occupied])), { clientProfile: '' });
+  const result = names(out.normalized.tools);
+  assert.ok(result.includes('view_file'));
+  assert.ok(result.includes('open_file'));
+  assert.ok(result.includes('run_command'));
+});
+
+test('a captured profile stays authoritative and disables the semantic layer', () => {
+  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(READ), structuredClone(EXEC)])), { clientProfile: 'dsh-0.2.1-captured' });
+  assert.deepEqual(names(out.normalized.tools), ['open_file', 'sh']);
+  assert.equal(out.adapted, false);
+});
+
+test('the bijection check rejects a partial map', () => {
+  const tool = normalizeChat(payload([structuredClone(READ)])).tools[0];
+  const classified = classifyTool(tool);
+  assert.ok(isBijective(tool, buildRule(classified)));
+  assert.equal(isBijective(tool, { name: 'view_file', parameters: { path: 'AbsolutePath' } }), false);
+  assert.equal(isBijective(tool, { name: 'view_file', parameters: { path: 'AbsolutePath', offset: 'StartLine', limit: 'StartLine' } }), false);
+  assert.equal(isBijective(tool, { name: 'view_file', parameters: { path: 'AbsolutePath', offset: 'StartLine', limit: 'EndLine', extra: 'Extra' } }), false);
+});
+
+test('arbitration reports why a candidate was declined instead of picking a winner', () => {
+  const tool = normalizeChat(payload([structuredClone(READ)])).tools[0];
+  const rule = buildRule(classifyTool(tool));
+  const taken = arbitrate([{ tool, rule, layer: 'semantic' }], new Set(['view_file']));
+  assert.equal(taken.mappings.size, 0);
+  assert.deepEqual(taken.declined, [{ native: 'view_file', reason: 'client_declares_native_name' }]);
+  const contested = arbitrate([{ tool, rule, layer: 'semantic' }, { tool, rule, layer: 'semantic' }], new Set());
+  assert.equal(contested.mappings.size, 0);
+  assert.equal(contested.declined[0].reason, 'contested_by_multiple_declarations');
+});
+
+test('write and exec map without needing three families', () => {
+  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(WRITE), structuredClone(EXEC)])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['write_to_file', 'run_command']);
+});
+
+test('the semantic layer can be switched off to restore strict passthrough', () => {
+  const adapterPath = require.resolve('../src/agy-tool-adapter');
+  const normalized = normalizeChat(payload([structuredClone(READ), structuredClone(EXEC)]));
+  const saved = process.env.ANTIGRAVITY_TOOL_SEMANTICS;
+  process.env.ANTIGRAVITY_TOOL_SEMANTICS = 'off';
+  delete require.cache[adapterPath];
+  try {
+    const fresh = require('../src/agy-tool-adapter');
+    assert.deepEqual(names(fresh.prepareToolAdapter(normalized, { clientProfile: '' }).normalized.tools), ['open_file', 'sh']);
+  } finally {
+    if (saved === undefined) delete process.env.ANTIGRAVITY_TOOL_SEMANTICS;
+    else process.env.ANTIGRAVITY_TOOL_SEMANTICS = saved;
+    delete require.cache[adapterPath];
+    require('../src/agy-tool-adapter');
+  }
+});
+
