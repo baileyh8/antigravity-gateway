@@ -353,7 +353,10 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
     toProvider: call => mappings.has(call.name) ? providerCall(call, source.get(mappings.get(call.name).name), mappings.get(call.name), target) : call,
     adapted: mappings.size > 0,
     mappingCount: mappings.size,
-    toolCount: (normalized.tools || []).length
+    // Count only what the client declared. The gateway injects its own internal
+    // tools (image generation) before this point, and including them would make
+    // the reported fraction disagree with the mapping count it sits beside.
+    toolCount: (normalized.tools || []).filter(tool => !tool.internal).length
   };
 }
 

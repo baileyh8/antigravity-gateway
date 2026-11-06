@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1-bailey.15 - 2026-11-06
+
+- Fix the reported tool count. The gateway injects its own internal image tool before translation, so `tools` counted one more than the client actually declared and the fraction disagreed with the mapping count beside it. Internal tools are now excluded, making `mapped=N/M` mean N of M client declarations.
+- No change to which declarations get translated.
+
 ## 1.7.1-bailey.14 - 2026-11-06
 
 - Let a single semantic family qualify when the declaration carries enough evidence, instead of requiring two families unconditionally. A client that declares only one tool used to get nothing even when that tool was an unambiguous file reader.
