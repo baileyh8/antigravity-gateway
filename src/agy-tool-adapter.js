@@ -195,7 +195,11 @@ function declaration(tool, rule, mappings, target) {
       description = references(description);
       for (const property of Object.values(properties)) if (property.description) property.description = references(toolReferences(property.description, mappings));
     }
-    if (rule.lineRange) {
+    // EndLine is only offered when the client can actually receive an end
+    // position. A declaration with offset but no limit has no field to map an
+    // EndLine back onto, so advertising it lets the model produce a call the
+    // reverse translation must reject.
+    if (rule.lineRange && Object.values(rule.parameters || {}).includes('EndLine')) {
       properties.EndLine = { type: 'integer', description: 'Optional inclusive ending line. StartLine defaults to 1; at most 2000 lines may be requested. Omit to read up to 2000 lines. The text budget and next_offset continuation still apply.' };
       description = description.replace('Use offset and limit for large files.', 'Use StartLine and inclusive EndLine for large files.')
         .replace('continue with offset to read the rest.', 'continue with StartLine to read the rest.');

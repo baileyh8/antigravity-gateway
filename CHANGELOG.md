@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.18 - 2026-11-06
+
+- Fix a 502 introduced with the semantic layer. A client declaring an `offset` but no `limit` was given a native declaration that still advertised `EndLine`. The model then produced `EndLine`, which has no field to map back onto, so the reverse translation rejected a legitimate upstream call with `invalid_tool_arguments`.
+- `EndLine` is now offered only when the client can receive an end position, meaning its rule actually maps a parameter to `EndLine`. Declarations with both offset and limit are unchanged.
+- No change to which declarations get translated, nor to timeouts, quota, affinity or concurrency.
+
 ## 1.7.1-bailey.17 - 2026-11-06
 
 - Add an opt-in mapping trace: `ANTIGRAVITY_TOOL_MAPPING_TRACE=on` logs `profile=... mapped=N/M` per request, and `ANTIGRAVITY_TOOL_MAPPING_DEBUG=on` adds the translation pairs (`open_file\u2192view_file`). Both default to off, so a busy gateway stays quiet.

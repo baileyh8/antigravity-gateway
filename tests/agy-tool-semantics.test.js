@@ -105,6 +105,28 @@ test('the mapping trace stays silent unless it is turned on', () => {
   assert.equal(out.profileName, '');
 });
 
+test('an end line is offered only when the client can receive one', () => {
+  // offset without limit: the client has no field for an end position, so the
+  // native declaration must not advertise EndLine and the reverse translation
+  // must still accept every call the model can make.
+  const offsetOnly = fn('open_file', { path: { type: 'string' }, offset: { type: 'number' } }, ['path']);
+  const exec = structuredClone(EXEC);
+  const out = prepareToolAdapter(normalizeChat(payload([offsetOnly, exec])), { clientProfile: '' });
+  const read = out.normalized.tools.find(t => t.name === 'view_file');
+  assert.ok(read, 'read should map');
+  assert.deepEqual(Object.keys(read.schema.properties).filter(k => !['toolAction', 'toolSummary'].includes(k)), ['AbsolutePath', 'StartLine']);
+  const call = out.toClient({ id: 'r', name: 'view_file', arguments: { AbsolutePath: '/a', StartLine: 2, toolAction: 'x', toolSummary: 'y' } });
+  assert.deepEqual(call.arguments, { path: '/a', offset: 2 });
+
+  // With both offset and limit the end line is offered and converts back.
+  const both = fn('open_file', { path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, ['path']);
+  const full = prepareToolAdapter(normalizeChat(payload([both, structuredClone(EXEC)])), { clientProfile: '' });
+  const fullRead = full.normalized.tools.find(t => t.name === 'view_file');
+  assert.ok(fullRead.schema.properties.EndLine);
+  const back = full.toClient({ id: 'r', name: 'view_file', arguments: { AbsolutePath: '/a', StartLine: 2, EndLine: 5 } });
+  assert.deepEqual(back.arguments, { path: '/a', offset: 2, limit: 4 });
+});
+
 test('two declarations competing for the same native tool are both left alone', () => {
   const first = fn('open_a', { file_path: { type: 'string' } }, ['file_path']);
   const second = fn('open_b', { path: { type: 'string' } }, ['path']);
