@@ -79,7 +79,11 @@ test('Edit and Bash selection is reversible and profile/schema/collision checks 
       const copy = structuredClone(n);mutate(copy.tools.find(t => t.name === name));assert.ok(prepareToolAdapter(copy, profile).normalized.tools.some(t => t.name === name));
     }
     n.tools.push({ name: alias, schema: { type: 'object', properties: {} } });assert.ok(prepareToolAdapter(n, profile).normalized.tools.some(t => t.name === name));
-    assert.equal(prepareToolAdapter(n, { clientProfile: 'unknown' }).normalized, n);
+    // Without a captured profile the semantic layer may translate declarations
+    // by shape, but a name the client already declared is never shadowed.
+    const unknown = prepareToolAdapter(n, { clientProfile: 'unknown' }).normalized;
+    assert.ok(unknown.tools.some(t => t.name === alias));
+    assert.ok(unknown.tools.some(t => t.name === 'write_to_file'));
   }
   const n = normalizeAll([user]);n.tools = n.tools.filter(t => t.name !== 'Read');
   assert.match(prepareToolAdapter(n, profile).normalized.tools.find(t => t.name === 'replace_file_content').description, /You must Read/);

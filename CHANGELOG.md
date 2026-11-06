@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1-bailey.13 - 2026-11-06
+
+- Translate tool declarations by argument shape when no captured profile matches. A client the gateway has never seen now gets `read`, `write`, `edit` and `exec` mappings if its declarations have the right parameter roles and types, instead of falling through untranslated.
+- Every inferred mapping must pass a bijection check before it is created: the mapped parameter set must equal the declared set exactly, targets must be unique, and every required field must be covered. A partial map is dropped rather than created, because it would rename or lose a field on the way back.
+- A contested native name is never resolved by picking a winner. Two declarations that would become the same native tool are both left alone, and a native name the client already declared is never shadowed. The previous code silently let the later declaration overwrite the earlier one.
+- A captured profile stays authoritative: when one matches, the semantic layer does not run at all. If a known client's declaration fails its captured check, the answer is to leave it untouched, never to reinterpret it by shape.
+- Without a captured profile, two distinct families are required. One family can be matched by accident; two is the evidence threshold. `ANTIGRAVITY_TOOL_SEMANTICS=off` restores strict passthrough.
+- The request log now records `tools` and `mapped` counts per request, so "not recognized" and "recognized but declarations did not match" are distinguishable after the fact.
+- No change to timeouts, quota reserves, affinity limits, concurrency, model discovery or the captured profiles themselves.
+
 ## 1.7.1-bailey.12 - 2026-11-06
 
 - Fix the Codex profile still not matching real relayed traffic. A local provider proxy forwards `originator` only when the provider opts in through `forwardClientHeaders`, and it drops `session-id` because that name is not on its forwardable list. The previous build required both headers, so the profile was unreachable for every relayed request even after the user-agent check was relaxed.
