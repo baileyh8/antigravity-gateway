@@ -65,6 +65,36 @@ test('the reported tool count ignores gateway-internal tools', () => {
   assert.equal(out.mappingCount, 2);
 });
 
+test('a client web search tool maps onto the captured search_web declaration', () => {
+  const search = fn('web_search', { query: { type: 'string' }, domain: { type: 'string' } }, ['query']);
+  const exec = structuredClone(EXEC);
+  const out = prepareToolAdapter(normalizeChat(payload([search, exec])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['search_web', 'run_command']);
+  const back = out.toClient({ id: 's', name: 'search_web', arguments: { query: 'latest node lts' } });
+  assert.deepEqual(back, { id: 's', name: 'web_search', arguments: { query: 'latest node lts' } });
+});
+
+test('a search tool with an argument outside the family is declined', () => {
+  const search = fn('google_search', { q: { type: 'string' }, num: { type: 'number' } }, ['q']);
+  assert.equal(classifyTool(normalizeChat(payload([search])).tools[0]), null);
+});
+
+test('patch is recognized as an edit alias for profile-less clients', () => {
+  const patch = fn('patch', { path: { type: 'string' }, old_string: { type: 'string' }, new_string: { type: 'string' }, replace_all: { type: 'boolean' } }, ['path', 'old_string', 'new_string']);
+  const out = prepareToolAdapter(normalizeChat(payload([patch])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['replace_file_content']);
+  const back = out.toClient({ id: 'p', name: 'replace_file_content', arguments: { TargetFile: '/a', TargetContent: 'x', ReplacementContent: 'y' } });
+  assert.deepEqual(back, { id: 'p', name: 'patch', arguments: { path: '/a', old_string: 'x', new_string: 'y' } });
+});
+
+test('a multi-command editor and a free-form patch tool are both declined', () => {
+  const editor = fn('str_replace_editor', { command: { type: 'string' }, path: { type: 'string' },
+    file_text: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, ['command', 'path']);
+  assert.equal(classifyTool(normalizeChat(payload([editor])).tools[0]), null);
+  const v4a = fn('apply_patch', { patch: { type: 'string' } }, ['patch']);
+  assert.equal(classifyTool(normalizeChat(payload([v4a])).tools[0]), null);
+});
+
 test('two declarations competing for the same native tool are both left alone', () => {
   const first = fn('open_a', { file_path: { type: 'string' } }, ['file_path']);
   const second = fn('open_b', { path: { type: 'string' } }, ['path']);

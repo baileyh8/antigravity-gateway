@@ -15,6 +15,8 @@ const ROLES = {
   old: ['old_string', 'old_text', 'old_str', 'search'],
   new: ['new_string', 'new_text', 'new_str', 'replace'],
   command: ['command', 'cmd', 'script', 'shell_command'],
+  query: ['query', 'q', 'search_query'],
+  domain: ['domain', 'site', 'allowed_domains'],
   workdir: ['workdir', 'cwd', 'directory'],
   offset: ['offset', 'start_line'],
   limit: ['limit', 'count', 'lines'],
@@ -51,7 +53,7 @@ const FAMILIES = {
   },
   edit: {
     native: 'replace_file_content',
-    names: ['edit', 'edit_file', 'editfile', 'replace', 'str_replace', 'str_replace_editor', 'replace_file_content', 'patch_file', 'apply_edit'],
+    names: ['edit', 'edit_file', 'editfile', 'replace', 'str_replace', 'replace_file_content', 'patch', 'patch_file', 'apply_edit'],
     required: ['path', 'old', 'new'],
     optional: ['replaceAll'],
     strings: ['path', 'old', 'new'],
@@ -67,6 +69,14 @@ const FAMILIES = {
     numbers: ['timeout'],
     booleans: ['background'],
     target: { command: 'CommandLine', description: 'Description', workdir: 'Cwd', timeout: 'TimeoutMs', background: 'RunInBackground' }
+  },
+  search: {
+    native: 'search_web',
+    names: ['web_search', 'search_web', 'websearch', 'google_search', 'search', 'web_lookup'],
+    required: ['query'],
+    optional: ['domain'],
+    strings: ['query', 'domain'],
+    target: { query: 'query', domain: 'domain' }
   }
 };
 

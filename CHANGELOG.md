@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.16 - 2026-11-06
+
+- Add a `search` family mapped onto the captured native `search_web` declaration, which takes `query` plus an optional `domain`. Clients declaring `web_search`, `search_web`, `google_search` and similar now translate, and a query argument is now a recognised role.
+- Recognise `patch` as an edit alias. Its shape was already accepted as an edit, but the name was missing from the alias list, so a profile-less client declaring the single most common patch tool name was refused.
+- A search declaration carrying an argument outside the family is still declined, and `str_replace_editor` is no longer listed as an edit alias: it is a multi-command tool whose shape the family check rejects, so advertising the name only misleads.
+- Free-form patch tools stay untranslated. A single patch string has no native counterpart: `replace_file_content` replaces one contiguous region, so mapping a multi-file diff onto it would silently drop edits.
+
 ## 1.7.1-bailey.15 - 2026-11-06
 
 - Fix the reported tool count. The gateway injects its own internal image tool before translation, so `tools` counted one more than the client actually declared and the fraction disagreed with the mapping count beside it. Internal tools are now excluded, making `mapped=N/M` mean N of M client declarations.
