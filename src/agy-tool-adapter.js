@@ -324,9 +324,16 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
     const semantic = [];
     for (const tool of normalized.tools || []) {
       const classified = classifyTool(tool);
-      if (classified) semantic.push({ tool, rule: buildRule(classified), layer: 'semantic', family: classified.familyName });
+      if (!classified) continue;
+      semantic.push({ tool, rule: buildRule(classified), layer: 'semantic', family: classified.familyName,
+        strong: classified.parameterCount >= 2 && classified.nameKnown });
     }
+    // Two families is corroboration on its own. A single family needs the
+    // stricter evidence instead: more than one declared argument and a tool
+    // name from that family's known aliases. A one-argument declaration is
+    // indistinguishable from a custom tool and stays as submitted.
     if (new Set(semantic.map(item => item.family)).size >= 2) candidates.push(...semantic);
+    else candidates.push(...semantic.filter(item => item.strong));
   }
   const { mappings, source } = arbitrate(candidates, names);
   const byNative = new Map([...mappings].map(([name, rule]) => [rule.name, rule]));
