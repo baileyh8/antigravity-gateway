@@ -2,7 +2,7 @@
 
 ## 1.7.1-bailey.19 - 2026-11-06
 
-- Revert the default client identity to agy CLI 1.4.2 (`cl=1001591392`). Raising the user agent to 1.5.1 without raising the transport created a mismatch: the official 1.5.1 binary is built with `go1.28-20261102-RC00` and `boringcrypto`, which produces a different ClientHello (cipher suites, extension set, curve preference), while these native binaries are `go1.27.2` without boringcrypto. A client that claims 1.5.1 in HTTP but handshakes like something else is more conspicuous than one that honestly looks older.
+- Revert the default client identity to agy CLI 1.4.2 (`cl=1001591392`). A real ClientHello capture against the official 1.5.1 client shows the two handshakes agree on cipher suites, extension order, supported_groups, key_share groups and signature algorithms; the official client adds one ALPN extension (`h2`, `http/1.1`) that our transport omits. Claiming 1.5.1 in HTTP while the handshake says 1.4.2 is more conspicuous than an honest older identity. The earlier note attributing this to `boringcrypto` or a Go version gap was wrong: `crypto/tls` has no boringcrypto build branch, and both clients emit the same seven supported_groups.
 - Version and changelist remain configurable as a pair. Raise both only together with rebuilt native transports, and verify the ClientHello against the new official sample first.
 - No change to translation behaviour, timeouts, quota, affinity or concurrency.
 
