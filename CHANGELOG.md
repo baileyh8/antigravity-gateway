@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.19 - 2026-11-06
+
+- Revert the default client identity to agy CLI 1.4.2 (`cl=1001591392`). Raising the user agent to 1.5.1 without raising the transport created a mismatch: the official 1.5.1 binary is built with `go1.28-20261102-RC00` and `boringcrypto`, which produces a different ClientHello (cipher suites, extension set, curve preference), while these native binaries are `go1.27.2` without boringcrypto. A client that claims 1.5.1 in HTTP but handshakes like something else is more conspicuous than one that honestly looks older.
+- Version and changelist remain configurable as a pair. Raise both only together with rebuilt native transports, and verify the ClientHello against the new official sample first.
+- No change to translation behaviour, timeouts, quota, affinity or concurrency.
+
 ## 1.7.1-bailey.18 - 2026-11-06
 
 - Fix a 502 introduced with the semantic layer. A client declaring an `offset` but no `limit` was given a native declaration that still advertised `EndLine`. The model then produced `EndLine`, which has no field to map back onto, so the reverse translation rejected a legitimate upstream call with `invalid_tool_arguments`.
