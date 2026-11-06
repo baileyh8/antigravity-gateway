@@ -27,14 +27,13 @@ function loadUserAgent(extraEnv = {}) {
   return execFileSync(process.execPath, ['-e', script], { cwd: ROOT, env, encoding: 'utf8' });
 }
 
-test('client identity defaults to the build whose transport we match', () => {
+test('client identity defaults to the current official agy CLI release', () => {
   const ua = loadUserAgent();
-  // The native transport is Go 1.27.2 without boringcrypto. The official 1.5.1
-  // binary is Go 1.28 RC with boringcrypto and therefore a different
-  // ClientHello, so the default identity stays on the version we actually
-  // resemble until those binaries are rebuilt.
-  assert.equal(ua, `antigravity/cli/1.4.2 (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=1001591392; auth_method=consumer)`);
-  assert.doesNotMatch(ua, /1\.5\.1|1014269460/);
+  // The Cloud Code direct-path ClientHello is identical to this transport's,
+  // so the identity can state the real current release. Values come from a
+  // captured fetchConfig request made by the official 1.5.2 CLI.
+  assert.equal(ua, `antigravity/cli/1.5.2 (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=1015175089; auth_method=consumer)`);
+  assert.doesNotMatch(ua, /1\.4\.2|1\.5\.1|1001591392|1014269460/);
 });
 
 test('version and changelist stay configurable as a pair', () => {
@@ -61,6 +60,6 @@ test('cloud code requests carry the configured identity', async () => {
   await provider.probeAuthentication();
   assert.ok(seen.length >= 1);
   assert.ok(seen.every(({ url }) => url.endsWith('/v1internal:fetchAvailableModels')));
-  assert.ok(seen.every(({ userAgent }) => /^antigravity\/cli\/1\.4\.2 .*cl=1001591392; auth_method=consumer\)$/.test(userAgent)));
+  assert.ok(seen.every(({ userAgent }) => /^antigravity\/cli\/1\.5\.2 .*cl=1015175089; auth_method=consumer\)$/.test(userAgent)));
 });
 
