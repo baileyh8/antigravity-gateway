@@ -1,6 +1,6 @@
 {
   "name": "antigravity-gateway",
-  "version": "1.7.1-bailey.11",
+  "version": "1.7.1-bailey.12",
   "description": "Bailey-maintained Anthropic/OpenAI-compatible gateway with managed accounts, per-account proxies, multimodal APIs and bounded concurrency.",
   "license": "MIT",
   "type": "commonjs",
