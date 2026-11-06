@@ -55,6 +55,16 @@ test('a single family with an unfamiliar name stays untranslated', () => {
   assert.deepEqual(names(out.normalized.tools), ['inspect_config']);
 });
 
+test('the reported tool count ignores gateway-internal tools', () => {
+  const internal = { name: 'generate_image', kind: 'function', internal: true,
+    description: 'internal', schema: { type: 'object', additionalProperties: false, properties: {} } };
+  const n = normalizeChat(payload([structuredClone(READ), structuredClone(EXEC)]));
+  n.tools.push(internal);
+  const out = prepareToolAdapter(n, { clientProfile: '' });
+  assert.equal(out.toolCount, 2);
+  assert.equal(out.mappingCount, 2);
+});
+
 test('two declarations competing for the same native tool are both left alone', () => {
   const first = fn('open_a', { file_path: { type: 'string' } }, ['file_path']);
   const second = fn('open_b', { path: { type: 'string' } }, ['path']);
