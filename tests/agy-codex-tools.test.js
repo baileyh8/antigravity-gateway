@@ -12,13 +12,19 @@ const profile = { clientProfile: CODEX_CLIENT_PROFILE }, model = 'gemini-3.8-fla
 const input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Keep exec_command and /tmp/workdir literally unchanged in this user instruction.' }] }];
 const normalize = (messages = input) => normalizeResponses({ tools: structuredClone(fixture.tools), input: messages });
 
-test('actual Codex identity requires the captured version, Responses, originator and explicit session', () => {
+test('Codex identity requires Responses, originator and explicit session', () => {
   const req = { headers: { ...fixture.headers }, socket: { remoteAddress: '127.0.0.1' } }, n = normalize();
   assert.equal(capturedNativeClient(req, n), CODEX_CLIENT_PROFILE);
   const manager = new SessionManager(), identity = manager.resolveIdentity(req, {}, n);
   assert.equal(identity.nativeClientProfile, CODEX_CLIENT_PROFILE);assert.equal(identity.nativeCompaction, undefined);
-  for (const headers of [{ ...req.headers, originator: 'other' }, { ...req.headers, 'session-id': '' }, { ...req.headers, 'user-agent': 'codex_exec/0.159.3 (Mac)' }, { ...req.headers, 'user-agent': 'other/0.159.2' }]) {
+  for (const headers of [{ ...req.headers, originator: 'other' }, { ...req.headers, 'session-id': '' }, { ...req.headers, originator: undefined }]) {
     assert.equal(capturedNativeClient({ headers }, n), '');
+  }
+  // A provider proxy in front of Codex forwards originator and session-id but
+  // sends its own runtime user agent. Identity must survive that replacement,
+  // otherwise the largest traffic segment silently loses every translation.
+  for (const ua of ['Bun/1.4.4', 'codex_exec/0.159.3 (Mac)', 'other/0.159.2', '']) {
+    assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': ua } }, n), CODEX_CLIENT_PROFILE);
   }
   for (const protocol of ['anthropic', 'chat']) assert.equal(capturedNativeClient(req, { ...n, protocol }), '');
   assert.equal(capturedNativeClient({ headers: { 'user-agent': 'claude-cli/2.1.285 (external)', 'x-claude-code-session-id': 's' } }, { protocol: 'anthropic' }), 'claude-code-2.1.285');

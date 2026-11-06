@@ -6,6 +6,7 @@ const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
 const { CODEX_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE } = require('./agy-client-profile');
 const { FINISH_METADATA } = require('./agy-structured-output');
 const { HERMES_CLIENT_PROFILE, capturedHermesTool, hermesSystemText, toolReferences } = require('./agy-hermes-profile');
+const { DSH_CLIENT_PROFILE, capturedDshBash, capturedDshTool, dshSystemText } = require('./agy-dsh-profile');
 
 // Native names and metadata come from captured agy declarations. Only the
 // capabilities the actual client declares are exposed; this is not an agy
@@ -52,6 +53,36 @@ const hermesRules = {
   terminal: { name: 'run_command', hermes: true, parameters: { command: 'CommandLine', background: 'RunInBackground', timeout: 'ExecutionTimeoutSeconds', workdir: 'Cwd', pty: 'Tty', notify: 'Notify', heartbeat: 'HeartbeatSeconds', persist_on_release: 'PersistOnRelease' } }
 };
 
+// DeepSeek Harness declares lowercase names that read like ordinary words
+// (`read`, `write`, `edit`, `bash`). Its declarations carry their own field
+// set, so each rule states that exact set and supported() rejects anything
+// that only looks similar.
+const dshRules = {
+  read: {
+    name: 'view_file', dsh: true, lineRange: true,
+    parameters: { file_path: 'AbsolutePath', offset: 'StartLine', limit: 'EndLine' }
+  },
+  write: {
+    name: 'write_to_file', dsh: true,
+    parameters: { file_path: 'TargetFile', content: 'CodeContent' }
+  },
+  edit: {
+    name: 'replace_file_content', dsh: true,
+    parameters: {
+      file_path: 'TargetFile', old_string: 'TargetContent',
+      new_string: 'ReplacementContent', replace_all: 'AllowMultiple'
+    }
+  },
+  bash: {
+    name: 'run_command', dsh: true, escalation: true,
+    parameters: {
+      command: 'CommandLine', description: 'Description', timeoutMs: 'TimeoutMs',
+      workdir: 'Cwd', run_in_background: 'RunInBackground',
+      sandbox_permissions: 'BypassSandbox', justification: 'Justification'
+    }
+  }
+};
+
 const claude304Rules = {
   Write: {
     name: 'write_to_file',
@@ -80,11 +111,13 @@ const profiles = {
   [CLAUDE_284_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claudeRules },
   [CLAUDE_304_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claude304Rules },
   [CODEX_CLIENT_PROFILE]: { protocol: 'responses', rules: codexRules },
-  [HERMES_CLIENT_PROFILE]: { protocol: 'chat', rules: hermesRules }
+  [HERMES_CLIENT_PROFILE]: { protocol: 'chat', rules: hermesRules },
+  [DSH_CLIENT_PROFILE]: { protocol: 'chat', rules: dshRules }
 };
 
 function supported(tool, rule) {
   if (rule.hermes) return capturedHermesTool(tool);
+  if (rule.dsh) return tool.name === 'bash' ? capturedDshBash(tool) : capturedDshTool(tool);
   const s = tool.schema;
   return !tool.internal && (!tool.kind || tool.kind === 'function') && s?.type === 'object'
     && String(tool.description || '').split('\n')[0] === rule.description
@@ -164,6 +197,14 @@ function declaration(tool, rule, mappings, target) {
       if (p.justification) properties.Justification = { ...properties.Justification, description: 'User-facing approval question when BypassSandbox is true; omit otherwise.' };
       if (p.prefix_rule) properties.ApprovalPrefix = { ...properties.ApprovalPrefix, description: 'Reusable approval prefix for CommandLine, only when BypassSandbox is true; for example ["git", "pull"].' };
     }
+    // The captured dsh bash declaration advertises its sandbox escalation as
+    // an enumeration of mode names. The native command tool takes a boolean,
+    // so translate the capability rather than forwarding an enum the native
+    // executor would reject.
+    if (rule.escalation) {
+      properties.BypassSandbox = { type: 'boolean', description: 'False uses the default sandbox. True requests unsandboxed execution through existing approval controls. Omit for the default.' };
+      if (p.justification) properties.Justification = { ...properties.Justification, description: 'User-facing approval question when BypassSandbox is true; omit otherwise.' };
+    }
     if (rule.session) {
       properties.Action = { type: 'string', enum: ['status', 'send_input'], description: 'status polls recent output without writing; send_input writes Input to the running task.' };
       required.push('Action');
@@ -204,6 +245,13 @@ function clientCall(call, tool, rule, target) {
     if (typeof input.sandbox_permissions !== 'boolean') return fail();
     input.sandbox_permissions = input.sandbox_permissions ? 'require_escalated' : 'use_default';
   }
+  // dsh advertises escalation as a target mode, the native tool as a boolean.
+  // Its default sandbox already permits workspace writes, so only the wider
+  // target maps to an unsandboxed request; the narrower one keeps the default.
+  if (rule.escalation && Object.hasOwn(input, 'sandbox_permissions')) {
+    if (typeof input.sandbox_permissions !== 'boolean') return fail();
+    input.sandbox_permissions = input.sandbox_permissions ? 'danger-full-access' : 'workspace-write';
+  }
   if (rule.session) {
     if (!['status', 'send_input'].includes(args.Action)) return fail();
     if (args.Action === 'status' && args.Input !== undefined && args.Input !== '') return fail();
@@ -238,6 +286,7 @@ function providerCall(call, tool, rule, target) {
     if (Object.hasOwn(input, 'limit')) args.EndLine = (input.offset ?? 1) + input.limit - 1;
   }
   if (tool.name === 'exec_command' && Object.hasOwn(input, 'sandbox_permissions')) args.BypassSandbox = input.sandbox_permissions === 'require_escalated';
+  if (rule.escalation && Object.hasOwn(input, 'sandbox_permissions')) args.sandbox_permissions = input.sandbox_permissions === 'danger-full-access';
   if (rule.session) args.Action = input.chars ? 'send_input' : 'status';
   const mapped = { ...call, name: rule.name, arguments: args };
   try { if (!isDeepStrictEqual(clientCall(mapped, tool, rule, target).arguments, input)) return call; }
@@ -263,7 +312,9 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
     ...(toolChoice.function ? { function: { ...toolChoice.function, name: translated.name } } : {}) };
   const system = recognized ? clientProfile === HERMES_CLIENT_PROFILE
     ? hermesSystemText(String(normalized.system || ''), mappings, target === 'robin' ? { identity: '' } : {})
-    : systemText(normalized.system, target) : normalized.system;
+    : clientProfile === DSH_CLIENT_PROFILE
+      ? dshSystemText(normalized.system, mappings)
+      : systemText(normalized.system, target) : normalized.system;
   return {
     normalized: mappings.size || system !== normalized.system ? { ...normalized, system, toolChoice,
       tools: (normalized.tools || []).map(t => mappings.has(t.name) ? declaration(t, mappings.get(t.name), mappings, target) : t) } : normalized,

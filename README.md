@@ -66,7 +66,7 @@ Responses 工具结果中的图片等附件只通过原生媒体传递，不再�
 
 当前源码整合上游 `db939d4`（1.7.1 及其后续修复），新增 `manager/` 独立后台，通过回环 `/_admin/v1` 访问基座。两个进程独立运行，代理凭据和密钥保留在基座。上游 `54ae06e`（1.7.2）已评估，OAuth 候选改动尚未合入。
 
-- Cloud Code 原生 Go 传输、会话持久化、客户端上下文压缩及工具映射；包含 Claude Code 2.1.284/2.1.304、Codex 和 Hermes 的定向适配。未知客户端保持兼容路径，不代执行客户端工具。
+- Cloud Code 原生 Go 传输、会话持久化、客户端上下文压缩及工具映射；包含 Claude Code 2.1.284/2.1.304、Codex（含本地代理转发）、Hermes 和 DeepSeek Harness 的定向适配。未知客户端保持兼容路径，不代执行客户端工具。
 - 取消或超时不再连锁重试、冷却健康账号；修复容器 PID 复用导致的会话锁死锁、目录锁交接和完整请求排空，保留运行时预算通知的位置以改善前缀缓存。
 - Robin 连接丢失后可使用客户端提供的完整工具历史继续；不虚构工具回执或自动恢复已删除账号。
 - Windows 新增 `add-gemini-win`，使用本机 Chrome/Edge 登录并保存独立的 `gemini-win-accounts/`。此流程要求 Windows 本机浏览器，不能替代 VPS 看板的 OAuth 添加流程。Windows 通道不支持非视频附件；视频沿用 Cloud Code 路由，原生 usage 仍未知。
@@ -712,7 +712,7 @@ The built-in `/dashboard` page and all subroutes return 404. Deployments may kee
 
 This source integrates upstream `db939d4` (1.7.1 plus subsequent fixes). The separate admin source is in `manager/`, with static pages and a Node management API calling the loopback `/_admin/v1` contract. Proxy credentials and API keys remain in the core. Upstream `54ae06e` (1.7.2) was reviewed; its OAuth candidates are not included.
 
-- Native Go Cloud Code transport, persisted sessions, compaction and targeted Claude Code 2.1.284/2.1.304, Codex and Hermes tool adapters. Unknown clients retain compatibility behavior; tools execute on clients.
+- Native Go Cloud Code transport, persisted sessions, compaction and targeted Claude Code 2.1.284/2.1.304, Codex (including requests relayed by a local provider proxy), Hermes and DeepSeek Harness tool adapters. Unknown clients retain compatibility behavior; tools execute on clients.
 - Cancellation/timeout no longer cascades across healthy accounts. Includes container PID-reuse lease fixes, directory ownership and transaction draining, and position-preserving runtime budget notices for prefix caching.
 - Robin can forward complete client-supplied tool history after connection loss, without inventing receipts or restoring deleted accounts.
 - `add-gemini-win` adds local Windows Chrome/Edge login with separate `gemini-win-accounts/` credentials. It requires a Windows browser and does not replace VPS dashboard OAuth. Non-video attachments are unsupported on this channel; video retains Cloud Code routing and native usage remains unknown.
