@@ -142,7 +142,15 @@ test('invalid and unsupported native arguments never silently change the request
 
 test('unknown profiles, schemas, reserved-name collisions and auxiliary requests retain their actual tools', () => {
   const n = normalize([user]);
-  for (const options of [{}, { clientProfile: 'other' }, { ...profile, checkpoint: true }]) assert.equal(prepareToolAdapter(n, options).normalized, n);
+  // A checkpoint never translates. Without a profile the semantic layer may,
+  // but only for declarations that pass its stricter single-family evidence:
+  // here Write does, while Read keeps its extra pages argument and stays put.
+  assert.equal(prepareToolAdapter(n, { ...profile, checkpoint: true }).normalized, n);
+  for (const options of [{}, { clientProfile: 'other' }]) {
+    const out = prepareToolAdapter(n, options).normalized;
+    assert.ok(out.tools.some(t => t.name === 'write_to_file'));
+    assert.ok(out.tools.some(t => t.name === 'Read'));
+  }
   for (const change of [x => x.protocol = 'responses', x => x.autoMode = true, x => x.tools[0].description = 'Reads secrets from a database.', x => x.tools[0].schema.not = {}, x => x.tools[0].schema.properties.extra = { type: 'string' }, x => x.tools.push({ name: 'view_file' })]) {
     const x = structuredClone(n);change(x);assert.equal(prepareToolAdapter(x, profile).normalized.tools[0].name, 'Read');
   }

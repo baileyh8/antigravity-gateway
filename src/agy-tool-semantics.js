@@ -33,6 +33,7 @@ for (const [role, names] of Object.entries(ROLES)) for (const name of names) ROL
 const FAMILIES = {
   read: {
     native: 'view_file',
+    names: ['read', 'read_file', 'readfile', 'read_file_content', 'open_file', 'openfile', 'view_file', 'cat', 'file_read', 'read_text_file'],
     required: ['path'],
     optional: ['offset', 'limit'],
     strings: ['path'],
@@ -42,6 +43,7 @@ const FAMILIES = {
   },
   write: {
     native: 'write_to_file',
+    names: ['write', 'write_file', 'writefile', 'create_file', 'save_file', 'write_to_file', 'save', 'create'],
     required: ['path', 'content'],
     optional: [],
     strings: ['path', 'content'],
@@ -49,6 +51,7 @@ const FAMILIES = {
   },
   edit: {
     native: 'replace_file_content',
+    names: ['edit', 'edit_file', 'editfile', 'replace', 'str_replace', 'str_replace_editor', 'replace_file_content', 'patch_file', 'apply_edit'],
     required: ['path', 'old', 'new'],
     optional: ['replaceAll'],
     strings: ['path', 'old', 'new'],
@@ -57,6 +60,7 @@ const FAMILIES = {
   },
   exec: {
     native: 'run_command',
+    names: ['bash', 'sh', 'shell', 'exec', 'run_command', 'terminal', 'exec_command', 'shell_command', 'command', 'run_shell'],
     required: ['command'],
     optional: ['description', 'workdir', 'timeout', 'background'],
     strings: ['command', 'description', 'workdir'],
@@ -111,7 +115,17 @@ function classifyTool(tool) {
       if (!typeMatches(family, role, type)) { consistent = false; break; }
     }
     if (!consistent) continue;
-    return { family, familyName, roles: byRole };
+    return {
+      family,
+      familyName,
+      roles: byRole,
+      // Shape alone cannot separate a real file reader from a custom tool that
+      // happens to take one path argument. When this is the only family in the
+      // request, parameterCount and nameKnown are the additional evidence: a
+      // bare one-argument tool stays untranslated.
+      parameterCount: entries.length,
+      nameKnown: family.names.includes(String(tool.name || '').toLowerCase())
+    };
   }
   return null;
 }

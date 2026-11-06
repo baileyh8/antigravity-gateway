@@ -37,9 +37,22 @@ test('a tool that merely shares a name is never translated', () => {
   assert.ok(names(out.normalized.tools).includes('read'));
 });
 
-test('one family alone is too little evidence without a captured profile', () => {
-  const out = prepareToolAdapter(normalizeChat(payload([structuredClone(READ)])), { clientProfile: '' });
+test('a lone one-argument declaration stays untranslated', () => {
+  const bare = fn('open_file', { path: { type: 'string' } }, ['path']);
+  const out = prepareToolAdapter(normalizeChat(payload([bare])), { clientProfile: '' });
   assert.deepEqual(names(out.normalized.tools), ['open_file']);
+});
+
+test('a single family with two arguments and a known name is accepted', () => {
+  const lone = fn('open_file', { path: { type: 'string' }, offset: { type: 'number' } }, ['path']);
+  const out = prepareToolAdapter(normalizeChat(payload([lone])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['view_file']);
+});
+
+test('a single family with an unfamiliar name stays untranslated', () => {
+  const lone = fn('inspect_config', { path: { type: 'string' }, offset: { type: 'number' } }, ['path']);
+  const out = prepareToolAdapter(normalizeChat(payload([lone])), { clientProfile: '' });
+  assert.deepEqual(names(out.normalized.tools), ['inspect_config']);
 });
 
 test('two declarations competing for the same native tool are both left alone', () => {

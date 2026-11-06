@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.14 - 2026-11-06
+
+- Let a single semantic family qualify when the declaration carries enough evidence, instead of requiring two families unconditionally. A client that declares only one tool used to get nothing even when that tool was an unambiguous file reader.
+- The stricter evidence is: at least two declared arguments, and a tool name from that family's known aliases. A one-argument declaration is indistinguishable from a custom tool and stays as submitted, and so does a two-argument tool with an unfamiliar name.
+- Names are only a secondary filter here, never a primary signal: a declaration still has to pass the full role classification and the bijection check before the name matters.
+- No change to the two-family path, captured profiles, timeouts, quota, affinity or concurrency.
+
 ## 1.7.1-bailey.13 - 2026-11-06
 
 - Translate tool declarations by argument shape when no captured profile matches. A client the gateway has never seen now gets `read`, `write`, `edit` and `exec` mappings if its declarations have the right parameter roles and types, instead of falling through untranslated.
