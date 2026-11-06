@@ -8,6 +8,19 @@
 // argument shape. Every property is mapped to a role first; an unplaceable
 // property disqualifies the whole tool, because a partial shape would make the
 // forward and reverse translations disagree.
+//
+// Scope note, so the gaps read as deliberate rather than forgotten. The agy
+// client advertises a larger native tool set, but only these families have a
+// captured declaration we can translate onto:
+//   mapped   view_file, write_to_file, replace_file_content, run_command,
+//            manage_task, search_web
+//   no schema  grep_search, find_by_name, list_dir, search_in_file,
+//              read_url_content - names are known from the client's tool
+//              inventory, their parameter objects are assembled at runtime and
+//              are not in the binary, so nothing is guessed here
+//   no runtime send_message, schedule, invoke_subagent, define_subagent,
+//              manage_subagents - these drive Antigravity's own subagent
+//              runtime, which a passthrough gateway does not provide
 
 const ROLES = {
   path: ['file_path', 'path', 'absolute_path', 'target_file', 'file', 'filename', 'filepath'],

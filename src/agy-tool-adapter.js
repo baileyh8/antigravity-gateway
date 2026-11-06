@@ -14,6 +14,11 @@ const { arbitrate } = require('./agy-tool-mapping');
 // translations it never had, so an operator must be able to restore the strict
 // passthrough behavior without editing code.
 const SEMANTIC_MAPPING = String(process.env.ANTIGRAVITY_TOOL_SEMANTICS || 'on').trim().toLowerCase() !== 'off';
+// Off by default: a per-request line is noise on a busy gateway. Enabling the
+// trace reports what the adapter decided; enabling the detail additionally
+// names every translation pair, which is what a support question needs.
+const TOOL_MAPPING_TRACE = String(process.env.ANTIGRAVITY_TOOL_MAPPING_TRACE || '').trim().toLowerCase() === 'on';
+const TOOL_MAPPING_DETAIL = String(process.env.ANTIGRAVITY_TOOL_MAPPING_DEBUG || '').trim().toLowerCase() === 'on';
 
 // Native names and metadata come from captured agy declarations. Only the
 // capabilities the actual client declares are exposed; this is not an agy
@@ -352,12 +357,26 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
     toClient: call => byNative.has(call.name) ? clientCall(call, source.get(call.name), byNative.get(call.name), target) : call,
     toProvider: call => mappings.has(call.name) ? providerCall(call, source.get(mappings.get(call.name).name), mappings.get(call.name), target) : call,
     adapted: mappings.size > 0,
+    profileName: clientProfile || '',
     mappingCount: mappings.size,
     // Count only what the client declared. The gateway injects its own internal
     // tools (image generation) before this point, and including them would make
     // the reported fraction disagree with the mapping count it sits beside.
-    toolCount: (normalized.tools || []).filter(tool => !tool.internal).length
+    toolCount: (normalized.tools || []).filter(tool => !tool.internal).length,
+    // Only materialised when the operator asked for the detail line, so the
+    // hot path stays allocation-free.
+    pairs: TOOL_MAPPING_DETAIL
+      ? [...mappings].map(([from, rule]) => `${from}\u2192${rule.name}`)
+      : []
   };
 }
 
-module.exports = { prepareToolAdapter };
+// Returns a one-line summary when tracing is enabled, otherwise null. The
+// caller decides where to write it; the adapter never logs on its own.
+function describeToolMapping(adapter) {
+  if (!adapter || !TOOL_MAPPING_TRACE) return null;
+  const base = `profile=${adapter.profileName || '-'} mapped=${adapter.mappingCount}/${adapter.toolCount}`;
+  return TOOL_MAPPING_DETAIL && adapter.pairs?.length ? `${base} pairs=${adapter.pairs.join(', ')}` : base;
+}
+
+module.exports = { prepareToolAdapter, describeToolMapping };

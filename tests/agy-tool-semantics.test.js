@@ -3,7 +3,7 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const { classifyTool, buildRule } = require('../src/agy-tool-semantics');
 const { isBijective, arbitrate } = require('../src/agy-tool-mapping');
-const { prepareToolAdapter } = require('../src/agy-tool-adapter');
+const { prepareToolAdapter, describeToolMapping } = require('../src/agy-tool-adapter');
 const { normalizeChat } = require('../src/protocol');
 
 // Declarations written the way an unfamiliar client would send them: no
@@ -93,6 +93,16 @@ test('a multi-command editor and a free-form patch tool are both declined', () =
   assert.equal(classifyTool(normalizeChat(payload([editor])).tools[0]), null);
   const v4a = fn('apply_patch', { patch: { type: 'string' } }, ['patch']);
   assert.equal(classifyTool(normalizeChat(payload([v4a])).tools[0]), null);
+});
+
+test('the mapping trace stays silent unless it is turned on', () => {
+  const n = normalizeChat(payload([structuredClone(READ), structuredClone(EXEC)]));
+  const out = prepareToolAdapter(n, { clientProfile: '' });
+  assert.equal(describeToolMapping(out), null);
+  assert.equal(out.mappingCount, 2);
+  assert.equal(out.toolCount, 2);
+  assert.deepEqual(out.pairs, []);
+  assert.equal(out.profileName, '');
 });
 
 test('two declarations competing for the same native tool are both left alone', () => {
