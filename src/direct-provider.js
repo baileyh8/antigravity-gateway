@@ -18,7 +18,7 @@ const { AgyImageStore, registerImagePart } = require('./agy-image-references');
 const { agentEnvelope, generationProfile, nativeSchema } = require('./agy-request-profile');
 const { prepareStructuredOutput, finishResult, finishResponse } = require('./agy-structured-output');
 const { nativeClientToolResponse } = require('./agy-tool-results');
-const { prepareToolAdapter } = require('./agy-tool-adapter');
+const { prepareToolAdapter, describeToolMapping } = require('./agy-tool-adapter');
 const { requestContext } = require('./request-log');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
 
@@ -429,6 +429,10 @@ function buildDirectRequest(normalized, model, projectId, sessionId, repairInstr
     logContext.toolCount = native.toolAdapter.toolCount;
     logContext.mappedCount = native.toolAdapter.mappingCount;
   }
+  // Opt-in trace line. It cannot be folded into the request-start trace because
+  // the adapter only exists here, after normalisation and media resolution.
+  const mappingTrace = describeToolMapping(native.toolAdapter);
+  if (mappingTrace) console.log(`[Antigravity Gateway] tool mapping ${mappingTrace}`);
   const structured = prepareStructuredOutput(normalized, native);
   normalized = structured.normalized;
   native.structuredSchema = structured.schema;
