@@ -42,18 +42,26 @@ function capturedNativeClient(req, normalized) {
   return capturedCodexClient(req, normalized) ? CODEX_CLIENT_PROFILE : '';
 }
 
-// Codex CLI identifies its protocol with `originator` and its conversation with
-// `session-id`. A local relay in front of Codex (for example a provider proxy
-// launched under Bun) forwards both but replaces the user agent with its own
-// runtime string, which previously dropped the whole Codex profile and left
-// exec_command / write_stdin / view_image untranslated. The declaration match
-// in supported() still decides whether any tool is actually rewritten, so
-// accepting a replaced user agent cannot change an unmatched request.
+// Codex surfaces identify their protocol with `originator`. A provider proxy in
+// front of Codex forwards that header only when the provider opts in through
+// forwardClientHeaders, and it drops `session-id` entirely because that name is
+// not on the forwardable list. Requiring the session header therefore made the
+// profile unreachable for every relayed request: the user agent arrived as the
+// runtime's own string (Bun/1.4.4) and the session header never arrived at all.
+// The originator value alone is Codex-specific, and the declaration match in
+// supported() still decides whether any tool is actually rewritten, so none of
+// this can change an unmatched request.
+const CODEX_ORIGINATORS = new Set([
+  'codex_exec',
+  'codex_cli_rs',
+  'codex_app',
+  'codex_work_desktop',
+  'Codex Desktop'
+]);
+
 function capturedCodexClient(req, normalized) {
   if (normalized.protocol !== 'responses') return false;
-  const headers = req?.headers || {};
-  if (headers.originator !== 'codex_exec') return false;
-  return typeof headers['session-id'] === 'string' && Boolean(headers['session-id'].trim());
+  return CODEX_ORIGINATORS.has(String(req?.headers?.originator || '').trim());
 }
 
-module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE };
+module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CODEX_ORIGINATORS, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE };

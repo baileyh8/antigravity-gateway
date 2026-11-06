@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.12 - 2026-11-06
+
+- Fix the Codex profile still not matching real relayed traffic. A local provider proxy forwards `originator` only when the provider opts in through `forwardClientHeaders`, and it drops `session-id` because that name is not on its forwardable list. The previous build required both headers, so the profile was unreachable for every relayed request even after the user-agent check was relaxed.
+- `originator` alone now selects the profile, and it accepts every value the Codex surfaces emit: `codex_exec`, `codex_cli_rs`, `codex_app`, `codex_work_desktop`, `Codex Desktop`. `session-id` is no longer required; when it is absent, conversation identity falls back to the existing transcript seed.
+- A missing `session-id` only weakens conversation reuse, never translation: `supported()` still decides per declaration. No change to timeouts, quota reserves, affinity limits, concurrency or model discovery.
+
 ## 1.7.1-bailey.11 - 2026-11-06
 
 - Recognize Codex behind a local provider proxy. `originator: codex_exec` plus a non-empty `session-id` on a Responses request now selects the Codex profile even when the relay replaces `user-agent` with its own runtime string (for example `Bun/1.4.4`). Previously that replacement silently dropped the whole profile, leaving `exec_command`, `write_stdin` and `view_image` untranslated for the largest request segment.
