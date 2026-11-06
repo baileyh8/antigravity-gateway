@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.11 - 2026-11-06
+
+- Recognize Codex behind a local provider proxy. `originator: codex_exec` plus a non-empty `session-id` on a Responses request now selects the Codex profile even when the relay replaces `user-agent` with its own runtime string (for example `Bun/1.4.4`). Previously that replacement silently dropped the whole profile, leaving `exec_command`, `write_stdin` and `view_image` untranslated for the largest request segment.
+- Add a DeepSeek Harness profile. `deepseek-harness/<version>` plus one complete captured system-prompt section and one exactly captured declaration selects it; `read`, `write`, `edit` and `bash` then translate to `view_file`, `write_to_file`, `replace_file_content` and `run_command` with their native field names.
+- Translate only the captured dsh sentences that name a mapped tool. User messages, project rules and shell examples keep their literal wording, and a declaration that merely resembles one of these names selects nothing.
+- Map dsh sandbox escalation onto the native boolean. Its default sandbox already permits workspace writes, so only the wider `danger-full-access` target becomes an unsandboxed request. No change to timeouts, quota reserves, affinity, concurrency or model discovery.
+
 ## 1.7.1-bailey.10 - 2026-11-06
 
 - Align the default Cloud Code client identity with the official agy CLI 1.5.1 build: `antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)` replaces the stale 1.4.2 / `cl=1001591392` pair. Community reproductions show a stale pair can hide Gemini quota groups and trigger upstream 404s.

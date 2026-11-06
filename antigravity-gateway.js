@@ -771,7 +771,11 @@ function taskIdentityOptions(model) {
 
 function identityTrace(identity = {}) {
   const short = (value) => String(value || '-').slice(0, 10);
-  return `request=${short(identity.requestId)} client=${identity.clientLabel || short(identity.clientId)} session=${short(identity.sessionId)} affinity=${short(identity.routingKey)}`;
+  // The selected client profile decides whether declarations are translated.
+  // Emitting it here is the only way to tell "not recognized" apart from
+  // "recognized but the declaration did not match" after a deploy.
+  return `request=${short(identity.requestId)} client=${identity.clientLabel || short(identity.clientId)} session=${short(identity.sessionId)} affinity=${short(identity.routingKey)}`
+    + `${identity.nativeClientProfile ? ` profile=${identity.nativeClientProfile}` : ''}`;
 }
 
 function authorized(req) {
