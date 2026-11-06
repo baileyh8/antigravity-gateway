@@ -37,8 +37,15 @@ const DEFAULT_RETRY_BASE_MS = Math.max(100, Number(process.env.ANTIGRAVITY_DIREC
 // Keep (version, changelist) paired with the official agy CLI release. Google
 // stamps the same changelist into every platform binary of a release, and a
 // stale pair can hide Gemini quota groups or trigger upstream 404s.
-const AGY_CLI_VERSION = process.env.ANTIGRAVITY_CLI_VERSION || '1.5.1';
-const AGY_CLI_CHANGELIST = process.env.ANTIGRAVITY_CLI_CHANGELIST || '1014269460';
+// The user agent must describe the client we actually imitate. The native
+// transport is built with Go 1.27.2 and no boringcrypto; the official 1.5.1
+// binary is Go 1.28 RC with boringcrypto, which produces a different
+// ClientHello (cipher suites, extension set, curve preference). Advertising
+// 1.5.1 while the handshake says something else is a worse mismatch than an
+// honest older identity, so the default stays on the version whose transport
+// we match. Raise both together once the native binaries are rebuilt.
+const AGY_CLI_VERSION = process.env.ANTIGRAVITY_CLI_VERSION || '1.4.2';
+const AGY_CLI_CHANGELIST = process.env.ANTIGRAVITY_CLI_CHANGELIST || '1001591392';
 const DEFAULT_USER_AGENT = `antigravity/cli/${AGY_CLI_VERSION} (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=${AGY_CLI_CHANGELIST}; auth_method=consumer)`;
 const MODEL_SLUG = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const THOUGHT_SIGNATURE_SENTINEL = 'skip_thought_signature_validator';
