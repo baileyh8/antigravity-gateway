@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.10 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.20 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,9 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.10
+### 当前源码版本：1.7.1-bailey.20
 
-默认客户端身份对齐官方 agy CLI 1.5.1 构建：`antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)`，替换陈旧的 1.4.2 / `cl=1001591392`。旧版本对可能让 Gemini 额度组不可见并触发上游 404。版本号与 changelist 必须成对，可用 `ANTIGRAVITY_CLI_VERSION` / `ANTIGRAVITY_CLI_CHANGELIST` 覆盖；`os_type`、`arch` 仍取运行时值。其余行为不变。
+客户端身份对齐官方 agy CLI 1.5.2：`antigravity/cli/1.5.2 (... cl=1015175089; auth_method=consumer)`。版本号与 changelist 必须成对，可用 `ANTIGRAVITY_CLI_VERSION` / `ANTIGRAVITY_CLI_CHANGELIST` 覆盖；`os_type`、`arch` 仍取运行时值。本版本的工具映射按声明形状自动识别，未识别的客户端也能转换到上游原生工具名；映射前需通过可逆性检查，冲突时保持原样透传。
 
 请求总超时后，Responses 流明确返回 `response.failed` / `request_timeout`，保留响应 ID、事件序号和已输出内容；日志按有效失败状态 504 记录，SSE 已发出的 HTTP 200 响应头不变。迟到的上游回调不能再补发成功结束。总超时仍为默认 300 秒。
 
@@ -595,8 +595,11 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | 网关监听端口 |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | 空 | 自定义网关 Key；非本机监听时必须设置 |
 | `ANTIGRAVITY_CLI_PATH` | 自动查找 `agy` | 指定 agy 路径 |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.1` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1014269460` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.2` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1015175089` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
+| `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | 按参数形状识别未抓包客户端的工具声明；设为 `off` 恢复严格透传 |
+| `ANTIGRAVITY_TOOL_MAPPING_TRACE` | 空 | 设为 `on` 时每请求输出 `profile=... mapped=N/M` 日志 |
+| `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | 空 | 设为 `on` 时在上一项基础上输出逐对映射明细 |
 | `ANTIGRAVITY_LOCAL_AUTH_FILE` | 自动读取本地登录态 | 指定本地 agy 凭据文件 |
 | `ANTIGRAVITY_GATEWAY_CONFIG_DIR` | `~/.antigravity-gateway` | 账号、额度、用量和客户端配置目录 |
 | `ANTIGRAVITY_DEFAULT_MODEL` | `gemini-3.8-flash-high` | 请求未提供模型时使用 |
@@ -690,9 +693,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.10
+### Current source version: 1.7.1-bailey.20
 
-The default Cloud Code client identity now matches the official agy CLI 1.5.1 build: `antigravity/cli/1.5.1 (... cl=1014269460; auth_method=consumer)` replaces the stale 1.4.2 / `cl=1001591392` pair, which can hide Gemini quota groups and trigger upstream 404s. Version and changelist are configurable as a pair; `os_type` and `arch` remain runtime values. All other behavior is unchanged.
+The client identity matches the official agy CLI 1.5.2: `antigravity/cli/1.5.2 (... cl=1015175089; auth_method=consumer)`. Version and changelist are configurable as a pair; `os_type` and `arch` remain runtime values. Tool mapping now identifies declarations by argument shape, so clients without a captured profile can also translate to native tool names; every inferred mapping must pass a reversibility check, and contested or unmatched declarations stay as submitted.
 
 On the overall request deadline, Responses streams end with `response.failed` / `request_timeout`, preserving response IDs, event sequence and partial output. Logs record the effective failure status 504 even when SSE headers were already sent as HTTP 200. Late provider callbacks cannot append a successful completion. The default overall deadline remains 300 seconds.
 
@@ -1033,8 +1036,11 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | Listen port |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | empty | Custom gateway key; required for non-loopback binding |
 | `ANTIGRAVITY_CLI_PATH` | auto-detected | Custom agy path |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.1` | agy CLI version in the client identity; keep paired with the changelist |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1014269460` | Changelist (`cl`) of the same official build; update together with the version |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.2` | agy CLI version in the client identity; keep paired with the changelist |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1015175089` | Changelist (`cl`) of the same official build; update together with the version |
+| `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | Identify uncaptured clients by declaration shape; `off` restores strict passthrough |
+| `ANTIGRAVITY_TOOL_MAPPING_TRACE` | empty | `on` logs `profile=... mapped=N/M` per request |
+| `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | empty | `on` adds the per-tool mapping pairs to the trace |
 | `ANTIGRAVITY_LOCAL_AUTH_FILE` | auto-detected | Custom local agy credential file |
 | `ANTIGRAVITY_GATEWAY_CONFIG_DIR` | `~/.antigravity-gateway` | Accounts, quota, usage, and generated client configuration |
 | `ANTIGRAVITY_DEFAULT_MODEL` | `gemini-3.8-flash-high` | Used only when a request omits `model` |
