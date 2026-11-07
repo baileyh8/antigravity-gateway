@@ -22,7 +22,7 @@
 
 ## 1.7.1-bailey.17 - 2026-11-06
 
-- Add an opt-in mapping trace: `ANTIGRAVITY_TOOL_MAPPING_TRACE=on` logs `profile=... mapped=N/M` per request, and `ANTIGRAVITY_TOOL_MAPPING_DEBUG=on` adds the translation pairs (`open_file\u2192view_file`). Both default to off, so a busy gateway stays quiet.
+- Add an opt-in mapping trace: `ANTIGRAVITY_TOOL_MAPPING_TRACE=on` logs `profile=... mapped=N/M` per request, and `ANTIGRAVITY_TOOL_MAPPING_DEBUG=on` adds the translation pairs (`open_file→view_file`). Both default to off, so a busy gateway stays quiet.
 - The trace is a separate line rather than extra fields on the request-start trace: the adapter only exists after normalisation and media resolution, so the decision is not known when that line is written.
 - Document the native tool scope in the semantics module so the unmapped tools read as deliberate. `grep_search`, `find_by_name`, `list_dir`, `search_in_file` and `read_url_content` are known by name but their parameter objects are assembled at runtime and are absent from the client binary; `send_message`, `schedule`, `invoke_subagent`, `define_subagent` and `manage_subagents` drive Antigravity's own subagent runtime, which a passthrough gateway does not provide.
 - No change to which declarations get translated, nor to timeouts, quota, affinity or concurrency.
