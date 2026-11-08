@@ -9,82 +9,44 @@ class ProviderRouterError extends Error {
   }
 }
 
+// With the Robin and Gemini Windows channels removed, every request routes to
+// the Cloud Code pool. The router remains so call sites keep a stable seam and
+// a future provider could be added without touching the gateway core.
 class ProviderRouter {
-  constructor({ cloudcodePool, robinPool } = {}) {
-    if (!cloudcodePool || !robinPool) throw new Error('ProviderRouter requires cloudcodePool and robinPool');
+  constructor({ cloudcodePool } = {}) {
+    if (!cloudcodePool) throw new Error('ProviderRouter requires cloudcodePool');
     this.cloudcodePool = cloudcodePool;
-    this.robinPool = robinPool;
-    this.catalog = { cloudcode: new Set(), robin: new Set() };
+    this.catalog = { cloudcode: new Set() };
   }
 
   async refreshModels(signal, { cloudcodeDiscovery } = {}) {
-    const [cloudcode, robin] = await Promise.allSettled([
+    const result = await Promise.allSettled([
       cloudcodeDiscovery
         ? cloudcodeDiscovery(signal)
-        : this.cloudcodePool.listModels(signal, { force: true }),
-      this.robinPool.listModels(signal, { force: true })
+        : this.cloudcodePool.listModels(signal, { force: true })
     ]);
+    const cloudcode = result[0];
     if (cloudcode.status === 'fulfilled') this.catalog.cloudcode = new Set(cloudcode.value);
-    if (robin.status === 'fulfilled') this.catalog.robin = new Set(robin.value);
-    if (!this.catalog.cloudcode.size && !this.catalog.robin.size) {
-      throw cloudcode.reason || robin.reason || new ProviderRouterError('没有发现任何可用模型。');
-    }
+    if (!this.catalog.cloudcode.size) throw cloudcode.reason || new ProviderRouterError('没有发现任何可用模型。');
     return this.models();
   }
 
   models() {
-    return [...new Set([...this.catalog.cloudcode, ...this.catalog.robin])].sort();
+    return [...this.catalog.cloudcode].sort();
   }
 
-  providerForModel(model) {
-    const inRobin = this.catalog.robin.has(model)
-      || this.robinPool.ownsModel?.(model)
-      || this.robinPool.supportsModel(model);
-    const inCloudCode = this.catalog.cloudcode.has(model);
-    if (inRobin && !inCloudCode) return 'robin';
-    if (inCloudCode && !inRobin) return 'cloudcode';
-    if (inRobin && inCloudCode) {
-      throw new ProviderRouterError(`模型 ${model} 同时出现在两个 Provider，必须配置唯一能力归属。`, {
-        code: 'ambiguous_model_provider', status: 500
-      });
-    }
-    // Preserve the existing Cloud Code forward-compatibility contract: clients
-    // may request a newly released model before the local catalog refresh has
-    // observed it. Robin-owned IDs never enter this branch because they are
-    // registered by the Robin account capabilities above.
-    return 'cloudcode';
-  }
+  providerForModel() { return 'cloudcode'; }
 
-  async resolveProvider(model, signal) {
-    signal?.throwIfAborted();
-    // An explicitly Robin-owned request must not wait on Cloud Code auth or
-    // catalog discovery. The two providers have independent failure domains.
-    if (this.catalog.robin.has(model) || this.robinPool.ownsModel?.(model) || this.robinPool.supportsModel(model)) {
-      if (!this.catalog.robin.has(model)) {
-        this.catalog.robin = new Set(await this.robinPool.listModels(signal));
-      }
-      return this.providerForModel(model);
-    }
-    // Union discovery belongs to the explicit model-catalog operation, not
-    // the inference hot path. Cloud Code already discovers account abilities
-    // inside its own pool. An unrelated Robin refresh must never delay its
-    // first request or newly released model IDs forwarded unchanged.
-    return this.providerForModel(model);
-  }
+  async resolveProvider() { return 'cloudcode'; }
 
   async send(normalized, model, options = {}) {
-    const providerType = await this.resolveProvider(model, options.signal);
-    const scoped = {
-      ...options,
-      providerType
-    };
-    if (providerType === 'robin') return this.robinPool.send(normalized, model, scoped);
+    const scoped = { ...options, providerType: 'cloudcode' };
     return this.cloudcodePool.send(normalized, model, scoped);
   }
 
-  cancelTask(providerType, normalized, options = {}) {
+  cancelTask() {
     // Cloud Code's stateless tool protocol has no retained task to cancel.
-    return providerType === 'robin' ? this.robinPool.cancelTask(normalized, options) : false;
+    return false;
   }
 }
 

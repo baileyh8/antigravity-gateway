@@ -3,7 +3,6 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { AccountStore } = require('../src/account-store');
 const { AccountPool } = require('../src/account-pool');
-const { RobinAccountPool } = require('../src/robin-account-pool');
 const { ExecutionSlots } = require('../src/admission-control');
 const { quotaReserveReached, quotaRefreshInterval, quotaRank, weightedPickWithRanks } = require('../src/account-scheduling');
 const NOW = Date.parse('2026-11-03T00:00:00Z');
@@ -149,30 +148,3 @@ test('queued local fallback also checks the reserve again after admission', asyn
   await rejected;
   assert.equal(pool.admission.active, 0);
 });
-
-for (const windows of [false, true]) {
-  for (const window of ['weekly','5h']) {
-  test(`${windows ? 'Windows' : 'Robin OAuth'} respects ${window} reserve affinity and retains held task ownership`, async t => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-robin-reserve-'));
-    const store = new AccountStore({ configDir: directory, directoryName: 'robin-accounts' });
-    const quotaKey = windows ? 'geminiWindowsQuota' : 'robinQuota';
-    const accounts = ['a', 'b'].map(id => store.save({ id, subjectId: id, accessToken: 'synthetic',
-      providerType: 'robin', accountType: 'gemini-app', ...(windows ? { authMethod: 'gemini-windows-session' } : {}),
-      capabilities: ['gemini-4-argon'], providerMetadata: { [quotaKey]: { fetchedAt: new Date(NOW).toISOString(),
-        groups: [group('gemini-robin', id === 'a' ? window === '5h' ? .1 : .05 : .8, window)] } } }));
-    let calls = 0;
-    const pool = new RobinAccountPool({ store, now: () => NOW, providerFactory: () => ({
-      send: async () => { calls++; return { text: 'OK', toolCalls: [], usage: {} }; }
-    }) });
-    t.after(() => { pool.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
-    pool.sessions.set('sticky', { accountId: accounts[0].id, at: NOW });
-    assert.equal(pool.selectAccount('gemini-4-argon', 'sticky').account.id, accounts[1].id);
-    const requestKey = JSON.stringify(['client', 'task']);
-    pool.activeTasks.set(requestKey, accounts[0].id);
-    await assert.rejects(pool.send({}, 'gemini-4-argon', { clientId: 'client', sessionId: 'task' }),
-      { code: 'quota_reserve_reached', status: 429 });
-    assert.equal(pool.activeTasks.get(requestKey), accounts[0].id);
-    assert.equal(calls, 0);
-  });
-  }
-}

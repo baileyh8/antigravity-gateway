@@ -4,20 +4,15 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'direct';
 const { AccountPool } = require('../src/account-pool');
-const { RobinAccountPool } = require('../src/robin-account-pool');
-const { ARGON_MODEL } = require('../src/robin-provider');
+const ARGON_MODEL = 'gemini-4-argon';
 const { normalizeChat } = require('../src/protocol');
 const { createServer, runTurn } = require('../antigravity-gateway');
 
 test('Argon video understanding uses the original Cloud Code multimodal route only for video turns', async t => {
-  const cloud = [], robin = [];
+  const cloud = [];
   t.mock.method(AccountPool.prototype, 'send', async (normalized, model) => {
     cloud.push({ normalized, model });
     return { text: 'cloud-video-analysis', toolCalls: [], usage: {} };
-  });
-  t.mock.method(RobinAccountPool.prototype, 'send', async (normalized, model) => {
-    robin.push({ normalized, model });
-    return { text: 'argon-text-answer', toolCalls: [], usageKnown: false };
   });
   const video = normalizeChat({
     model: ARGON_MODEL,
@@ -28,28 +23,23 @@ test('Argon video understanding uses the original Cloud Code multimodal route on
   });
   const videoResult = await runTurn(video, ARGON_MODEL, new AbortController().signal, { sessionId: 'video' });
   assert.equal(videoResult.text, 'cloud-video-analysis');
-  assert.equal(cloud.length, 1); assert.equal(robin.length, 0);
+  assert.equal(cloud.length, 1);
   assert.equal(cloud[0].model, 'gemini-3.8-flash-high');
   assert.equal(cloud[0].normalized.system, video.system);
   assert.equal(cloud[0].normalized.messages[0].parts[1].mediaType, 'video/mp4');
 
   const text = normalizeChat({ model: ARGON_MODEL, messages: [{ role: 'user', content: '只处理文本。' }] });
   const textResult = await runTurn(text, ARGON_MODEL, new AbortController().signal, { sessionId: 'text' });
-  assert.equal(textResult.text, 'argon-text-answer');
-  assert.equal(cloud.length, 1); assert.equal(robin.length, 1);
-  assert.equal(robin[0].model, ARGON_MODEL);
+  assert.equal(textResult.text, 'cloud-video-analysis');
+  assert.equal(cloud.length, 2);
 });
 
 test('all three public protocols route Argon video turns through Cloud Code', async t => {
   delete process.env.ANTIGRAVITY_GATEWAY_API_KEY;
-  const cloud = [], robin = [];
+  const cloud = [];
   t.mock.method(AccountPool.prototype, 'send', async (normalized, model) => {
     cloud.push({ normalized, model });
     return { text: 'cloud-video-analysis', toolCalls: [], usage: {} };
-  });
-  t.mock.method(RobinAccountPool.prototype, 'send', async (normalized, model) => {
-    robin.push({ normalized, model });
-    return { text: 'unexpected-robin-answer', toolCalls: [], usageKnown: false };
   });
 
   const dataUrl = `data:video/mp4;base64,${Buffer.from('synthetic-video').toString('base64')}`;
@@ -100,7 +90,6 @@ test('all three public protocols route Argon video turns through Cloud Code', as
     assert.equal(response.headers.get('x-antigravity-model'), ARGON_MODEL, endpoint);
   }
 
-  assert.equal(robin.length, 0);
   assert.equal(cloud.length, cases.length);
   for (const call of cloud) {
     assert.equal(call.model, 'gemini-3.8-flash-high');
@@ -108,7 +97,7 @@ test('all three public protocols route Argon video turns through Cloud Code', as
   }
 });
 
-test('Argon video routing rejects a fallback model alias that loops back to Robin', async t => {
+test('Argon video routing rejects a fallback model alias that loops back to Argon', async t => {
   const previous = process.env.ANTIGRAVITY_MODEL_ALIASES;
   t.after(() => {
     if (previous === undefined) delete process.env.ANTIGRAVITY_MODEL_ALIASES;

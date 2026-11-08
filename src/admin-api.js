@@ -103,7 +103,7 @@ function accountSnapshot(account, { providerType, accountType, quota }) {
   return {
     id: account.id,
     emailMasked: maskEmail(account.email),
-    tokenUsageKnown: typeof account.tokenUsageKnown === 'boolean' ? account.tokenUsageKnown : providerType !== 'robin',
+    tokenUsageKnown: typeof account.tokenUsageKnown === 'boolean' ? account.tokenUsageKnown : true,
     models: Array.isArray(account.models) ? account.models.map(String) : [],
     providerType,
     accountType,
@@ -127,12 +127,7 @@ function accountList(deps) {
     accountType: 'antigravity',
     quota: deps.quotaManager?.peek?.(account.id) || deps.quotaManager?.get?.(account.id) || null
   }));
-  const robin = (deps.robinAccountPool?.status?.() || []).map((account) => accountSnapshot(account, {
-    providerType: 'robin',
-    accountType: 'gemini-app',
-    quota: account.quota || null
-  }));
-  const accounts = [...cloud, ...robin];
+  const accounts = [...cloud];
   deps.accountLabels?.capture(accounts);
   return accounts;
 }
@@ -233,32 +228,21 @@ async function readJson(req, limit = 64 * 1024) {
 }
 
 function poolFor(deps, accountId, provider = '') {
-  if (provider && !['cloudcode', 'robin'].includes(provider)) throw Object.assign(new Error('账号来源无效。'), { status: 400, code: 'invalid_account_provider' });
+  if (provider && provider !== 'cloudcode') throw Object.assign(new Error('账号来源无效。'), { status: 400, code: 'invalid_account_provider' });
   if (provider === 'cloudcode') return deps.accountPool;
-  if (provider === 'robin') {
-    if (!deps.robinAccountPool) throw Object.assign(new Error('Gemini App 账号池未启用。'), { status: 503, code: 'robin_pool_disabled' });
-    return deps.robinAccountPool;
-  }
-  const inCloud = deps.accountPool.status().some((account) => account.id === accountId);
-  const inRobin = Boolean(deps.robinAccountPool?.status?.().some((account) => account.id === accountId));
-  if (inCloud && inRobin) throw Object.assign(new Error('该账号 ID 同时存在于两类账号池，请指定 provider。'), { status: 409, code: 'ambiguous_account_provider' });
-  return inRobin ? deps.robinAccountPool : deps.accountPool;
+  return deps.accountPool;
 }
 
 function queryProvider(url) {
   const values = url?.searchParams?.getAll('provider') || [];
-  if (values.length > 1 || (values.length === 1 && !['cloudcode', 'robin'].includes(values[0]))) throw Object.assign(new Error('账号来源须唯一且为 cloudcode 或 robin。'), { status: 400, code: 'invalid_account_provider' });
+  if (values.length > 1 || (values.length === 1 && values[0] !== 'cloudcode')) throw Object.assign(new Error('账号来源须唯一且为 cloudcode。'), { status: 400, code: 'invalid_account_provider' });
   return values[0] || '';
-}
-
-function proxyBindingKey(pool, accountId, deps) {
-  return pool === deps.robinAccountPool ? `robin:${accountId}` : accountId;
 }
 
 function oauthProvider(value) {
   const provider = String(value || 'cloudcode').trim().toLowerCase();
-  if (!['cloudcode', 'robin'].includes(provider)) {
-    throw Object.assign(new Error('授权来源必须是 cloudcode 或 robin。'), { status: 400, code: 'invalid_oauth_provider' });
+  if (provider !== 'cloudcode') {
+    throw Object.assign(new Error('授权来源必须是 cloudcode。'), { status: 400, code: 'invalid_oauth_provider' });
   }
   return provider;
 }
@@ -514,7 +498,7 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
           note: override.note || '',
           defaultTemperature: override.defaultTemperature ?? null,
           defaultMaxTokens: override.defaultMaxTokens ?? null,
-          source: deps.robinModels?.has?.(id) ? 'robin' : 'cloudcode'
+          source: 'cloudcode'
         };
       });
       sendJson(res, 200, { ok: true, data: { items, ...deps.modelDiscovery?.() } });
@@ -561,14 +545,8 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
     if (req.method === 'POST' && route === `${PREFIX}/accounts/oauth/start`) {
       const body = await readJson(req);
       const provider = oauthProvider(body.provider);
-      if (provider === 'robin') {
-        if (!deps.robinOnboarding) throw Object.assign(new Error('Gemini App 授权未启用。'), { status: 503, code: 'robin_oauth_disabled' });
-        const status = await deps.robinOnboarding.start(String(body.proxyId || ''));
-        sendJson(res, 200, { ok: true, data: { provider, ...status } });
-      } else {
-        const status = await deps.adminOAuth.start({ proxyId: String(body.proxyId || '') });
-        sendJson(res, 200, { ok: true, data: { provider, ...status } });
-      }
+      const status = await deps.adminOAuth.start({ proxyId: String(body.proxyId || '') });
+      sendJson(res, 200, { ok: true, data: { provider, ...status } });
       return;
     }
     if (req.method === 'POST' && route === `${PREFIX}/accounts/oauth/callback`) {
@@ -576,9 +554,7 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
       const provider = oauthProvider(body.provider);
       const id = String(body.id || '');
       const callback = String(body.callback || '');
-      const status = provider === 'robin'
-        ? deps.robinOnboarding.submit(id, callback)
-        : deps.adminOAuth.submit(id, callback);
+      const status = deps.adminOAuth.submit(id, callback);
       sendJson(res, 200, { ok: true, data: { provider, ...status } });
       return;
     }
@@ -587,14 +563,12 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
       const id = decodeURIComponent(oauthMatch[1]);
       const provider = oauthProvider(requestUrl?.searchParams?.get('provider'));
       if (oauthMatch[2] && req.method === 'POST') {
-        const status = provider === 'robin' ? deps.robinOnboarding.cancel(id) : deps.adminOAuth.cancel(id);
+        const status = deps.adminOAuth.cancel(id);
         sendJson(res, 200, { ok: true, data: { provider, ...status } });
         return;
       }
       if (!oauthMatch[2] && req.method === 'GET') {
-        const status = provider === 'robin'
-          ? (deps.robinOnboarding?.status?.().id === id ? deps.robinOnboarding.status() : null)
-          : deps.adminOAuth.status(id);
+        const status = deps.adminOAuth.status(id);
         if (!status) { fail(res, 404, 'oauth_flow_not_found', '授权流程不存在或已过期。'); return; }
         sendJson(res, 200, { ok: true, data: { provider, ...status } });
         return;
@@ -638,7 +612,7 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
         throw Object.assign(new Error('账号不存在或已被删除。'), { status: 404, code: 'account_not_found' });
       }
       const proxyId = body.proxyId === null ? null : String(body.proxyId || '');
-      const snapshot = deps.proxyManager.bind(proxyBindingKey(pool, accountId, deps), proxyId);
+      const snapshot = deps.proxyManager.bind(accountId, proxyId);
       sendJson(res, 200, { ok: true, data: { snapshot } });
       return;
     }

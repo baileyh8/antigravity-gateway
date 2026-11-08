@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const { retainedBytes } = require('./resource-budget');
 const { detectNativeCompaction } = require('./agy-client-compaction');
 const { capturedNativeClient } = require('./agy-client-profile');
-const { trailingToolResultIds, hasToolResultHistory } = require('./tool-history');
+const { trailingToolResultIds } = require('./tool-history');
 
 const DEFAULT_TTL_MS = 60 * 60_000;
 const DEFAULT_CAPACITY = 2000;
@@ -130,7 +130,7 @@ function fallbackSeed(payload = {}, normalized = {}) {
 
 function auxiliaryScope(req, normalized, taskProvider = '') {
   const dsh = firstString(header(req, 'x-deepseek-harness-session-id'));
-  if (!dsh && taskProvider !== 'robin') return '';
+  if (!dsh) return '';
   if (dsh && header(req, 'x-deepseek-harness-compact') === '1') return 'compaction';
   // Clients can send no-tool auxiliary and main tool requests under one ID.
   // Partition the declared tool surface, not natural-language intent. A tool
@@ -242,10 +242,7 @@ class SessionManager {
       if (ids.length) {
         try { owner = this.toolOwner(taskProvider, scope, ids); }
         catch (error) {
-          // A complete client-supplied history needs no previous owner's
-          // state. Start an isolated task, never guess or attach another one.
-          if (taskProvider !== 'robin' || error.code !== 'tool_session_not_found'
-              || !hasToolResultHistory(normalized, ids)) throw error;
+          throw error;
         }
       }
     }
