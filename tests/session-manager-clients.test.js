@@ -95,21 +95,22 @@ test('DSH auxiliary scopes follow explicit compaction headers or tool declaratio
   assert.equal(manager.resolveIdentity(req, {}, { ...mainInput, messages: [{ role: 'user', text: 'compaction title 标题压缩' }] }).auxiliaryScope, undefined);
 });
 
-test('Robin separates no-tool auxiliary requests without guessing their intent or changing Cloud Code routing', () => {
+test('DSH sessions separate no-tool auxiliary requests without guessing their intent', () => {
   const manager = new SessionManager(), req = { headers: { 'x-claude-code-session-id': 'same-session' } };
+  const dsh = { headers: { 'x-deepseek-harness-session-id': 'dsh-aux-session' } };
   const main = { ...input, tools: [{ name: 'Bash' }] }, auxiliary = { ...input, tools: [] };
-  assert.equal(manager.resolveIdentity(req, {}, main, null, { taskProvider: 'robin' }).auxiliaryScope, undefined);
-  assert.equal(manager.resolveIdentity(req, {}, auxiliary, null, { taskProvider: 'robin' }).auxiliaryScope, 'no-client-tools');
+  assert.equal(manager.resolveIdentity(dsh, {}, main).auxiliaryScope, undefined);
+  assert.equal(manager.resolveIdentity(dsh, {}, auxiliary).auxiliaryScope, 'no-client-tools');
   assert.equal(manager.resolveIdentity(req, {}, auxiliary).auxiliaryScope, undefined);
-  assert.equal(manager.resolveIdentity(req, {}, { ...auxiliary, messages: [{ role: 'user', parts: [{ type: 'tool_result', id: 'call' }] }] }, null, { taskProvider: 'robin' }).auxiliaryScope, undefined);
+  assert.equal(manager.resolveIdentity(dsh, {}, { ...auxiliary, messages: [{ role: 'user', parts: [{ type: 'tool_result', id: 'call' }] }] }).auxiliaryScope, undefined);
 });
 
 test('Chat handlers retain DSH tool ownership across turns without injecting routing headers into model content', async t => {
-  const { RobinAccountPool } = require('../src/robin-account-pool');
+  const { AccountPool } = require('../src/account-pool');
   const { createServer } = require('../antigravity-gateway');
   const seen = [];
-  t.mock.method(RobinAccountPool.prototype, 'listModels', async () => ['gemini-4-argon']);
-  t.mock.method(RobinAccountPool.prototype, 'send', async (normalized, _model, options) => {
+  t.mock.method(AccountPool.prototype, 'listModels', async () => ['gemini-4-argon']);
+  t.mock.method(AccountPool.prototype, 'send', async (normalized, _model, options) => {
     seen.push({ normalized, options });
     const done = normalized.messages.some(message => message.parts.some(part => part.type === 'tool_result'));
     return { text: done ? '读回完成。' : '', usage: null, usageKnown: false,

@@ -5,15 +5,15 @@ const test = require('node:test');
 
 test('shared protocols preserve thinking-disabled output semantics without controlling Argon internals', () => {
   const { normalizeChat, normalizeAnthropic } = require('../src/protocol');
-  const { clientGenerateRequest } = require('../src/robin-provider');
-  const { decodeFields } = require('../src/robin-proto');
+  const { generationProfile } = require('../src/agy-request-profile');
   for (const normalize of [normalizeChat, normalizeAnthropic]) {
     const normalized = normalize({ model: 'gemini-4-argon', thinking: { type: 'disabled' },
       messages: [{ role: 'user', content: '回复橙色笔记。' }] });
     assert.equal(normalized.reasoningEffort, 'none');
     assert.equal(normalized.includeThinking, false);
-    const request = decodeFields(clientGenerateRequest(normalized));
-    assert.equal(request.some(field => field.number === 38 || field.number === 48), false);
+    const generation = generationProfile(normalized, 'gemini-4-argon', {}) || {};
+    assert.equal(Object.hasOwn(generation, 'reasoningEffort'), false);
+    assert.equal(Object.hasOwn(generation, 'thinkingLevel'), false);
   }
 });
 const {

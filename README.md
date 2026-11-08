@@ -52,7 +52,7 @@
 
 新会话与换号优先使用对应组剩余额度较多的账号，两窗口一高一低时先照顾较紧的一项；**5h保留10%，周保留5%**。详细比较方式见下文账号调度说明。
 
-会话按“路由会话、账号、模型组”分别计数：默认连续 **20 次成功模型请求**后重新选号，对应组任一有效额度窗口剩余 **≤20%** 时缩短到 **5 次**；固定 **5 小时**期限仍有效，以先达到者为准。工具结果后的再次模型请求也计数，失败、取消和重试不重复计数。并发请求在派发前预留轮次，排队请求在出队时重查；到期优先选择其他支持该模型、有空位且未进入对应窗口保留区的账号。仅原账号可用时允许重新使用它，5h保留10%、周保留5%的规则始终有效。Robin/Windows尚未完成的原生工具任务保留原账号，任务结束后再轮换，任一窗口触及保留线期间暂停继续派发。计数沿用现有最多2000个会话的有界缓存，每个账号池最多一个1秒合并写盘定时器，正常停止时刷盘；突然崩溃可能丢失最后一个合并周期的计数。旧绑定和已记录轮数继续保留；不含计数的旧格式从零计起。
+会话按“路由会话、账号、模型组”分别计数：默认连续 **20 次成功模型请求**后重新选号，对应组任一有效额度窗口剩余 **≤20%** 时缩短到 **5 次**；固定 **5 小时**期限仍有效，以先达到者为准。工具结果后的再次模型请求也计数，失败、取消和重试不重复计数。并发请求在派发前预留轮次，排队请求在出队时重查；到期优先选择其他支持该模型、有空位且未进入对应窗口保留区的账号。仅原账号可用时允许重新使用它，5h保留10%、周保留5%的规则始终有效。仅原账号可用时允许继续使用它。计数沿用现有最多2000个会话的有界缓存，每个账号池最多一个1秒合并写盘定时器，正常停止时刷盘；突然崩溃可能丢失最后一个合并周期的计数。旧绑定和已记录轮数继续保留；不含计数的旧格式从零计起。
 
 各模型组的有效 **5h 剩余不高于10%**、或**周额度不高于5%** 时，停止向该账号派发对应组的新请求；粘连、排队和兜底选择均遵守这条线，其他组独立使用。全部账号进入保留区时返回 `quota_reserve_reached`（429），额度重置或新读数恢复后重新参与调度。活跃账号每分钟刷新摘要，所选组剩余不高于 20% 时每 15 秒刷新；读数未知时触发有节制的刷新，不伪造剩余额度。在途请求和上游读数延迟可能使最终余额低于对应保留线，无法精确锁定最终余额。
 
@@ -68,13 +68,10 @@ Responses 工具结果中的图片等附件只通过原生媒体传递，不再�
 
 - Cloud Code 原生 Go 传输、会话持久化、客户端上下文压缩及工具映射；包含 Claude Code 2.1.284/2.1.304、Codex（含本地代理转发）、Hermes 和 DeepSeek Harness 的定向适配。未知客户端保持兼容路径，不代执行客户端工具。
 - 取消或超时不再连锁重试、冷却健康账号；修复容器 PID 复用导致的会话锁死锁、目录锁交接和完整请求排空，保留运行时预算通知的位置以改善前缀缓存。
-- Robin 连接丢失后可使用客户端提供的完整工具历史继续；不虚构工具回执或自动恢复已删除账号。
-- Windows 新增 `add-gemini-win`，使用本机 Chrome/Edge 登录并保存独立的 `gemini-win-accounts/`。此流程要求 Windows 本机浏览器，不能替代 VPS 看板的 OAuth 添加流程。Windows 通道不支持非视频附件；视频沿用 Cloud Code 路由，原生 usage 仍未知。
 - 三种通道共享剩余额度优先、同等额度按权重轮询的调度策略；会话亲和默认 5 小时，可用 `ANTIGRAVITY_AFFINITY_TTL_SECONDS` 调整。保留每账号代理、每账号5路/全局60路执行、独立 4 路媒体与 4 路生图、字节预算和 SSE 背压。
 
 Cloud Code 原生传输按不同代理地址复用独立 helper 进程，并覆盖 helper 的 `NO_PROXY`，防止绕开账号出口；Token 和普通 HTTP 请求仍经同一绑定代理。代理缺失时不回落直连。安装包包含六种平台/架构的原生程序，运行时校验完整性并解压到配置目录，普通安装无需 Go；源码重建使用 `npm run build:native`，要求上游指定的 Go 1.27.2。原生 helper 会增加进程和磁盘占用。当前维护部署完成最小文本请求验证：23 个可用型号成功，另一个 disabled 占位项跳过；这不代表生图、工具或长会话均已验收，也不代表有高并发资源基准。
 
-Windows 终端添加也使用 `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID` 自动绑定；服务端请求在有效绑定前不会直连。登录浏览器的网络由本机浏览器设置决定。参见 [Windows 通道](docs/windows-native.md) 和 [Robin 通道](docs/robin-provider.md)。上游实验记录只代表上游验证，不作为本维护版部署证明。
 
 
 Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容网关，让 Claude Code、Codex CLI、Trae、DSH、Hermes 及其他兼容客户端调用账号可用的模型。支持导入本地 Antigravity CLI（`agy`）登录态，也支持使用已授权的托管账号池。
@@ -267,10 +264,6 @@ curl https://gateway.example.com/v1/chat/completions \
 ```
 
 **本维护版验收（2026-10-16）**：已在 VPS 通过本地浏览器完成真实授权，并通过正式 HTTPS 接口验证 Chat Completions 流式回答正常结束、单个 `[DONE]`，以及 Anthropic Messages 工具调用与结果续答。账号代理出口另行核验通过。此轮没有覆盖 Argon 附件、长程并发或所有客户端；不会把上游测试记录当成本维护版的部署验收。
-
-也可在前台终端输入 `add-gemini`，但必须先将 `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID` 设为已登记代理 ID。凭据持久保存在 `~/.antigravity-gateway/robin-accounts/`，不与 Antigravity 账号混用。请求 `gemini-4-argon` 时进入 Robin 任务模式；仍使用同一网关、看板和 Messages / Chat Completions / Responses 接口，客户端工具仍由客户端执行。普通 Argon 请求不可用时明确报错，不降级到 Antigravity 的其他 Gemini 模型。唯一例外是实际携带视频的请求：Gemini App 依赖本地抽帧而不是可靠的 Argon 原生视频理解，因此网关沿用既有 Cloud Code 多媒体路径和 `ANTIGRAVITY_DEFAULT_MODEL`。现有 Antigravity 账号调度规则不变。
-
-上游记录了文本、客户端工具往返、会话隔离与重启续接、图片/音频/PDF/文本输入和原生额度查询的实测；本维护版的真实验收范围见上文。视频请求的回退路由已有回归覆盖；真实视频理解由原有 Cloud Code 路径负责。遇到尚未接受 Gemini 服务条款的账号时，网关返回脱敏的中文处理提示，不向 API 调用方暴露账号邮箱或 ID；不会自动切换账号。网关不从实验接口推导或提供 Gemini App 中不存在的思考档位，并忽略客户端的 reasoning 控制，不向 Argon 请求写入隐藏思考字段。原生 token 用量等仍未验证完成。授权、部署、兼容与验证边界见 [Robin Provider 开发说明](docs/robin-provider.md)。
 
 ### 前台终端命令
 
@@ -518,7 +511,7 @@ antigravity-gateway stats
 | 生图、图片编辑 | 4 | Images API 与对话内部原生生图工具共用独立池 |
 | 多媒体输入、文件上传 | 4 | 图片、视频、音频、PDF/文件输入与 Files 上传合计，不是每类各 4 路 |
 
-生图池与输入/上传池可同时运行 4＋4；含媒体输入并触发生图的对话在生图阶段同时占用两个池。单次 Images 请求的 `n` 张图片仍顺序生成。每账号所有模型共享5路推理，全局最多60路；共享队列最多120个请求，累计等待30秒。原绑定账号满载时，可在请求发出前切换到其他健康且支持当前模型的空闲账号。尚未完成的Robin工具任务保留原账号。并发数是配置上限，不保证上游承载能力。
+生图池与输入/上传池可同时运行 4＋4；含媒体输入并触发生图的对话在生图阶段同时占用两个池。单次 Images 请求的 `n` 张图片仍顺序生成。每账号所有模型共享5路推理，全局最多60路；共享队列最多120个请求，累计等待30秒。原绑定账号满载时，可在请求发出前切换到其他健康且支持当前模型的空闲账号。并发数是配置上限，不保证上游承载能力。
 
 请求正文共享 384 MiB 估算预算；解析后的媒体另有 512 MiB 预算，按二进制大小的四倍预留缓冲、Base64 与协议副本。超限返回 503，即使并发池仍有空位；排队满返回 429。预算不是进程 RSS 硬限制。Responses 历史缓存默认 64 MiB，SSE 缓冲默认每客户端 8 MiB；媒体磁盘限额默认关闭，可显式设置，超限拒绝新增而不删除历史文件。停机先排空请求，再保存用量。
 
@@ -701,7 +694,7 @@ On the overall request deadline, Responses streams end with `response.failed` / 
 
 New sessions and rebalancing prefer larger remaining quota in the requested group, comparing the tighter window first. **Reserve 10% of five-hour quota and 5% of weekly quota.**
 
-Affinity counts successful model requests separately per routing session, account and quota group. Rebalance after **20 successes**, or **five** when any valid window of the selected group has **20% or less** remaining; the fixed **five-hour** deadline still applies, whichever comes first. Model requests following tool results count too; failures, cancellations and retries do not add duplicate turns. Concurrent dispatches reserve turn budget, and queued requests recheck it at admission. Prefer another compatible, idle account above the applicable window reserve; reuse the current account only when no alternative can run. Unfinished Robin/Windows native tool tasks keep their owner until complete, while the 10% five-hour / 5% weekly reserves still stop further dispatch. The existing 2,000-session bound remains. At most one one-second batched-save timer per pool persists counters and flushes on graceful stop; a crash can lose the last save interval. Existing bindings and recorded counters survive upgrades; only records without counters begin at zero.
+Affinity counts successful model requests separately per routing session, account and quota group. Rebalance after **20 successes**, or **five** when any valid window of the selected group has **20% or less** remaining; the fixed **five-hour** deadline still applies, whichever comes first. Model requests following tool results count too; failures, cancellations and retries do not add duplicate turns. Concurrent dispatches reserve turn budget, and queued requests recheck it at admission. Prefer another compatible, idle account above the applicable window reserve; reuse the current account only when no alternative can run. Reuse of the current account is allowed only when no alternative can run. The existing 2,000-session bound remains. At most one one-second batched-save timer per pool persists counters and flushes on graceful stop; a crash can lose the last save interval. Existing bindings and recorded counters survive upgrades; only records without counters begin at zero.
 
 An account stops receiving new work for a model group when a valid **five-hour window has 10% or less** remaining, or a **weekly window has 5% or less** remaining. Affinity, queued dispatch and fallback cannot bypass the reserve; other groups remain independent. A fully protected pool returns `quota_reserve_reached` (429), and becomes eligible again after the relevant reset or an improved reading. Active-account summaries refresh every minute, or every 15 seconds at 20% or less remaining in the selected group. Unknown readings trigger throttled refreshes rather than fabricated balances. In-flight requests and delayed upstream telemetry prevent an exact final-balance guarantee at either reserve.
 
@@ -709,7 +702,7 @@ Responses tool-output attachments travel only as native media, without duplicati
 
 After enabling `AGY_MULTI_KEY=1` and migrating clients to dedicated keys, remove `ANTIGRAVITY_GATEWAY_API_KEY` from the service environment to retire the legacy master key. Missing credentials still return 401. Admin model probes use short-lived, model-scoped keys with cleanup on success or failure instead of depending on a client key.
 
-Quota selection follows the requested model: Gemini, Claude/GPT and Argon use separate weekly/5h groups and independent weighted rotation. Five inference slots are shared across each account’s models, capped at 60 executions globally. The model-specific ceiling is five times its eligible account count, bounded by the global cap. A shared 120-request queue has a cumulative 30-second wait budget; oldest runnable work can pass a blocked model. Busy affinity accounts may switch before dispatch; unfinished Robin tool tasks retain ownership. Initial queue rejection returns HTTP 429 with Retry-After before opening SSE. These are configured limits, not measured upstream capacity or a memory guarantee.
+Quota selection follows the requested model: Gemini, Claude/GPT and Argon use separate weekly/5h groups and independent weighted rotation. Five inference slots are shared across each account’s models, capped at 60 executions globally. The model-specific ceiling is five times its eligible account count, bounded by the global cap. A shared 120-request queue has a cumulative 30-second wait budget; oldest runnable work can pass a blocked model. Busy affinity accounts may switch before dispatch. Initial queue rejection returns HTTP 429 with Retry-After before opening SSE. These are configured limits, not measured upstream capacity or a memory guarantee.
 
 The built-in `/dashboard` page and all subroutes return 404. Deployments may keep an Nginx 301 for the page URLs only, pointing to the separate admin service. Legacy mutation APIs must remain retired.
 
@@ -717,13 +710,10 @@ This source integrates upstream `db939d4` (1.7.1 plus subsequent fixes). The sep
 
 - Native Go Cloud Code transport, persisted sessions, compaction and targeted Claude Code 2.1.284/2.1.304, Codex (including requests relayed by a local provider proxy), Hermes and DeepSeek Harness tool adapters. Unknown clients retain compatibility behavior; tools execute on clients.
 - Cancellation/timeout no longer cascades across healthy accounts. Includes container PID-reuse lease fixes, directory ownership and transaction draining, and position-preserving runtime budget notices for prefix caching.
-- Robin can forward complete client-supplied tool history after connection loss, without inventing receipts or restoring deleted accounts.
-- `add-gemini-win` adds local Windows Chrome/Edge login with separate `gemini-win-accounts/` credentials. It requires a Windows browser and does not replace VPS dashboard OAuth. Non-video attachments are unsupported on this channel; video retains Cloud Code routing and native usage remains unknown.
 - Shared remaining-quota priority with weighted ties; affinity defaults to five hours (`ANTIGRAVITY_AFFINITY_TTL_SECONDS`). Per-account proxies, five executions per account and 60 globally, separate four-way media and image pools, byte budgets and SSE backpressure remain.
 
 Native helpers are reused per proxy endpoint with proxy bypass variables cleared. Token and ordinary HTTP requests use the same account proxy; invalid bindings never fall back to direct access. Packages include verified native binaries for six platform/architecture combinations; normal installs need no Go toolchain. `npm run build:native` requires upstream's Go 1.27.2. Helpers add process and disk overhead. Minimal text requests succeeded for 23 available models on the maintained deployment; a disabled placeholder was skipped. This is not image, tool, long-session or high-concurrency resource acceptance.
 
-Windows terminal onboarding also binds `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`; server requests fail closed until a valid binding exists. Login browser routing follows local browser settings. See [Windows channel](docs/windows-native.md) and [Robin channel](docs/robin-provider.md). Upstream experiment reports are not deployment evidence for this distribution.
 
 
 Antigravity Gateway is an Anthropic/OpenAI-compatible gateway for local or server deployment. Claude Code, Codex CLI, Trae, DSH, Hermes and other compatible clients can use available account models through imported Antigravity CLI (`agy`) credentials or an authorized managed account pool.
@@ -853,12 +843,9 @@ curl https://gateway.example.com/v1/chat/completions \
 
 **Bailey build acceptance (2026-10-16):** local-browser OAuth for the VPS completed successfully. Real requests through the deployed HTTPS endpoint passed Chat Completions streaming with normal termination and one `[DONE]`, plus an Anthropic Messages tool call and result continuation. The bound proxy egress was checked separately. This run did not cover Argon attachments, long-running concurrency or every client; upstream results are not counted as this build's deployment acceptance.
 
-The terminal `add-gemini` alternative requires `ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`. Credentials persist separately in `robin-accounts/`. An explicit `gemini-4-argon` request enters native Robin task mode through the same gateway, dashboard, and three client protocols; client tools still execute on the client. Ordinary Argon failures never fall back to Cloud Code. Video-bearing Argon requests are the deliberate exception: Gemini App relies on local frame extraction rather than reliable native Argon video understanding, so the gateway keeps its established Cloud Code multimodal path and `ANTIGRAVITY_DEFAULT_MODEL`. Upstream reports exercising text, tool loops, isolation, restart resumption, attachments and native quota; this maintenance build’s live acceptance scope is listed above. If Gemini requires terms acceptance, the gateway returns sanitized action guidance without disclosing the account email or ID, and does not fail over. The gateway does not infer or expose thinking tiers that are absent from the Gemini App UI, and it ignores client reasoning controls instead of writing hidden thinking fields into Argon requests. Native token usage and remaining client coverage are not established. See [Robin Provider development notes](docs/robin-provider.md) for the current boundaries.
-
 | Command | Purpose |
 |---|---|
 | `add` | Add an Antigravity account |
-| `add-gemini` | Authorize a Gemini App account independently (terminal alternative) |
 | `acc` | Show pool and account state |
 | `models` | Show discovered models |
 | `status` | Refresh gateway and dashboard status |
@@ -988,7 +975,7 @@ curl http://127.0.0.1:9897/v1/files \
 
 Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Continuations within the 20-success budget (five at ≤20% remaining) use an O(1) local affinity lookup without recalculating quota ranks; turn exhaustion, expiry or failure triggers selection using the requested group’s remaining usable quota, with configured weights applied among equal readings. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
 
-New bindings, expiry and failover match the requested Gemini, Claude/GPT or Argon quota group. Reserve 10% of five-hour quota and 5% of weekly quota; reaching either valid window’s reserve excludes the account. Compare `(remainingFraction - reserve) / (1 - reserve)` for each window: prefer the larger minimum usable headroom, then the other window. A balanced 70% weekly / 80% five-hour account outranks a 90% / 15% account. Complete readings outrank partial readings, which outrank wholly unknown ones; weekly-only Argon compares its actual weekly reading without inventing a five-hour balance. Equal balances rotate by configured weight, independently of reset deadlines. Missing groups never borrow unrelated budgets. Existing 20/five-turn affinity remains within its budget; expiry, busy or unavailable owners trigger selection of another runnable account. Robin/Windows uses its native GXU group and unfinished tasks retain their owner.
+New bindings, expiry and failover match the requested Gemini, Claude/GPT or Argon quota group. Reserve 10% of five-hour quota and 5% of weekly quota; reaching either valid window’s reserve excludes the account. Compare `(remainingFraction - reserve) / (1 - reserve)` for each window: prefer the larger minimum usable headroom, then the other window. A balanced 70% weekly / 80% five-hour account outranks a 90% / 15% account. Complete readings outrank partial readings, which outrank wholly unknown ones; weekly-only Argon compares its actual weekly reading without inventing a five-hour balance. Equal balances rotate by configured weight, independently of reset deadlines. Missing groups never borrow unrelated budgets. Existing 20/five-turn affinity remains within its budget; expiry, busy or unavailable owners trigger selection of another runnable account.
 
 Scheduling reads fresh in-memory quota summaries without waiting for network queries or estimating quota from Token counts. Unknown/expired quota follows usable known balances; known window reserves are excluded from fallback. Full background refreshes remain approximately half-hourly. Missing/expired data and live quota failures trigger asynchronous per-account summary refreshes, coalesced with two accounts refreshed concurrently. Ordinary retries have a five-minute minimum; active accounts use one minute, shortened to 15 seconds when the selected group has at most 20% left. Known low readings remain protected through cache expiry until their own reset or a newer reading; account additions, changed credentials and successful authentication rechecks trigger full account refreshes. Summary freshness is tracked independently, so successful plan/catalog queries cannot renew stale quota data.
 
@@ -1112,26 +1099,13 @@ On 2026-10-09, 252 tests passed locally and on the Linux deployment candidate wi
 
 ### Gemini App 出口与资源限制 / Egress and resource limits
 
-Robin 的服务端 OAuth 交换、Token、上传、额度和原生 HTTP/2 请求均使用已选代理；缺失或无效绑定拒绝请求，不回退直连。浏览器登录 Google 则使用本地浏览器的网络设置。账号绑定以 `robin:<id>` 独立保存，旧 Cloud Code 绑定保持不变。请通过有身份鉴权的 HTTPS 看板添加账号，不向他人分享授权链接或回调地址。Argon 权限以上游真实能力目录为准，授权成功不等于一定有模型权限。
 
-Server-side Robin OAuth exchange, tokens, uploads, quota and native HTTP/2 traffic use the selected proxy. Missing/invalid bindings fail closed. The Google login page uses your local browser network settings. Robin binding keys are provider-scoped; existing Cloud Code bindings remain unchanged. Use an authenticated HTTPS dashboard and keep authorization/callback URLs private. OAuth success does not guarantee Argon entitlement.
+Chat 流式用量遵循 `stream_options.include_usage:true`：中间块 `usage:null`，最后单独用量块保留缓存/推理明细。未请求时不发送用量块；内部用量统计保持。上游未知用量仍标记 `usage_known:false`，不伪报为 0。
 
-|配置 / Setting|默认 / Default|用途 / Purpose|
-|---|---|---|
-|`ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID`|未设置 / unset|终端授权所用已登记代理；看板流程直接选择 / registered proxy for terminal OAuth; dashboard selects explicitly|
-|`ANTIGRAVITY_ROBIN_RETAINED_BYTES`|64 MiB|所有 Robin 任务保留内容的共享估算预算 / shared retained-task estimate|
-|`ANTIGRAVITY_ROBIN_MAX_ACTIVE_TURNS`|32 / provider|保留任务数量上限 / retained task count|
-
-Robin 复用既有总请求及媒体池和媒体字节预算；上传后任务仅保留附件引用，不保留 Base64 副本。原生单流响应限 16 MiB，待连接发送缓冲限 8 MiB，上传引用缓存每账号最多 256 条。预算不等于进程 RSS 硬限制。
-
-Robin shares the existing request/media pools and media byte budget. Tasks retain uploaded references rather than Base64 copies. Native response streams are capped at 16 MiB, pending-connect writes at 8 MiB, and upload-reference caches at 256 entries per account. These estimates are not a process RSS limit.
-
-Chat 流式用量遵循 `stream_options.include_usage:true`：中间块 `usage:null`，最后单独用量块保留缓存/推理明细。未请求时不发送用量块；内部用量统计保持。Robin 未知用量仍标记 `usage_known:false`，不伪报为 0。
-
-Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermediate chunks have null usage and the final usage-only chunk preserves cache/reasoning details. Internal accounting remains enabled. Unknown Robin usage stays explicitly unknown.
+Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermediate chunks have null usage and the final usage-only chunk preserves cache/reasoning details. Internal accounting remains enabled. Unknown upstream usage stays explicitly unknown.
 
 ### Argon 模型目录 / Model metadata
 
-`/v1/models` 的 `data[]` 和 Codex `models[]` 均提供 Argon 的官方规格：共享上下文窗口 1,048,576 tokens、默认同步输出上限 65,536 tokens；文本/图片/视频/音频/PDF 输入、文本输出及函数调用。来源为 [Google 模型规格](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)。这些值用于客户端模型配置，标记为 `published_gemini_api_specification`，不代表已验证 Gemini App/Robin 通道的容量上限。视频仍转至 Cloud Code 默认模型，不宣称支持 API long decode；Argon 不公布可选思考档位。DSH 中已保存的模型需重新导入元数据或更新对应条目。
+`/v1/models` 的 `data[]` 和 Codex `models[]` 均提供 Argon 的官方规格：共享上下文窗口 1,048,576 tokens、默认同步输出上限 65,536 tokens；文本/图片/视频/音频/PDF 输入、文本输出及函数调用。来源为 [Google 模型规格](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)。这些值用于客户端模型配置，标记为 `published_gemini_api_specification`，不代表已验证通道的容量上限。视频仍转至 Cloud Code 默认模型，不宣称支持 API long decode；Argon 不公布可选思考档位。DSH 中已保存的模型需重新导入元数据或更新对应条目。
 
-Both model arrays expose the published Argon specification: a shared 1,048,576-token context window, 65,536-token default synchronous output limit, text/image/video/audio/PDF inputs, text output and function calling. These are sourced client configuration values, not measured Gemini App/Robin transport limits. Video still routes to the Cloud Code default model; API long decode and selectable reasoning levels are not advertised. Previously saved DSH entries need metadata re-import or an explicit update.
+Both model arrays expose the published Argon specification: a shared 1,048,576-token context window, 65,536-token default synchronous output limit, text/image/video/audio/PDF inputs, text output and function calling. These are sourced client configuration values, not measured transport limits. Video still routes to the Cloud Code default model; API long decode and selectable reasoning levels are not advertised. Previously saved DSH entries need metadata re-import or an explicit update.

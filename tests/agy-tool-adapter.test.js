@@ -236,7 +236,6 @@ test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read wit
   const tools304 = Array.isArray(fixture304) ? fixture304 : fixture304.tools;
   const { capturedNativeClient, CLAUDE_304_CLIENT_PROFILE } = require('../src/agy-client-profile');
   const { detectNativeCompaction } = require('../src/agy-client-compaction');
-  const { prepareRobinClientAdapter } = require('../src/robin-client-adapter');
   const userMsg = { role: 'user', content: 'test message' };
   const req = {
     headers: {
@@ -254,11 +253,6 @@ test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read wit
   }
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': ' ' } }, normalized), '');
   assert.equal(capturedNativeClient(req, { ...normalized, protocol: 'responses' }), '');
-
-  // 2. Robin 路径隔离验证：304 绝不在 Robin 路径激活适配
-  const robin = prepareRobinClientAdapter(normalized, capturedNativeClient(req, normalized));
-  assert.equal(robin.adapted, false, 'Robin 路径下 304 必须保持 adapted=false');
-  assert.equal(robin.normalized.tools.find(t => t.name === 'run_command'), undefined);
 
   // 3. Cloud Code 路径适配验证
   const adapter = prepareToolAdapter(normalized, { clientProfile: CLAUDE_304_CLIENT_PROFILE });
@@ -333,7 +327,6 @@ test('Claude Code 2.1.284 translates all four tools Edit, Bash, Write, Read alig
   const tools284 = Array.isArray(fixture284) ? fixture284 : fixture284.tools;
   const { capturedNativeClient, CLAUDE_284_CLIENT_PROFILE } = require('../src/agy-client-profile');
   const { detectNativeCompaction } = require('../src/agy-client-compaction');
-  const { prepareRobinClientAdapter } = require('../src/robin-client-adapter');
   const userMsg = { role: 'user', content: 'test message' };
   const req = {
     headers: {
@@ -349,11 +342,6 @@ test('Claude Code 2.1.284 translates all four tools Edit, Bash, Write, Read alig
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283' } }, normalized), '');
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': '' } }, normalized), '');
   assert.equal(capturedNativeClient(req, { ...normalized, protocol: 'responses' }), '');
-
-  // 2. Robin 路径隔离验证：284 绝不在 Robin 路径激活适配
-  const robin = prepareRobinClientAdapter(normalized, capturedNativeClient(req, normalized));
-  assert.equal(robin.adapted, false, 'Robin 路径下 284 必须保持 adapted=false');
-  assert.equal(robin.normalized.tools.find(t => t.name === 'run_command'), undefined);
 
   // 3. Cloud Code 路径适配验证：全部四项工具均成功转译
   const adapter = prepareToolAdapter(normalized, { clientProfile: CLAUDE_284_CLIENT_PROFILE });

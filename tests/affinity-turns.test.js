@@ -3,9 +3,7 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { AccountPool } = require('../src/account-pool');
-const { RobinAccountPool } = require('../src/robin-account-pool');
 const { AccountStore } = require('../src/account-store');
-const { GeminiAccountStore } = require('../src/gemini-account-store');
 const { ExecutionSlots, WaitBudget } = require('../src/admission-control');
 const { affinityTurnLimit, SESSION_TTL_MS } = require('../src/account-scheduling');
 const { affinityBinding } = require('../src/session-affinity');
@@ -82,7 +80,7 @@ test('the inclusive 20% turn limit follows valid windows, native float precision
   }
 });
 
-for (const channel of ['cloudcode', 'oauth', 'windows']) {
+for (const channel of ['cloudcode']) {
   test(`${channel}: rotate after 20 successes, or five with at most 20% quota, and keep the next binding`, async t => {
     for (const [remaining, limit] of [[.8, 20], [.2, 5]]) {
       const state = fixture(t, channel, remaining);
@@ -202,28 +200,3 @@ test('queued work rechecks the latest successful count when its execution slot b
   await turns[1];
 });
 
-for (const channel of ['oauth', 'windows']) {
-  test(`${channel}: unfinished native tool tasks retain ownership past the limit and rotate only when complete`, async t => {
-    const state = fixture(t, channel, .2);
-    let steps = 0;
-    state.send = async () => ({ text: 'OK', toolCalls: ++steps <= 6 ? [{ id: 'synthetic-tool', name: 'read' }] : [], usage: {} });
-    for (let i = 0; i < 7; i++) assert.equal((await state.turn()).accountId, 'a');
-    assert.equal(state.binding().turns, 7);
-    assert.equal((await state.turn()).accountId, 'b');
-  });
-
-  test(`${channel}: finishing a native parent task cannot restore its account after a child has rotated`, async t => {
-    const state = fixture(t, channel, .2);
-    let parent = true;
-    state.send = async (_id, _model, options) => ({ text: 'OK', toolCalls:
-      parent && options.sessionId.includes('parent') ? [{ id: 'synthetic-tool', name: 'read' }] : [], usage: {} });
-    await state.turn('parent');
-    for (let i = 0; i < 4; i++) await state.turn('child');
-    assert.equal((await state.turn('child')).accountId, 'b');
-    parent = false;
-    assert.equal((await state.turn('parent')).accountId, 'a');
-    assert.equal(state.binding().accountId, 'b');
-    assert.equal(state.binding().turns, 1);
-    assert.equal((await state.turn('child')).accountId, 'b');
-  });
-}

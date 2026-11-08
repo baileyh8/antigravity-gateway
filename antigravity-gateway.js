@@ -14,7 +14,6 @@ const { pipeline } = require('node:stream/promises');
 const { ByteBudget } = require('./src/resource-budget');
 const { AdmissionError, Semaphore, executionSlots, MAX_CONCURRENCY, MAX_QUEUE } = require('./src/admission-control');
 const { gracefulShutdown } = require('./src/graceful-shutdown');
-const { RobinOnboarding } = require('./src/robin-onboarding');
 const { ProxyManager } = require('./src/proxy-manager');
 const { AccountStore } = require('./src/account-store');
 const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemainder } = require('./src/artifacts');
@@ -34,11 +33,6 @@ const { MediaStore, MultimediaError, mediaParts, normalizeMime, imageFileExtensi
 const { OAuthFlow } = require('./src/oauth-flow');
 const { ProviderRouter, ProviderRouterError } = require('./src/provider-router');
 const { QuotaManager } = require('./src/quota-manager');
-const { RobinAccountPool } = require('./src/robin-account-pool');
-const { RobinOAuthFlow } = require('./src/robin-oauth-flow');
-const { GeminiWindowsLogin } = require('./src/gemini-windows-login');
-const { GeminiAccountStore } = require('./src/gemini-account-store');
-const { ARGON_MODEL, RobinProviderError } = require('./src/robin-provider');
 const { acquireDirectoryGuard } = require('./src/agy-file-lease');
 const { manageService } = require('./src/service-manager');
 const { publicModels } = require('./src/model-visibility');
@@ -147,10 +141,10 @@ const diagnosticReporter = (event, fields) => {
 };
 const DIRECT_PROVIDER = new DirectAntigravityProvider({ diagnosticReporter });
 DIRECT_PROVIDER.localAuth.agyPath = AGY_PATH;
+// The Argon family is served by the Cloud Code pool since the Robin and
+// Gemini Windows channels were removed; only the bare slug ever routed there.
+const ARGON_MODEL = 'gemini-4-argon';
 const ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR });
-const GEMINI_ACCOUNT_STORE = new GeminiAccountStore({ configDir: CONFIG_DIR });
-const ROBIN_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.oauth;
-const WINDOWS_ACCOUNT_STORE = GEMINI_ACCOUNT_STORE.windows;
 const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR, onSaveError: (error) => gatewayWarn(`[Antigravity Gateway] 用量保存失败，将重试 (${error.code})`) });
 const KEY_PEPPER = readKeyPepper();
 const MULTI_KEY = process.env.AGY_MULTI_KEY === '1';
@@ -193,19 +187,6 @@ ACCOUNT_POOL.quotaManager = QUOTA_MANAGER;
 const OAUTH_FLOW = new OAuthFlow({ agyPath: AGY_PATH });
 // The management console gets its own flow so a browser-side add never
 // interferes with the foreground terminal's `add` command.
-const ROBIN_ACCOUNT_POOL = new RobinAccountPool({
-  store: GEMINI_ACCOUNT_STORE,
-  proxyManager: PROXY_MANAGER,
-  diagnosticReporter,
-  usageStore: USAGE_STORE
-});
-const ROBIN_OAUTH_PROXY_ID = process.env.ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID || '';
-const ROBIN_OAUTH_FLOW = new RobinOAuthFlow({ fetchImpl: (input, init) => {
-  const proxy = PROXY_MANAGER.state.proxies.find(p => p.id === ROBIN_OAUTH_PROXY_ID);
-  if (!proxy) throw new GatewayError('请先设置 ANTIGRAVITY_ROBIN_OAUTH_PROXY_ID 为已登记代理。', { status: 503, code: 'robin_proxy_required' });
-  return PROXY_MANAGER.via(proxy, input, init);
-} });
-const ROBIN_ONBOARDING = new RobinOnboarding({ manager: PROXY_MANAGER, store: GEMINI_ACCOUNT_STORE, pool: ROBIN_ACCOUNT_POOL });
 const ADMIN_OAUTH = new AdminOAuth({
   flowFactory: () => new OAuthFlow({ agyPath: AGY_PATH, openBrowserImpl: async () => false }),
   accountStore: ACCOUNT_STORE,
@@ -213,10 +194,8 @@ const ADMIN_OAUTH = new AdminOAuth({
   quotaManager: QUOTA_MANAGER,
   proxyManager: PROXY_MANAGER
 });
-const WINDOWS_LOGIN = new GeminiWindowsLogin();
 const PROVIDER_ROUTER = new ProviderRouter({
-  cloudcodePool: ACCOUNT_POOL,
-  robinPool: ROBIN_ACCOUNT_POOL
+  cloudcodePool: ACCOUNT_POOL
 });
 const LOCAL_ACCOUNT_IMPORTER = new LocalAccountImporter({
   provider: DIRECT_PROVIDER,
@@ -325,9 +304,8 @@ async function availableModels(force = false, { includeDisabled = false } = {}) 
   if (force) cloudcodeModelCache.at = 0;
   if (!force && Date.now() - modelCache.at < MODEL_CACHE_MS && modelCache.models.length) return visible(modelCache.models);
   try {
-    // The subprocess is only a Cloud Code transport. Its absence/failure must
-    // not skip Robin, nor may a Robin catalog failure hide working agy models.
-    // Both modes use the same independent discovery and per-provider cache.
+    // The subprocess is only a Cloud Code transport. Its absence or failure
+    // must not hide working agy models behind a stale cache.
     const models = await PROVIDER_ROUTER.refreshModels(undefined, usesDirectTransport() ? {} : {
       cloudcodeDiscovery: () => listModels({ agyPath: AGY_PATH, prefixArgs: AGY_PREFIX_ARGS })
     });
@@ -383,13 +361,11 @@ async function resolveModel(requested, { preferFast = false } = {}) {
   if (logContext && !logContext.model) logContext.model = mapped;
   // Normal requests preserve the exact client model ID. Aliases are opt-in,
   // exact mappings only. Cloud Code Auto Mode classifiers can use its faster
-  // route; an explicitly Robin-owned model keeps its independent provider.
-  if (!preferFast || ROBIN_ACCOUNT_POOL.ownsModel(mapped)) {
+  // route.
+  if (!preferFast) {
     return mapped;
   }
   try {
-    // Cloud Code's auxiliary classifier must not wait on Robin metadata.
-    // Explicitly Robin-owned models already returned unchanged above.
     return preferredFastModel(await availableCloudCodeModels());
   } catch {
     // Model discovery is advisory. Even an Auto Mode classifier must still be
@@ -412,9 +388,8 @@ async function upstreamModelDiagnostic(error, model) {
 
   let models;
   try {
-    // These error types originate from Cloud Code / agy only. Diagnostic
-    // advice must not query an unrelated Robin authorization, including when
-    // the unified catalog has not yet loaded. Keep the same short cache TTL.
+    // These error types originate from Cloud Code / agy only. Keep the same
+    // short diagnostic cache TTL.
     models = await availableCloudCodeModels();
   } catch {
     return error;
@@ -425,7 +400,7 @@ async function upstreamModelDiagnostic(error, model) {
   return error;
 }
 
-// Published Gemini API specifications, not a measured Robin transport limit.
+// Published Gemini API specifications, not a measured transport limit.
 // Input and output share the window; long-decode API mode is not advertised.
 const ARGON_MODEL_METADATA = Object.freeze({
   context_window: 1048576,
@@ -436,7 +411,7 @@ const ARGON_MODEL_METADATA = Object.freeze({
   metadata_source: 'https://ai.google.dev/gemini-api/docs/models/gemini-4-argon',
   metadata_scope: 'published_gemini_api_specification',
   context_window_shared: true,
-  gateway_transport: 'gemini_app_robin',
+  gateway_transport: 'cloudcode_default_model',
   gateway_limits_verified: false,
   video_route: 'cloudcode_default_model'
 });
@@ -649,8 +624,6 @@ function startupBanner({ models = [], modelError = '', credentialSource = creden
     ` 传输模式: ${usesDirectTransport() ? '✅ 原生 Cloud Code 直连（跳过 agy 包装）' : 'agy CLI stream-json'}`,
     ' 可用模型:'
   ];
-  if (models.includes(ARGON_MODEL)) lines.splice(lines.length - 1, 0,
-    ' Gemini App: ✅ 独立账号池（Robin OAuth / Windows WebChannel）');
   const selected = featuredModels(models);
   if (selected.length) lines.push(...selected.map((model) => `    ${model}`));
   else lines.push(`    ${modelError ? `检测失败：${modelError}` : '未发现精选模型'}`);
@@ -764,9 +737,9 @@ function clientSessionIdentity(req, payload = {}, normalized = {}, previous = nu
 }
 
 function taskIdentityOptions(model) {
-  // Only known stateful model ownership changes anonymous task handling.
-  // Cloud Code keeps its existing session and affinity derivation.
-  return model === ARGON_MODEL || PROVIDER_ROUTER.catalog.robin.has(model) ? { taskProvider: 'robin' } : {};
+  // Robin task ownership left with the Robin channel. Cloud Code keeps its
+  // existing session and affinity derivation for every model.
+  return {};
 }
 
 function identityTrace(identity = {}) {
@@ -849,7 +822,7 @@ function errorBody(error, protocol) {
 
 function mapAgyError(error) {
   if (error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
-    || error instanceof MultimediaError || error instanceof RobinProviderError || error instanceof ProviderRouterError
+    || error instanceof MultimediaError || error instanceof ProviderRouterError
     || error instanceof SessionIdentityError) return error;
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || /request aborted/i.test(String(error?.message || ''))) {
     return new GatewayError('客户端已取消请求。', { code: 'request_aborted', status: 499 });
@@ -898,8 +871,8 @@ function hasVideoInput(normalized) {
 
 async function argonVideoFallbackModel() {
   const fallback = await resolveModel(DEFAULT_MODEL);
-  if (fallback === ARGON_MODEL || ROBIN_ACCOUNT_POOL.ownsModel(fallback)) {
-    throw new GatewayError('Argon 视频理解需要一个非 Robin 的默认 Antigravity 模型。', {
+  if (fallback === ARGON_MODEL) {
+    throw new GatewayError('Argon 视频理解需要一个非 Argon 的默认 Antigravity 模型。', {
       code: 'argon_video_fallback_unavailable', status: 503
     });
   }
@@ -907,7 +880,7 @@ async function argonVideoFallbackModel() {
 }
 
 async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, onAdmitted, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
-  const releaseRequest = usesDirectTransport() || ROBIN_ACCOUNT_POOL.ownsModel(model) ? () => {} : await requestSlots.acquire(signal);
+  const releaseRequest = usesDirectTransport() ? () => {} : await requestSlots.acquire(signal);
   let releaseMedia;
   try {
     if ((normalized.messages || []).some(m => (m.parts || []).some(p => p.type === 'media' || p.media?.length))) releaseMedia = await mediaSlots.acquire(signal);
@@ -919,30 +892,21 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
   };
   const release = () => { mediaReservations.splice(0).forEach(f => f()); releaseMedia?.(); releaseRequest(); };
   const taskScope = auxiliaryScope ? { auxiliaryScope } : {};
-  const robinOwned = ROBIN_ACCOUNT_POOL.ownsModel(model);
-  if (usesDirectTransport() || robinOwned) {
+  if (usesDirectTransport()) {
     try {
       const resolved = await MEDIA_STORE.resolveNormalized(normalized, { scope: mediaScope, signal, reserveBytes });
-      // Gemini App performs its own local frame extraction for video rather
-      // than offering reliable native Argon video understanding. Preserve the
-      // gateway's established multimodal path: only video-bearing Argon turns
-      // use the configured Antigravity default model and Cloud Code account
-      // pool. Text, image, audio, PDF and tool turns remain on Robin.
+      // Gemini App performed its own local frame extraction for video rather
+      // than offering reliable native Argon video understanding. With the
+      // Gemini App channel removed, video-bearing Argon turns continue to use
+      // the configured Antigravity default model and the Cloud Code account
+      // pool.
       const argonVideoFallback = model === ARGON_MODEL && hasVideoInput(resolved);
       const upstreamModel = argonVideoFallback ? await argonVideoFallbackModel() : model;
-      const providerType = argonVideoFallback ? 'cloudcode'
-        : robinOwned ? 'robin' : await PROVIDER_ROUTER.resolveProvider(upstreamModel, signal);
-      const prepared = providerType === 'cloudcode'
-        ? prepareNativeMultimodal(resolved)
-        : { normalized: resolved, imageToolInjected: false };
+      const providerType = 'cloudcode';
+      const prepared = prepareNativeMultimodal(resolved);
       const finalize = (raw) => {
         try { return finalizeModelResult(normalized, raw); }
-        catch (error) {
-          if (providerType === 'robin' && raw.toolCalls?.length) {
-            PROVIDER_ROUTER.cancelTask(providerType, prepared.normalized, { sessionId, routingKey, clientId, ...taskScope });
-          }
-          throw error;
-        }
+        catch (error) { throw error; }
       };
       const trace = identityTrace({ sessionId, routingKey, requestId, clientId, clientLabel });
       if (argonVideoFallback) {
@@ -1481,13 +1445,6 @@ async function generateImages(payload, req, signal, references = []) {
   const prompt = String(payload.prompt || '').trim();
   if (!prompt) throw new GatewayError('生图请求缺少 prompt。', { code: 'image_prompt_missing', status: 400 });
   const requestedModel = payload.model ? await resolveModel(payload.model) : '';
-  if (requestedModel && (ROBIN_ACCOUNT_POOL.ownsModel(requestedModel) || PROVIDER_ROUTER.catalog.robin.has(requestedModel))) {
-    // This operation is currently the existing Cloud Code image transport.
-    // Never reinterpret an explicitly selected Robin model as that provider.
-    throw new GatewayError(`请求模型 ${requestedModel} 的独立图片接口尚未接入，未切换到其他模型或账号来源。`, {
-      code: 'robin_images_not_implemented', status: 501
-    });
-  }
   const scope = clientScope(req);
   const identity = clientSessionIdentity(req, payload, { model: payload.model, messages: [{ role: 'user', text: prompt, parts: references }] });
   const trace = identityTrace(identity);
@@ -1740,7 +1697,6 @@ async function requestHandler(req, res) {
         usageStore: USAGE_STORE,
         accountPool: ACCOUNT_POOL,
         accountLabels: ACCOUNT_LABELS,
-        robinAccountPool: ROBIN_ACCOUNT_POOL,
         quotaManager: QUOTA_MANAGER,
         proxyManager: PROXY_MANAGER,
         keyStore: KEY_STORE,
@@ -1752,10 +1708,8 @@ async function requestHandler(req, res) {
         testModel: testAdminModel,
         catalogs: async () => { const models = await availableModels(); return { codex: codexCatalogBody(models), claude: claudeConfigBody(models) }; },
         modelSettings: MODEL_SETTINGS,
-        robinModels: PROVIDER_ROUTER.catalog.robin,
         refreshCatalogs: async () => { const models = await availableModels(true); writeCodexCatalog(models); writeClaudeConfig(models); return models; },
         adminOAuth: ADMIN_OAUTH,
-        robinOnboarding: ROBIN_ONBOARDING,
         concurrency: concurrencySnapshot
       }
     });
@@ -1845,8 +1799,8 @@ async function requestHandler(req, res) {
         models: models.length,
         transport_limits: { request_body_bytes: REQUEST_LIMIT, normalized_prompt_bytes: PROMPT_BYTE_LIMIT },
         account_pool: {
-          managed_accounts: ACCOUNT_POOL.status().length + ROBIN_ACCOUNT_POOL.status().length,
-          accounts: [...ACCOUNT_POOL.status(), ...ROBIN_ACCOUNT_POOL.status()]
+          managed_accounts: ACCOUNT_POOL.status().length,
+          accounts: ACCOUNT_POOL.status()
         },
         usage: { file: USAGE_STORE.file, ...USAGE_STORE.summary() },
         capabilities: { anthropic_messages: true, openai_responses: true, chat_completions: true, image_generation: true, image_edits: true, image_understanding: true, video_understanding: true, file_uploads: true, tools_experimental: true, direct_upstream_sse: usesDirectTransport(), local_agy_session_bridge: Boolean(DIRECT_PROVIDER.localAuth?.isConfigured?.()), multi_account: true, persistent_usage: true, web_dashboard: false, management_api: Boolean(ADMIN_TOKEN), interactive_console: true, credentials_read_by_gateway: usesDirectTransport(), tool_narration: toolNarrationEnabled() }
@@ -2017,13 +1971,12 @@ if (require.main === module) {
       stopDiagnosticHeartbeat();
       diagnosticReporter('gateway_process_stopping', { pid: process.pid });
       directoryGuard.hold();
-      await ROBIN_ONBOARDING.stop();
       QUOTA_MANAGER.stop();
 
       const quotaDrain = QUOTA_MANAGER.drain();
-      const shutdownRequests = new Set([...activeRequests, ...activeTransactions, quotaDrain, ...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
+      const shutdownRequests = new Set([...activeRequests, ...activeTransactions, quotaDrain]);
       await gracefulShutdown({ server, controllers: activeControllers, requests: shutdownRequests, usageStore: USAGE_STORE,
-        accountPool: ACCOUNT_POOL, robinAccountPool: ROBIN_ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
+        accountPool: ACCOUNT_POOL, quotaManager: QUOTA_MANAGER, proxyManager: PROXY_MANAGER,
         workers: activeWorkers, timeoutMs: Number(process.env.ANTIGRAVITY_GATEWAY_SHUTDOWN_TIMEOUT_MS || 30_000) });
       // Never hand the directory to a successor while an aborted task can still write.
       // A stuck task exits with failure and keeps ownership until process termination.
@@ -2031,7 +1984,6 @@ if (require.main === module) {
       await REQUEST_LOG.stop();
       KEY_STORE.stop();
       await quotaDrain;
-      await Promise.allSettled([...ROBIN_ACCOUNT_POOL.quotaRefreshes.values()]);
       closeNativeTransport();
       DIRECT_PROVIDER.bindDirectoryGuard(null);
       ACCOUNT_POOL.bindDirectoryGuard(null);
@@ -2051,12 +2003,6 @@ if (require.main === module) {
     quotaManager: QUOTA_MANAGER,
     oauthFlow: OAUTH_FLOW,
     accountStore: ACCOUNT_STORE,
-    robinAccountPool: ROBIN_ACCOUNT_POOL,
-    robinOAuthFlow: ROBIN_OAUTH_FLOW,
-    windowsLogin: WINDOWS_LOGIN,
-    windowsAccountStore: WINDOWS_ACCOUNT_STORE,
-    robinAccountStore: ROBIN_ACCOUNT_STORE,
-    onRobinAccountSaved: account => PROXY_MANAGER.bind(`robin:${account.id}`, ROBIN_OAUTH_PROXY_ID),
     commands: {
       models: async () => displayModels(await refreshClientModelCatalogs()),
       status: async () => gatewayLog(`网关运行中：${HOST}:${PORT}，账号 ${ACCOUNT_POOL.status().length || '本地 agy'}，并发 ${requestSlots.active}/${MAX_CONCURRENCY}`),
@@ -2075,7 +2021,6 @@ if (require.main === module) {
   });
   USAGE_STORE.start();
   QUOTA_MANAGER.start();
-  ROBIN_ACCOUNT_POOL.start();
   server.requestTimeout = REQUEST_TIMEOUT + 10000;
   server.headersTimeout = 30000;
   server.listen(PORT, HOST, () => { void trackTransaction((async () => {

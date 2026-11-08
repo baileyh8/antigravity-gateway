@@ -1,6 +1,13 @@
 # Changelog
 
-当前版本 `1.7.1-bailey.20`。当天 `.10` 到 `.20` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+当前版本 `1.7.1-bailey.21`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+
+## 1.7.1-bailey.21 - 2026-11-08
+
+- Remove the retired Robin (Gemini app OAuth) and Gemini Windows channels. Both data directories were empty in production, all Argon models are already served by the Cloud Code pool, and `gemini-4-argon` (bare name) is no longer in the catalog: the family is `gemini-4-argon-high/medium/low/disabled`. Roughly 4,600 lines of channel-specific transport, auth, protobuf, quota and proxy code are gone, and the provider router is now a single-pool passthrough.
+- Argon video input now always routes through the Cloud Code fallback path; the task-identity header block from the retired channels is no longer emitted (`taskIdentityOptions` returns an empty object).
+- The admin API keeps its `?provider=cloudcode` parameter semantics; `provider=robin` remains accepted-and-rejected exactly as before, so existing callers see no shape change.
+- Scheduling, quota reserve, affinity, concurrency and timeouts are unchanged. The unified scheduling suite now covers the single API pool with the same distribution, affinity, reserve and failover assertions previously split across three channels.
 
 ## 1.7.1-bailey.20 - 2026-11-06
 

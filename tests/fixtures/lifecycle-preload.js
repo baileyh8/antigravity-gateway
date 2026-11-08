@@ -6,7 +6,6 @@ const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { DirectAntigravityProvider } = require('../../src/direct-provider');
 const { QuotaManager } = require('../../src/quota-manager');
-const { RobinAccountPool } = require('../../src/robin-account-pool');
 const { LocalAccountImporter } = require('../../src/local-account-importer');
 const { AccountPool } = require('../../src/account-pool');
 const reload = AccountPool.prototype.reload;
@@ -20,7 +19,6 @@ QuotaManager.prototype.start = () => {};
 // This fixture owns only the blocked inference transaction, never real auth
 // or quota I/O, including during graceful shutdown.
 QuotaManager.prototype.refreshAccount = async () => null;
-RobinAccountPool.prototype.start = () => {};
 LocalAccountImporter.prototype.importIfNew = async () => ({ status: 'none' });
 DirectAntigravityProvider.prototype.isConfigured = () => true;
 DirectAntigravityProvider.prototype.listModels = async () => ['gemini-test-high'];
