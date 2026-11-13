@@ -39,6 +39,7 @@ for (const [client, protocol, name, args] of fixtures) test(`${client}: complete
 
 test('native file views preserve replacement semantics and retain complete MCP fallback', () => {
   const n = normalized('chat', 'edit', { path: '/tmp/a', old_string: 'old', new_string: '', replace_all: false });
+  n.tools[0].description = 'Replace exact literal strings in an existing file.';
   const a = prepare157ToolContract(n, prepareToolAdapter(n));
   const unique = a.toProvider({ name: 'edit', arguments: { path: '/tmp/a', old_string: 'old', new_string: '', replace_all: false } });
   assert.match(unique.name, /^mcp_gateway_/);
@@ -147,4 +148,26 @@ test('Responses custom tools return their original freeform kind and literal pat
  assert.equal(client.kind,'custom');assert.deepEqual(client.arguments,{input:patch});
  const r=responsesResponse('gemini-3.8-flash-low',{text:'',toolCalls:[client],usage:{}});
  const call=r.output.find(item=>item.type==='custom_tool_call');assert.ok(call);assert.equal(call.input,patch);
+});
+
+
+test('native file wire schemas avoid boolean enums and enforce destructive-operation guards locally', () => {
+ const write=normalized('chat','write_file',{path:'/tmp/a',content:'new text'});
+ write.tools[0].description='Create or completely overwrite a file.';
+ const w=prepare157ToolContract(write,prepareToolAdapter(write));
+ const declaration=w.normalized.tools.find(t=>t.name==='write_file');assert.equal(declaration.schema.properties.Overwrite.enum,undefined);
+ assert.throws(()=>w.toClient({name:'write_file',arguments:{Path:'/tmp/a',Content:'new',Overwrite:false}}),/Overwrite/);
+ const read=normalized('chat','read_file',{path:'/tmp/a',offset:1,limit:2});read.tools[0].schema.properties.offset.description='1-indexed line number';read.tools[0].schema.properties.limit.description='Number of lines';const r=prepare157ToolContract(read,prepareToolAdapter(read));
+ for(const StartLine of [0,-1,1.5])assert.throws(()=>r.toClient({name:'read_file',arguments:{Path:'/tmp/a',StartLine,EndLine:2}}));
+ const edit=normalized('chat','edit',{path:'/tmp/a',old_string:'old',new_string:'new',replace_all:true});edit.tools[0].description='Replace exact literal strings in an existing file.';const e=prepare157ToolContract(edit,prepareToolAdapter(edit));
+ assert.throws(()=>e.toClient({name:'edit_file',arguments:{Path:'/tmp/a',Target:'',Replacement:'new'}}));
+});
+
+
+test('ambiguous append, byte-offset and regex clients retain only their complete MCP contract', () => {
+ for (const [name,args,description] of [
+  ['write_file',{path:'/tmp/a',content:'x'},'Append text to an existing file.'],
+  ['edit',{path:'/tmp/a',old_string:'x',new_string:'y',replace_all:true},'Replace a regular expression across the file.'],
+  ['read_file',{path:'/tmp/a',offset:0,limit:10},'Read bytes from a file.']
+ ]) {const n=normalized('chat',name,args);n.tools[0].description=description;if(name==='read_file'){n.tools[0].schema.properties.offset.description='Byte offset';n.tools[0].schema.properties.limit.description='Byte count';}const a=prepare157ToolContract(n,prepareToolAdapter(n));assert.ok(a.normalized.tools.every(t=>t.name.startsWith('mcp_gateway_')));assert.deepEqual(a.toClient(a.toProvider({name,arguments:args})).arguments,args);}
 });
