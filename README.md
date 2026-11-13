@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.23 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.24 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.23
+### 当前源码版本：1.7.1-bailey.24
+
+本次补齐长会话缓存恢复路径：完成全部历史恢复和工具映射后再次检查工具签名，防止无签名缓存覆盖兼容标记；精确缓存没有真实签名时保留客户端显式回传的签名。
 
 本次修复 Hydrogen 工具历史缺少思考签名导致的 400：Responses / Chat 的工具回包与回传使用 `extra_content.google.thought_signature` 保存原始签名，同时兼容已有 camelCase/snake_case 字段。原始签名优先；确实缺失的旧历史仅在每个模型步骤的首个工具调用使用兼容标记，不跨账号恢复私有缓存。
 
@@ -674,7 +676,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.23
+### Current source version: 1.7.1-bailey.24
+
+This update rechecks tool signatures after all native-history and tool-projection restores, so an unsigned cached step cannot erase the compatibility marker. Exact unsigned cache entries also preserve explicitly supplied client signatures.
 
 This update fixes Hydrogen tool-history 400 errors caused by missing thought signatures. Responses and Chat tool calls round-trip opaque signatures through `extra_content.google.thought_signature`, with existing camelCase/snake_case fields accepted. Genuine signatures take priority; unsigned imported history uses a compatibility marker only on the first call per model step. Private server-side replay remains account-scoped.
 

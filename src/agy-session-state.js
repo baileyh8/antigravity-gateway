@@ -90,6 +90,24 @@ function validState(value, owner, key) {
     && value.responses && typeof value.responses === 'object' && !Array.isArray(value.responses);
 }
 
+// Called only after an exact full-prefix cache match. A cached unsigned step
+// must not erase a genuine signature explicitly returned by the client. Match
+// unique call IDs inside that verified projection; never search other sessions
+// or copy a signature to parallel/duplicate/foreign calls.
+function preserveProvidedSignatures(restored, submitted) {
+  const source = (submitted.parts || []).filter(p => p.functionCall?.id);
+  const targets = restored.flatMap(c => c.parts || []).filter(p => p.functionCall?.id);
+  const valid = value => typeof value === 'string' && value.length > 0 && value.length <= 65536
+    && Buffer.byteLength(value, 'utf8') <= 65536 && value !== 'skip_thought_signature_validator';
+  for (const part of source) {
+    const id = part.functionCall.id;
+    if (!valid(part.thoughtSignature) || source.filter(p => p.functionCall.id === id).length !== 1) continue;
+    const matches = targets.filter(p => p.functionCall.id === id);
+    if (matches.length === 1 && !valid(matches[0].thoughtSignature)) matches[0].thoughtSignature = part.thoughtSignature;
+  }
+  return restored;
+}
+
 function restoreHistory(state, contents, model) {
   let prefix = hash('agy-history-v1');
   return contents.map(content => {
@@ -98,7 +116,7 @@ function restoreHistory(state, contents, model) {
     const entry = state.responses[key];
     if (content.role === 'model' && compatibleHistoryModels(entry?.model, model) && Array.isArray(entry.content?.parts)
         && contentFingerprint(entry.content) === contentFingerprint(content)) {
-      return structuredClone(entry.content);
+      return preserveProvidedSignatures([structuredClone(entry.content)], content)[0];
     }
     return content;
   });
@@ -141,6 +159,7 @@ function restoreClientProjections(state, contents, model, { nativeErrors, pendin
     // resurrect hidden exchanges or trigger broad text-pattern stripping.
     // Cross-model image/projection exchanges have not been captured yet.
     const replacement = entry?.model === model ? structuredClone(entry.contents) : [content];
+    if (entry?.model === model) preserveProvidedSignatures(replacement, content);
     for (const part of content.parts) if (part.functionCall) toolNames.delete(part.functionCall.id);
     // Rename receipts only from an exact, previously issued call projection.
     // No global tool-name guessing, foreign-ID repair or rewriting old signed
