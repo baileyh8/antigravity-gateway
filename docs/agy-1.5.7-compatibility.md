@@ -30,6 +30,8 @@
 
 日志 mapped 计数表示已适配的客户端工具数，包含 MCP 视图，不表示所有工具都等同官方执行器。调试映射对显示实际 MCP / 文件视图名称。
 
+Responses 和 Chat Completions 的签名通过工具调用上的 `extra_content.google.thought_signature` 往返，兼容输入 `thoughtSignature` / `thought_signature`；签名是至多64KiB的不透明字符串，不从调用 ID、参数或思考文本推导。流式与非流式都保留。Anthropic 继续使用签名 thinking 块。Hydrogen 四档和 Gemini 3 一样处理缺签名的旧历史：每个模型步骤仅首个工具调用使用兼容标记；它不等于恢复了真实签名。已有真实签名和精确持久化恢复优先，账号/前缀隔离保持。
+
 每个客户端工具都有完整 `argumentsJson` MCP 视图，未识别的客户端也可以无损传递。可等价表达的文件操作另有受约束的原生视图；冲突时不猜。回包恢复原工具名、原参数、调用 ID，后续回执恢复对应的上游名称，完整历史匹配时保留真实签名。Anthropic Messages、Chat Completions 和 Responses 的工具往返与重启恢复均有测试，自定义工具保持原 kind。
 
 system 保留客户端原始指令和用户项目规则，并追加明确的工具索引。官方客户端包含自己独有的工作区、artifact、任务和权限实现；网关不会声称这些执行器存在，也不会删除客户端审批限制来凑相同字数。旧工具协议可用 `ANTIGRAVITY_TOOL_CONTRACT=legacy` 回退。已有旧协议测试显式固定该回退分支，新默认协议由独立的三协议闭环测试验收。

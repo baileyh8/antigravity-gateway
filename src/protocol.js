@@ -33,7 +33,25 @@ function parseJsonValue(value) {
   try { return JSON.parse(source); } catch { return value; }
 }
 
+// Signatures are opaque per-call metadata. Never derive them from a call ID,
+// arguments, reasoning text, or another call; cap their size at the boundary.
+function readThoughtSignature(value) {
+  const candidates = typeof value === 'string' ? [value] : [
+    value?.thoughtSignature, value?.thought_signature,
+    value?.extra_content?.google?.thought_signature,
+    value?.providerMetadata?.google?.thoughtSignature, value?.signature
+  ];
+  return candidates.find(signature => typeof signature === 'string' && signature.length > 0
+    && signature.length <= 65536 && Buffer.byteLength(signature, 'utf8') <= 65536) || '';
+}
+
+function thoughtSignatureMetadata(call) {
+  const signature = readThoughtSignature(call);
+  return signature ? { extra_content: { google: { thought_signature: signature } } } : {};
+}
+
 function toolCallPart(id, name, input, thoughtSignature, kind = 'function') {
+  const signature = readThoughtSignature(thoughtSignature);
   return {
     type: 'tool_call',
     ...(id ? { id: String(id) } : {}),
@@ -42,7 +60,7 @@ function toolCallPart(id, name, input, thoughtSignature, kind = 'function') {
       ? input
       : parseJsonValue(input ?? {}),
     ...(kind === 'custom' ? { kind: 'custom' } : {}),
-    ...(thoughtSignature ? { thoughtSignature: String(thoughtSignature) } : {})
+    ...(signature ? { thoughtSignature: signature } : {})
   };
 }
 
@@ -91,20 +109,20 @@ function internalPartsFromContent(content, protocol) {
       continue;
     }
     if (block.type === 'thinking') {
-      const signature = block.signature || block.thoughtSignature || block.thought_signature;
-      if (signature) pendingSignature = String(signature);
+      const signature = readThoughtSignature(block);
+      if (signature) pendingSignature = signature;
       continue;
     }
     if (['text', 'input_text', 'output_text'].includes(block.type)) {
       if (block.text != null && String(block.text)) parts.push({ type: 'text', text: String(block.text) });
     } else if (block.type === 'tool_use') {
-      parts.push(toolCallPart(block.id, block.name, block.input, block.signature || block.thoughtSignature || pendingSignature));
+      parts.push(toolCallPart(block.id, block.name, block.input, readThoughtSignature(block) || pendingSignature));
       pendingSignature = '';
     } else if (block.type === 'tool_result') {
       const nested = internalPartsFromContent(block.content, protocol);
       parts.push(toolResultPart(block.tool_use_id, textFromContent(block.content, protocol), block.name, block.is_error === true, nested.filter((part) => part.type === 'media')));
     } else if (block.type === 'function_call') {
-      parts.push(toolCallPart(block.call_id || block.id, block.name, block.arguments, block.thoughtSignature));
+      parts.push(toolCallPart(block.call_id || block.id, block.name, block.arguments, readThoughtSignature(block)));
     } else if (block.type === 'function_call_output' || block.type === 'custom_tool_call_output' || block.type === 'computer_call_output') {
       const output = splitToolOutput(block.output, protocol);
       parts.push(toolResultPart(block.call_id, output.content, '', false, output.media));
@@ -421,7 +439,7 @@ function normalizeChat(payload) {
       if (Array.isArray(message.tool_calls)) {
         for (const call of message.tool_calls) {
           combined += `\n[ASSISTANT_TOOL_CALL id=${call.id || ''} name=${call.function?.name || ''}]\n${call.function?.arguments || '{}'}`;
-          parts.push(toolCallPart(call.id, call.function?.name, call.function?.arguments));
+          parts.push(toolCallPart(call.id, call.function?.name, call.function?.arguments, readThoughtSignature(call)));
         }
       }
       messages.push({ role: message.role || 'user', text: combined, parts });
@@ -470,7 +488,7 @@ function normalizeResponses(payload, previousTranscript) {
       messages.push({
         role: 'assistant',
         text: `[ASSISTANT_TOOL_CALL id=${id} name=${item.name || ''}]\n${args}`,
-        parts: [toolCallPart(id, item.name, input, item.thoughtSignature, custom ? 'custom' : 'function')]
+        parts: [toolCallPart(id, item.name, input, readThoughtSignature(item), custom ? 'custom' : 'function')]
       });
     }
   }
@@ -598,7 +616,7 @@ function normalizeToolCalls(rawCalls, tools) {
       name: call.name,
       arguments: argumentsObject,
       ...(tool.kind === 'custom' ? { kind: 'custom', input: argumentsObject.input } : {}),
-      ...(typeof call.thoughtSignature === 'string' && call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
+      ...(readThoughtSignature(call) ? { thoughtSignature: readThoughtSignature(call) } : {})
     };
   });
 }
@@ -761,7 +779,8 @@ function chatResponse(model, result) {
   const message = { role: 'assistant', content: text || null };
   if (result.thinking) message.reasoning_content = result.thinking;
   if (result.toolCalls.length) message.tool_calls = result.toolCalls.map((call) => ({
-    id: call.id, type: 'function', function: { name: call.name, arguments: compactJson(call.arguments) }
+    id: call.id, type: 'function', function: { name: call.name, arguments: compactJson(call.arguments) },
+    ...thoughtSignatureMetadata(call)
   }));
   if (result.images?.length) message.images = result.images.map((image) => ({
     id: image.id,
@@ -795,12 +814,12 @@ function responsesResponse(model, result, responseId) {
     if (call.kind === 'custom') output.push({
       id: `ctc_${crypto.randomUUID().replaceAll('-', '')}`,
       type: 'custom_tool_call', status: 'completed', call_id: call.id,
-      name: call.name, input: call.input
+      name: call.name, input: call.input, ...thoughtSignatureMetadata(call)
     });
     else output.push({
       id: `fc_${crypto.randomUUID().replaceAll('-', '')}`,
       type: 'function_call', status: 'completed', call_id: call.id,
-      name: call.name, arguments: compactJson(call.arguments)
+      name: call.name, arguments: compactJson(call.arguments), ...thoughtSignatureMetadata(call)
     });
   }
   for (const image of result.images || []) {
@@ -851,6 +870,7 @@ module.exports = {
   parseToolCalls,
   prepareNativeMultimodal,
   responsesResponse,
+  readThoughtSignature,
   textFromContent,
   toolChoiceRule,
   toolNarrationEnabled,
