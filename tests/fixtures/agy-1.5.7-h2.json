@@ -1,0 +1,21 @@
+{
+  "provenance": "Isolated loopback captures, official agy1.5.7 and packaged Go1.27.2 helper, macOS arm64.",
+  "officialBuild": "go1.28-20261102-RC00",
+  "gatewayBuild": "go1.27.2",
+  "settings": [
+    {
+      "type": "settings",
+      "values": {
+        "2": 0,
+        "4": 4194304,
+        "5": 1048576,
+        "6": 10485760
+      }
+    },
+    {
+      "type": "connectionWindowUpdate",
+      "delta": 1073741824
+    }
+  ],
+  "matched": true
+}

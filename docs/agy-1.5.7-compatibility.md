@@ -6,7 +6,7 @@
 
 ## 已核对
 
-- macOS arm64 官方 HTTPS 的密码套件、扩展顺序、签名算法、supported groups 与 ALPN `h2,http/1.1`。Go 1.27.2 原生传输使用正常证书校验；代理仍按账号原绑定，不回退直连。六个平台二进制附 SHA256 清单。其他平台打包构建通过不等同于在每台系统运行官方 CLI 抓包。
+- macOS arm64 官方 HTTPS 的密码套件、扩展顺序、签名算法、supported groups 与 ALPN `h2,http/1.1`。官方与网关的 HTTP/2 SETTINGS（ENABLE_PUSH=0、初始流窗口4194304、最大帧1048576、最大头列表10485760）及连接窗口增量1073741824也一致。Go 1.27.2 原生传输使用正常证书校验；代理仍按账号原绑定，不回退直连。六个平台二进制附 SHA256 清单。其他平台打包构建通过不等同于在每台系统运行官方 CLI 抓包。
 - 元数据、同步生成、Token、Userinfo 使用 HTTP/2；流式生成不伪造 Content-Length。Go 测试验证 12 路 HTTP/2 请求复用一条连接。协议升级不改变每账号并发、排队、额度保留及粘连策略。
 - 24 个 agent 模型变体的实际最终请求体与模型 enum；图像生成单独采集，不把图片模型当作 agent 运行。模型配置证据在 `tests/fixtures/agy-1.5.7-model-wire.json`，有效目录字段样本在 `src/data/agy-1.5.7-models.json`。
 
