@@ -15,7 +15,7 @@ const { prepareNativeContext, completeNativeContext, interruptNativeContext, int
 const { isStreamError } = require('./agy-stream-recovery');
 const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
 const { AgyImageStore, registerImagePart } = require('./agy-image-references');
-const { agentEnvelope, generationProfile, nativeSchema, cliUserAgent } = require('./agy-request-profile');
+const { agentEnvelope, generationProfile, nativeSchema, cliUserAgent, modelProfile } = require('./agy-request-profile');
 const { prepareStructuredOutput, finishResult, finishResponse } = require('./agy-structured-output');
 const { nativeClientToolResponse } = require('./agy-tool-results');
 const { assertGenerationCompatibility } = require('./antigravity-model-config');
@@ -1367,8 +1367,9 @@ class DirectAntigravityProvider {
       }
     }
     if (!native.checkpoint && (!state.calls.length || finished)) nativeState.lastExecutionId = crypto.randomUUID();
-    nativeState.usedClaude ||= /claude/i.test(model);
-    nativeState.usedNonGemini ||= !/^gemini-/i.test(model);
+    const observedLabels = modelProfile(model, native.modelInfo).capturedLabels;
+    nativeState.usedClaude ||= observedLabels?.used_claude === 'true' || /claude/i.test(model);
+    nativeState.usedNonGemini ||= observedLabels?.used_non_gemini_model === 'true' || !/^gemini-/i.test(model);
     checkpoint();
     return {
       text: finished ? finished.text : combinedText,

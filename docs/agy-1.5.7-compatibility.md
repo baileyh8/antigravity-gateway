@@ -20,6 +20,8 @@
 | Flash Lite 目录变体 | thinkingLevel: LOW | 65535 |
 | Gemini 3.1 Flash Image | candidateCount: 1 + imageConfig | 不附 agent 思考参数 |
 
+历史标签也按逐模型抓包处理：Hydrogen 的 `used_non_gemini_model` 为 true，不能由公开模型名的 `gemini-` 前缀推断；Claude 的两个 used_claude 标签均为 true。历史上的累积标志仍保留。
+
 输入/输出限制仍读有效目录及客户端合法输出设置。公开模型名不擅自换成其他模型，不根据后缀合成未观察过的思考配置。Hydrogen 样本来自此前观察到的目录条目；这不代表当前所有账号都有权限。路由继续按每账号目录筛选。
 
 ## 工具与 system
