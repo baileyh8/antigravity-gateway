@@ -326,11 +326,19 @@ function normalizedMessageParts(message) {
   return message?.text ? [{ type: 'text', text: String(message.text) }] : [];
 }
 
+function ensureToolSignatures(contents, model) {
+  if (!/^gemini-(?:3(?:[.-]|$)|4-hydrogen(?:[.-]|$))/i.test(String(model || ''))) return contents;
+  for (const content of contents) {
+    const firstCall = content.parts?.find(p => p.functionCall);
+    if (firstCall) firstCall.thoughtSignature = readThoughtSignature(firstCall) || THOUGHT_SIGNATURE_SENTINEL;
+  }
+  return contents;
+}
+
 function contentsFromNormalized(normalized, thoughtSignatures = null, model = '') {
   const toolNames = new Map();
   const callOrder = new Map();
   const contents = [];
-  const needsThoughtSignature = /^gemini-(?:3(?:[.-]|$)|4-hydrogen(?:[.-]|$))/i.test(String(model || ''));
   for (const message of normalized.messages || []) {
     const nativeParts = [];
     const preserveFilenames = normalizedMessageParts(message).some(p => p?.type === 'media' && !/^image\//.test(p.mediaType || ''));
@@ -406,14 +414,12 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
     // Apply the compatibility fallback only after Responses items have been
     // regrouped. Native saved signatures subsequently replace it on an exact
     // prefix match; never add the fallback to parallel sibling calls.
-    const firstCall = content.parts.find(p => p.functionCall);
-    if (needsThoughtSignature && firstCall && !firstCall.thoughtSignature) firstCall.thoughtSignature = THOUGHT_SIGNATURE_SENTINEL;
     if (content.parts.length > 1 && content.parts.every(p => p.functionResponse)) {
       content.parts.sort((a, b) => (callOrder.get(a.functionResponse.id) ?? Number.MAX_SAFE_INTEGER)
         - (callOrder.get(b.functionResponse.id) ?? Number.MAX_SAFE_INTEGER));
     }
   }
-  return contents;
+  return ensureToolSignatures(contents, model);
 }
 
 function buildDirectRequest(normalized, model, projectId, sessionId, repairInstruction = '', thoughtSignatures = null, native = {}) {
@@ -495,6 +501,10 @@ function buildDirectRequest(normalized, model, projectId, sessionId, repairInstr
   native.context = prepareNativeContext(state, request.contents, model, { metadata: native.modelInfo, now: native.now, checkpoint: native.checkpoint, compactionProfile: native.compactionProfile, clientProfile: native.clientProfile, imageStore: native.imageStore,
     restoreStreamRecovery: native.restoreStreamRecovery });
   request.contents = native.toolAdapter.projectContents ? native.toolAdapter.projectContents(native.context.contents) : native.context.contents;
+  // Exact cache/projection recovery may restore an upstream step that never
+  // carried a signature. Re-check the actual outgoing parts after ALL restores
+  // and mappings; otherwise recovery erases the earlier compatibility marker.
+  ensureToolSignatures(request.contents, model);
   native.context.contents = request.contents;
   return agentEnvelope({ ...request, model, project: projectId, state, metadata: native.modelInfo, now: native.now,
     step: native.context.step, requestType: native.checkpoint ? 'checkpoint' : 'agent' });
