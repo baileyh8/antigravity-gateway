@@ -1,28 +1,31 @@
 'use strict';
 
+const { cliUserAgent } = require('./agy-request-profile');
+const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const crypto = require('node:crypto');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 const { discoverClientCredentials } = require('./local-agy-auth');
 
-const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
+const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v2/userinfo?alt=json';
+const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v2/userinfo';
 const LOAD_CODE_ASSIST_PATH = '/v1internal:loadCodeAssist';
 const ONBOARD_USER_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser';
-const BASE_URLS = ['https://cloudcode-pa.googleapis.com', 'https://daily-cloudcode-pa.googleapis.com'];
+const API_BASE_URL = 'https://daily-cloudcode-pa.googleapis.com';
+const BASE_URLS = [API_BASE_URL];
 const CALLBACK_PORT = 51121;
 const PREFERRED_OAUTH_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
-const ANTIGRAVITY_HUB_VERSION = process.env.ANTIGRAVITY_HUB_VERSION || '2.9.1';
-const ANTIGRAVITY_SHORT_USER_AGENT = `antigravity/hub/${ANTIGRAVITY_HUB_VERSION} ${process.platform}/${process.arch}`;
-const ANTIGRAVITY_ONBOARD_USER_AGENT = `${ANTIGRAVITY_SHORT_USER_AGENT} google-api-nodejs-client/10.3.0`;
-const ANTIGRAVITY_GOOG_API_CLIENT = 'gl-node/22.21.1';
+const ANTIGRAVITY_SHORT_USER_AGENT = cliUserAgent();
+const ANTIGRAVITY_ONBOARD_USER_AGENT = ANTIGRAVITY_SHORT_USER_AGENT;
 const SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
   'https://www.googleapis.com/auth/cclog',
-  'https://www.googleapis.com/auth/experimentsandconfigs'
+  'https://www.googleapis.com/auth/experimentsandconfigs',
+  'https://www.googleapis.com/auth/aicode',
+  'openid'
 ];
 
 function firstString(...values) {
@@ -76,6 +79,16 @@ function defaultTierId(body) {
   return firstString(selected?.id, body?.currentTier?.id) || 'free-tier';
 }
 
+function operationUrl(name) {
+  // The observed operation name is relative, e.g. operations/<id>. Never
+  // turn an upstream-controlled string into an arbitrary credentialed URL.
+  const value = firstString(name);
+  if (!/^operations\/[A-Za-z0-9_~-][A-Za-z0-9._~-]*$/.test(value)) {
+    throw new Error('Antigravity 初始化没有返回可识别的 operation 标识。');
+  }
+  return `${API_BASE_URL}/v1internal/${value}`;
+}
+
 function wait(milliseconds, signal) {
   if (!milliseconds) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -92,7 +105,7 @@ function wait(milliseconds, signal) {
 
 class OAuthFlow {
   constructor({
-    fetchImpl = globalThis.fetch,
+    fetchImpl = nativeCloudCodeFetch,
     agyPath = '',
     platform = process.platform,
     timeoutMs = 5 * 60_000,
@@ -122,12 +135,16 @@ class OAuthFlow {
     const credential = candidates.find((candidate) => candidate.clientId === PREFERRED_OAUTH_CLIENT_ID) || candidates[0];
     if (!credential) throw new Error('无法从本地 agy 安装中发现 OAuth 客户端配置。');
     const state = crypto.randomBytes(24).toString('hex');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     const callback = await this._callbackServer(state);
     const redirectUri = `http://localhost:${callback.port}/oauth-callback`;
     const params = new URLSearchParams({
       access_type: 'offline', client_id: credential.clientId, prompt: 'consent', redirect_uri: redirectUri,
-      response_type: 'code', scope: SCOPES.join(' '), state
+      response_type: 'code', scope: SCOPES.join(' '), state,
+      code_challenge: codeChallenge, code_challenge_method: 'S256'
     });
+    params.sort();
     const url = `${AUTH_ENDPOINT}?${params}`;
     // A locked-down desktop can leave the operating-system browser launcher
     // hanging. Never delay printing the complete manual URL for that reason.
@@ -157,7 +174,8 @@ class OAuthFlow {
         selected.code,
         redirectUri,
         candidates.filter((candidate) => candidate.clientId === credential.clientId),
-        controller.signal
+        controller.signal,
+        codeVerifier
       );
       return account;
     } finally {
@@ -173,19 +191,18 @@ class OAuthFlow {
     return true;
   }
 
-  async _exchange(code, redirectUri, credentials, signal) {
+  async _exchange(code, redirectUri, credentials, signal, codeVerifier) {
     let token;
     let tokenCredential;
     let lastError;
     for (const credential of credentials) {
       try {
+        const form = new URLSearchParams({ code, code_verifier: codeVerifier, client_id: credential.clientId, client_secret: credential.clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code' });
+        form.sort();
         const tokenResponse = await this.fetchImpl(TOKEN_ENDPOINT, {
           method: 'POST', signal,
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code, client_id: credential.clientId, client_secret: credential.clientSecret,
-            redirect_uri: redirectUri, grant_type: 'authorization_code'
-          })
+          headers: { 'user-agent': 'Go-http-client/2.0', 'content-type': 'application/x-www-form-urlencoded' },
+          body: form
         });
         token = await responseJson(tokenResponse, 'OAuth token 交换');
         tokenCredential = credential;
@@ -198,7 +215,7 @@ class OAuthFlow {
     if (!accessToken || !refreshToken) throw new Error('OAuth 未返回完整的 access token 和 refresh token。');
 
     const userResponse = await this.fetchImpl(USERINFO_ENDPOINT, {
-      headers: { authorization: `Bearer ${accessToken}` }, signal
+      headers: { authorization: `Bearer ${accessToken}`, 'user-agent': 'Go-http-client/2.0' }, signal
     });
     const user = await responseJson(userResponse, 'Google 账号信息读取');
     const email = firstString(user.email);
@@ -214,7 +231,6 @@ class OAuthFlow {
           method: 'POST', signal,
           headers: {
             authorization: `Bearer ${accessToken}`,
-            accept: '*/*',
             'content-type': 'application/json',
             'user-agent': ANTIGRAVITY_SHORT_USER_AGENT
           },
@@ -248,38 +264,32 @@ class OAuthFlow {
   }
 
   async _onboard(accessToken, tierId, signal) {
-    const requestBody = JSON.stringify({
-      tier_id: tierId,
-      metadata: {
-        ide_type: 'ANTIGRAVITY',
-        ide_version: ANTIGRAVITY_HUB_VERSION,
-        ide_name: 'antigravity'
-      }
+    const headers = { authorization: `Bearer ${accessToken}`, 'user-agent': cliUserAgent() };
+    signal?.throwIfAborted();
+    const response = await this.fetchImpl(ONBOARD_USER_ENDPOINT, {
+      method: 'POST', signal,
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ tierId, metadata: { ideType: 'ANTIGRAVITY' } })
     });
-    for (let attempt = 1; attempt <= this.onboardAttempts; attempt += 1) {
-      const response = await this.fetchImpl(ONBOARD_USER_ENDPOINT, {
-        method: 'POST', signal,
-        headers: {
-          authorization: `Bearer ${accessToken}`,
-          accept: '*/*',
-          'content-type': 'application/json',
-          'user-agent': ANTIGRAVITY_ONBOARD_USER_AGENT,
-          'x-goog-api-client': ANTIGRAVITY_GOOG_API_CLIENT
-        },
-        body: requestBody
-      });
-      const body = await responseJson(response, 'Antigravity 账号初始化');
+    let body = await responseJson(response, 'Antigravity 账号初始化');
+    let name = firstString(body?.name);
+    const attempts = Math.max(1, Math.trunc(this.onboardAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      signal?.throwIfAborted();
+      if (body?.error) throw new Error(`Antigravity 账号初始化失败：${firstString(body.error.message) || 'operation 返回错误'}`);
       if (body?.done === true) {
-        const projectId = extractProject(body?.response);
         // Some successful onboarding operations only acknowledge completion.
-        // The newly provisioned project becomes visible through a subsequent
-        // loadCodeAssist call instead of appearing in this operation body.
-        if (!projectId) return '';
-        return projectId;
+        // Confirm the project through loadCodeAssist if the response omits it.
+        return extractProject(body?.response);
       }
-      if (attempt < this.onboardAttempts) await wait(this.onboardPollMs, signal);
+      const target = operationUrl(name);
+      if (attempt === attempts) break;
+      await wait(this.onboardPollMs, signal);
+      const poll = await this.fetchImpl(target, { method: 'GET', headers, signal });
+      body = await responseJson(poll, 'Antigravity 初始化进度查询');
+      name = firstString(body?.name, name);
     }
-    throw new Error(`Antigravity 账号初始化在 ${this.onboardAttempts} 次轮询后仍未完成。`);
+    throw new Error(`Antigravity 账号初始化在 ${attempts} 次状态检查后仍未完成。`);
   }
 
   async _pollProject(accessToken, signal) {
@@ -291,8 +301,7 @@ class OAuthFlow {
             method: 'POST', signal,
             headers: {
               authorization: `Bearer ${accessToken}`,
-              accept: '*/*',
-              'content-type': 'application/json',
+                'content-type': 'application/json',
               'user-agent': ANTIGRAVITY_SHORT_USER_AGENT
             },
             body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY' } })

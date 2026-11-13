@@ -74,7 +74,7 @@ test('native metadata RPCs use captured Content-Length and retain exact UTF-8 by
     });
   });
   const body = '{"project":"测试-project"}';
-  for (const endpoint of ['fetchAvailableModels', 'retrieveUserQuotaSummary', 'loadCodeAssist', 'fetchUserInfo', 'fetchAdminControls', 'listExperiments']) {
+  for (const endpoint of ['fetchAvailableModels', 'retrieveUserQuotaSummary', 'loadCodeAssist', 'fetchUserInfo', 'fetchAdminControls', 'listExperiments', 'generateContent', 'getCodeAssistGlobalUserSetting']) {
     const response = await transport.fetch(`${url}/v1internal:${endpoint}`, { method: 'POST', body,
       headers: { authorization: 'Bearer local-test', 'user-agent': 'agy-test', 'content-type': 'application/json' } });
     assert.equal(response.status, 204);
@@ -93,7 +93,7 @@ test('metadata framing selection does not change generation or uncaptured paths'
   const { transport, url } = await fixture(t, (req, res) => {
     req.resume(); req.on('end', () => { seen.push(req.headers); res.end('OK'); });
   });
-  for (const endpoint of ['streamGenerateContent?alt=sse', 'generateContent', 'fetchAvailableModelsExtra']) {
+  for (const endpoint of ['streamGenerateContent?alt=sse', 'fetchAvailableModelsExtra']) {
     assert.equal(await (await transport.fetch(`${url}/v1internal:${endpoint}`, { method: 'POST', body: '{"test":true}' })).text(), 'OK');
     assert.equal(seen.at(-1)['transfer-encoding'], 'chunked');
     assert.equal(seen.at(-1)['content-length'], undefined);
@@ -150,7 +150,7 @@ test('native executable cache is verified before execution', async t => {
 });
 
 test('native TLS matches captured agy extensions, including signature algorithms beyond JA3', async t => {
-  const expected = require('./fixtures/agy-1.4.2-tls.json');
+  const expected = require('./fixtures/agy-1.5.7-tls.json');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-native-hello-'));
   const binary = resolveNativeBinary({ cacheDir: directory });
   const sockets = new Set();

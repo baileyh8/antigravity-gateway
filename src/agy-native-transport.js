@@ -247,9 +247,11 @@ let sharedTransport;
 const proxyTransports = new Map();
 function nativeCloudCodeFetch(url, options) {
   const parsed = new URL(url);
-  // Gemini App/Robin, OAuth and unrelated HTTP requests keep their existing
-  // implementation. Only the Cloud Code origin uses this native transport.
-  if (!/^(daily-)?cloudcode-pa\.googleapis\.com$/.test(parsed.hostname)) return globalThis.fetch(url, options);
+  // Limit native transport to observed Cloud Code and OAuth endpoints.
+  const native = /^(daily-)?cloudcode-pa\.googleapis\.com$/.test(parsed.hostname)
+    || (parsed.hostname === 'oauth2.googleapis.com' && parsed.pathname === '/token')
+    || (parsed.hostname === 'www.googleapis.com' && parsed.pathname === '/oauth2/v2/userinfo');
+  if (!native) return globalThis.fetch(url, options);
   if (options?.nativeProxy) {
     const proxy = new URL(options.nativeProxy);
     if (!['http:', 'https:'].includes(proxy.protocol)) throw new NativeTransportError('Unsupported account proxy', 'native_proxy_invalid');

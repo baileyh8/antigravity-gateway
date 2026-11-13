@@ -265,8 +265,12 @@ test('OAuth flow initializes a first-login Antigravity project before saving the
     if (target.endsWith(':onboardUser')) {
       onboardCalls += 1;
       return new Response(JSON.stringify(onboardCalls === 1
-        ? { done: false }
+        ? { done: false, name: 'operations/fixture-onboard' }
         : { done: true, response: {} }), { status: 200 });
+    }
+    if (target.endsWith('/operations/fixture-onboard')) {
+      assert.equal(options.method, 'GET'); onboardCalls++;
+      return new Response(JSON.stringify({ done: true, response: {} }));
     }
     throw new Error(`unexpected URL: ${target}`);
   };
@@ -286,11 +290,11 @@ test('OAuth flow initializes a first-login Antigravity project before saving the
   assert.equal(onboardCalls, 2);
   const onboard = requests.find((item) => item.url.endsWith(':onboardUser'));
   assert.deepEqual(JSON.parse(onboard.body), {
-    tier_id: 'pro-tier',
-    metadata: { ide_type: 'ANTIGRAVITY', ide_version: '2.9.1', ide_name: 'antigravity' }
+    tierId: 'pro-tier',
+    metadata: { ideType: 'ANTIGRAVITY' }
   });
-  assert.equal(onboard.options.headers['x-goog-api-client'], 'gl-node/22.21.1');
-  assert.match(onboard.options.headers['user-agent'], /google-api-nodejs-client\/10\.3\.0/);
+  assert.equal(onboard.options.headers['x-goog-api-client'], undefined);
+  assert.match(onboard.options.headers['user-agent'], /antigravity\/cli\/1\.5\.7/);
 });
 
 test('OAuth flow prefers the official Antigravity client over an earlier embedded client', async () => {

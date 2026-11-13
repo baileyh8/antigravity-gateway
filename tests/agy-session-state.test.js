@@ -45,7 +45,7 @@ test('captured agent envelope ordering, labels and generation profile replace pr
   assert.deepEqual(Object.keys(request.request.labels), ['cascade_id', 'last_step_index', 'model_enum', 'request_id',
     'root_cascade_id', 'trajectory_id', 'used_claude', 'used_claude_conservative', 'used_non_gemini_model']);
   assert.equal(request.request.labels.model_enum, 'MODEL_PLACEHOLDER_M318');
-  assert.deepEqual(request.request.generationConfig, { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingBudget: -1 } });
+  assert.deepEqual(request.request.generationConfig, { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } });
   assert.equal(request.request.sessionId, '-3750763034362895579');
   assert.doesNotMatch(JSON.stringify(request), /private-account|private-session|client-secret-id/);
   assert.equal(request.request.toolConfig, undefined);
@@ -54,11 +54,11 @@ test('captured agent envelope ordering, labels and generation profile replace pr
 test('explicit client output and tool constraints remain native fields; catalog wins over captured fallback', () => {
   const request = buildDirectRequest({ ...input('hello'), generationConfig: { maxOutputTokens: 2048, temperature: 0.2 },
     tools: [{ name: 'read_file' }], toolChoice: { type: 'tool', name: 'read_file' } }, model, 'p', 's', '', null,
-  { modelInfo: { model: 'MODEL_UPDATED', supportsThinking: true, thinkingBudget: 4096, maxOutputTokens: 32768 } });
+  { modelInfo: { model: 'MODEL_UPDATED', supportsThinking: true, thinkingLevel: 'HIGH', maxOutputTokens: 32768 } });
   assert.equal(request.request.labels.model_enum, 'MODEL_UPDATED');
   assert.deepEqual(request.request.generationConfig, { maxOutputTokens: 2048, temperature: 0.2,
-    thinkingConfig: { includeThoughts: true, thinkingBudget: 4096 } });
-  assert.deepEqual(request.request.toolConfig, { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['read_file'] } });
+    thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } });
+  assert.deepEqual(request.request.toolConfig, { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['mcp_gateway_c9f8123bd2726fc2'] } });
 });
 
 test('native preparation preserves the entire caller system prompt and confines image instructions to its tool', () => {
@@ -75,13 +75,13 @@ test('catalog and read-only authentication requests use the captured project bod
   const seen = [];
   const p = provider(new AgySessionStore({ directory: '' }), async (url, options) => {
     seen.push({ url, body: JSON.parse(options.body) });
-    return new Response(JSON.stringify({ models: { [model]: { model: 'MODEL_PLACEHOLDER_M318', supportsThinking: true, thinkingBudget: -1 } } }),
+    return new Response(JSON.stringify({ models: { [model]: { model: 'MODEL_PLACEHOLDER_M318', supportsThinking: true, thinkingLevel: 'HIGH' } } }),
       { headers: { 'content-type': 'application/json' } });
   });
   await p.listModels(); await p.probeAuthentication();
   assert.equal(seen.length, 2);
   for (const item of seen) assert.deepEqual(item.body, { project: 'test-project' });
-  assert.equal(p.modelInfo(model).thinkingBudget, -1);
+  assert.equal(p.modelInfo(model).thinkingLevel, 'HIGH');
   assert.equal(p.modelInfo(model).model, 'MODEL_PLACEHOLDER_M318');
 });
 

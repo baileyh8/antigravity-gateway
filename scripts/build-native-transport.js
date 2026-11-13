@@ -8,6 +8,8 @@ const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
+const { AGY_CLI_VERSION } = require('../src/agy-request-profile');
+
 const root = path.resolve(__dirname, '..');
 const source = path.join(root, 'native');
 const go = process.env.ANTIGRAVITY_BUILD_GO || 'go';
@@ -22,7 +24,7 @@ const targets = [
 const only = process.argv.includes('--current') ? `${process.platform}-${process.arch}` : '';
 const output = path.join(source, 'bin');
 fs.mkdirSync(output, { recursive: true });
-const manifest = { protocol: 1, goVersion: 'go1.27.2', profile: 'agy-1.4.2',
+const manifest = { protocol: 1, goVersion: 'go1.27.2', profile: `agy-${AGY_CLI_VERSION}`,
   sourceSha256: sha(Buffer.concat(['go.mod', 'main.go'].map(f => fs.readFileSync(path.join(source, f))))), platforms: {} };
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-native-build-'));
 try {

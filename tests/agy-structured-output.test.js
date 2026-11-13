@@ -1,4 +1,6 @@
 'use strict';
+// Historical tool-wire fallback; current MCP and structured turns are covered in agy-157-contract.test.js.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {buildDirectRequest,DirectAntigravityProvider}=require('../src/direct-provider');
 const {normalizeChat,normalizeAnthropic,normalizeResponses,finalizeModelResult}=require('../src/protocol');

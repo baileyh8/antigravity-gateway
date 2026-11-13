@@ -1,4 +1,6 @@
 'use strict';
+// Historical wire compatibility remains available behind the explicit fallback.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { prepareToolAdapter } = require('../src/agy-tool-adapter');

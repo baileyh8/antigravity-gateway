@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -191,5 +192,60 @@ func TestRedirectDoesNotForwardAuthorization(t *testing.T) {
 	h.send(command{Type: "cancel", ID: "redirect"})
 	if visited {
 		t.Fatal("authorization reached another origin")
+	}
+}
+
+func TestHTTP2NegotiationAndMultiplexing(t *testing.T) {
+	var mu sync.Mutex
+	connections := map[string]bool{}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("expected HTTP/2, got %s", r.Proto)
+		}
+		mu.Lock()
+		connections[r.RemoteAddr] = true
+		mu.Unlock()
+		time.Sleep(25 * time.Millisecond)
+		w.Write([]byte("h2-ok"))
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	client, err := newClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	transport := client.Transport.(*http.Transport)
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	transport.TLSClientConfig.RootCAs = roots
+	// Establish h2 first; the following requests must reuse that connection.
+	first, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := client.Get(server.URL)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer r.Body.Close()
+			data, err := io.ReadAll(r.Body)
+			if err != nil || string(data) != "h2-ok" {
+				t.Errorf("bad stream %q: %v", data, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if len(connections) != 1 {
+		t.Errorf("HTTP/2 did not multiplex: %d connections", len(connections))
 	}
 }

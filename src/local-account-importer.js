@@ -1,4 +1,5 @@
 'use strict';
+const { nativeCloudCodeFetch } = require('./agy-native-transport');
 
 const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v2/userinfo?alt=json';
 
@@ -17,7 +18,7 @@ class LocalAccountImporter {
     this.provider = provider;
     this.store = store;
     this.accountPool = accountPool;
-    this.fetchImpl = fetchImpl || provider?.fetchImpl || globalThis.fetch;
+    this.fetchImpl = fetchImpl || provider?.fetchImpl || nativeCloudCodeFetch;
   }
 
   async importIfNew({ signal = AbortSignal.timeout(30_000) } = {}) {
@@ -28,7 +29,7 @@ class LocalAccountImporter {
     const accessToken = await this.provider.access(signal);
     const response = await this.fetchImpl(USERINFO_ENDPOINT, {
       signal,
-      headers: { authorization: `Bearer ${accessToken}` }
+      headers: { authorization: `Bearer ${accessToken}`, 'user-agent': 'Go-http-client/2.0' }
     });
     let user = {};
     try { user = JSON.parse(await response.text() || '{}'); }
@@ -59,7 +60,7 @@ class LocalAccountImporter {
       source: 'local-agy-import',
       enabled: true,
       weight: 1
-    });
+    }, { newGrant: true });
     this.accountPool.reload();
     return { status: 'imported', account: saved };
   }

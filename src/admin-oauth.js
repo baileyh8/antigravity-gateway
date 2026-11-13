@@ -80,7 +80,7 @@ class AdminOAuth {
       }
     })).then((account) => {
       if (current.state === 'cancelled') return;
-      const saved = this.accountStore.save(account);
+      const saved = this.accountStore.save(account, { newGrant: true });
       if (proxyId) this.proxyManager.bind(saved.id, proxyId);
       this.accountPool.reload();
       void this.quotaManager?.refreshAccount?.(saved.id, { force: true, summaryOnly: false })?.catch?.(() => {});

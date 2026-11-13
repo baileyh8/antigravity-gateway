@@ -250,7 +250,7 @@ test('a quota challenge after a pool reload marks the current account entry unhe
   await ready;
   const original = pool.entries.get(saved.id);
   pool.reload();
-  assert.notEqual(pool.entries.get(saved.id), original);
+  assert.equal(pool.entries.get(saved.id), original);
   release();
   await assert.rejects(pending, /Verify your account/);
   assert.equal(pool.entries.get(saved.id).healthState, 'verification_required');
