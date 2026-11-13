@@ -94,7 +94,7 @@ Antigravity Gateway 是可在本机或服务器运行的 Anthropic/OpenAI 兼容
 - 支持 Claude Code、Codex CLI、Trae 和其他兼容客户端。
 - 支持前台运行，以及 macOS、Linux、Windows 后台保活和开机自启。
 - 支持自动导入本地 agy 账号，也可以输入 `add` 手动添加账号。
-- 支持通过独立管理后台添加 Gemini App 账号并调用 `gemini-4-argon`；VPS 部署可在本地浏览器授权，与原 Antigravity 凭据和调度隔离。
+- Argon 与 Hydrogen 使用统一 Cloud Code 账号池，按各账号实时目录筛选有权限的候选；独立 Gemini App / Robin 通道已移除。
 - 多账号之间轮询；同一会话保持账号一致，限流、认证或额度异常时自动尝试其他账号。
 - 启动界面显示账号状态、历史用量、Token、缓存命中率和最近24小时图表。
 - 支持客户端工具调用、SSE、Claude Code Auto Mode 和结构化输出。
@@ -244,37 +244,19 @@ acc
 ~/.antigravity-gateway/accounts/
 ```
 
-账号池凭据以普通 JSON 保存，Token 刷新后会同步更新。请自行管理本机文件和账号使用风险。
+账号凭据以私有 JSON 保存：POSIX 目录0700、文件0600，Windows 设置当前用户独占 ACL。Token 刷新只合并凭据字段，并用授权代次保护，不覆盖启停、权重或新授权。
 
-#### Gemini App / Argon
+#### Argon / Hydrogen
 
-**服务运行在 VPS，授权在你自己的浏览器完成。** 无需在 VPS 安装浏览器或 agy-cli，也无需 SSH 转发。
+两者均通过统一的 Antigravity Cloud Code 账号池调用，不再添加单独的 Gemini App / Robin 账号。使用标准添加账号入口，按原有流程绑定出口；目录不代表所有账号均有相同权限。
 
-1. 打开已部署的独立管理后台 `/admin/accounts/` 并登录，使用添加账号入口并选择 Gemini App。
-2. 在展开的添加区域选择已登记的账号代理，点击「开始添加」。服务端授权与后续模型请求使用这个出口。
-3. 打开授权链接，在本地浏览器选择要添加的 Google 账号并完成授权。
-4. 浏览器跳到 `127.0.0.1` 后若显示无法连接，复制地址栏里的**完整回调 URL**，粘回看板并提交。这时不需要重做登录。
-5. 等待看板保存账号、自动绑定代理并检查能力与额度。确认模型列表包含 `gemini-4-argon` 后，即可用原有网关 API Key 调用。
-
-等待授权时可以刷新看板继续，也可以取消后重新开始；服务重启后需重新发起授权。状态不匹配的回调会被拒绝，重复账号不会被覆盖。授权链接和回调 URL 不要分享给他人。
-
-客户端使用同一个网关地址和 API Key，只需把模型 ID 设为 `gemini-4-argon`。例如，以下 Chat Completions 请求使用占位域名；先将 `GATEWAY_API_KEY` 设置为你自己的网关密钥：
-
-```bash
-curl https://gateway.example.com/v1/chat/completions \
-  -H "Authorization: Bearer $GATEWAY_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"gemini-4-argon","messages":[{"role":"user","content":"Compute 17 times 23."}],"stream":true}'
-```
-
-**本维护版验收（2026-10-16）**：已在 VPS 通过本地浏览器完成真实授权，并通过正式 HTTPS 接口验证 Chat Completions 流式回答正常结束、单个 `[DONE]`，以及 Anthropic Messages 工具调用与结果续答。账号代理出口另行核验通过。此轮没有覆盖 Argon 附件、长程并发或所有客户端；不会把上游测试记录当成本维护版的部署验收。
+模型 ID 以 `/v1/models` 的实际返回为准。例如 Argon 为 `gemini-4-argon-low/medium/high`，Hydrogen 为 `gemini-4-hydrogen-low/medium/high/xhigh`；不使用已移除的裸名 `gemini-4-argon`。对应思考参数见 [1.5.7 对照](docs/agy-1.5.7-compatibility.md)。
 
 ### 前台终端命令
 
 | 命令 | 作用 |
 |---|---|
 | `add` | 添加 Antigravity 账号 |
-| `add-gemini` | 独立授权 Gemini App 账号（终端备用方式） |
 | `acc` | 查看账号池和账号状态 |
 | `models` | 查看当前发现的模型 |
 | `status` | 重新显示网关和统计状态 |
@@ -740,7 +722,7 @@ See [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases) 
 - Claude Code, Codex CLI, Trae, and other compatible clients.
 - Foreground mode and cross-platform background keepalive/autostart.
 - Automatic local agy account import plus interactive `add` authorization.
-- Dashboard onboarding for Gemini App `gemini-4-argon`, including local-browser authorization of a VPS deployment, with separate credentials and scheduling.
+- Argon and Hydrogen use the unified Cloud Code pool with account-specific model entitlement filtering. The separate Gemini App / Robin channel has been removed.
 - Sticky-session account rotation and failover on authentication, quota, or rate-limit failures.
 - Request, token, cache, account, quota, and 24-hour usage displays.
 - Client-side tools, SSE, Claude Code Auto Mode, and structured output support.
@@ -828,28 +810,11 @@ At startup, a usable official local agy identity is added to the pool only when 
 
 Run the gateway in foreground mode and type `add` to authorize another account. The complete OAuth URL is always printed. On a remote host, paste the final localhost callback URL back at `gateway>`.
 
-#### Gemini App / Argon on a VPS
+#### Argon / Hydrogen
 
-**Run the gateway on your VPS and authorize in your local browser.** No VPS browser, agy-cli installation or SSH forwarding is required.
+Both families use the unified Antigravity Cloud Code account pool. Add accounts and bind egress using the standard account flow; there is no separate Gemini App / Robin account channel.
 
-1. Sign in to the separately deployed `/admin/accounts/` and select the Gemini App account entry.
-2. Select a registered account proxy and click “开始添加” (Start). Server-side authorization and later model traffic use this proxy.
-3. Open the authorization link in your local browser and authorize the intended Google account.
-4. If the browser redirects to `127.0.0.1` and displays a connection error, copy the **complete callback URL** from the address bar and submit it in the dashboard. You do not need to repeat the login.
-5. Wait for the account to be saved, its proxy bound and capabilities/quota checked. Once `gemini-4-argon` appears in its model list, use your existing gateway API key to call it.
-
-Reloading the dashboard resumes a pending flow; cancellation and retry are supported. A gateway restart requires a new flow. Mismatched callbacks are rejected and existing accounts are not overwritten. Keep authorization and callback URLs private.
-
-Keep the same gateway address and API key in your client and select `gemini-4-argon`. Replace the example hostname below and set `GATEWAY_API_KEY` to your gateway key:
-
-```bash
-curl https://gateway.example.com/v1/chat/completions \
-  -H "Authorization: Bearer $GATEWAY_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"gemini-4-argon","messages":[{"role":"user","content":"Compute 17 times 23."}],"stream":true}'
-```
-
-**Bailey build acceptance (2026-10-16):** local-browser OAuth for the VPS completed successfully. Real requests through the deployed HTTPS endpoint passed Chat Completions streaming with normal termination and one `[DONE]`, plus an Anthropic Messages tool call and result continuation. The bound proxy egress was checked separately. This run did not cover Argon attachments, long-running concurrency or every client; upstream results are not counted as this build's deployment acceptance.
+Use the exact IDs returned by `/v1/models`, such as `gemini-4-argon-low/medium/high` and `gemini-4-hydrogen-low/medium/high/xhigh`. The retired bare ID `gemini-4-argon` is not a routing target. Availability is account-specific. See [1.5.7 parameter evidence](docs/agy-1.5.7-compatibility.md).
 
 | Command | Purpose |
 |---|---|
@@ -1105,15 +1070,15 @@ Bindings are stored separately from tokens in `proxies.json` with mode 0600. Res
 
 On 2026-10-09, 252 tests passed locally and on the Linux deployment candidate with Node 24. Live HTTPS tests confirmed four simultaneous uploads and simultaneous four-way image generation plus four media inputs (two PNGs and two one-second MP4s). These are small-fixture acceptance tests, not sustained large-file benchmarks or certification of every client UI.
 
-### Gemini App 出口与资源限制 / Egress and resource limits
+### Chat 流式用量 / Streaming usage
 
 
 Chat 流式用量遵循 `stream_options.include_usage:true`：中间块 `usage:null`，最后单独用量块保留缓存/推理明细。未请求时不发送用量块；内部用量统计保持。上游未知用量仍标记 `usage_known:false`，不伪报为 0。
 
 Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermediate chunks have null usage and the final usage-only chunk preserves cache/reasoning details. Internal accounting remains enabled. Unknown upstream usage stays explicitly unknown.
 
-### Argon 模型目录 / Model metadata
+### Argon / Hydrogen 模型目录 / Model metadata
 
-`/v1/models` 的 `data[]` 和 Codex `models[]` 均提供 Argon 的官方规格：共享上下文窗口 1,048,576 tokens、默认同步输出上限 65,536 tokens；文本/图片/视频/音频/PDF 输入、文本输出及函数调用。来源为 [Google 模型规格](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)。这些值用于客户端模型配置，标记为 `published_gemini_api_specification`，不代表已验证通道的容量上限。视频仍转至 Cloud Code 默认模型，不宣称支持 API long decode；Argon 不公布可选思考档位。DSH 中已保存的模型需重新导入元数据或更新对应条目。
+模型目录取账号实际返回的 Cloud Code 元数据；公开 ID、输入窗口、输出上限与思考参数分别处理。当前已观察到 Argon 三档、Hydrogen 四档，默认输出上限分别为65,536及262,144，输入窗口均为1,048,576。目录规格不是所有账号的权限或所有媒体场景的实测结果。客户端旧条目需重新同步目录；具体参数与验证边界见 [1.5.7 对照](docs/agy-1.5.7-compatibility.md)。
 
-Both model arrays expose the published Argon specification: a shared 1,048,576-token context window, 65,536-token default synchronous output limit, text/image/video/audio/PDF inputs, text output and function calling. These are sourced client configuration values, not measured transport limits. Video still routes to the Cloud Code default model; API long decode and selectable reasoning levels are not advertised. Previously saved DSH entries need metadata re-import or an explicit update.
+Model metadata comes from the account's actual Cloud Code catalog. Public IDs, context limits, output caps and thinking settings are handled separately. Observed Argon and Hydrogen entries have default output caps of 65,536 and 262,144 respectively and context limits of 1,048,576. These are directory values, not proof of every account's entitlement or every media path. Refresh previously saved client entries; see the compatibility report for evidence and limits.
