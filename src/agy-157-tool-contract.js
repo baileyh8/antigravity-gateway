@@ -26,6 +26,17 @@ function parse(value) {
 function nativeView(tool, classified) {
   if (!classified || !classified.nameKnown || !['read', 'write', 'edit'].includes(classified.familyName)) return null;
   const { familyName: family, roles } = classified;
+  const descriptionText = tool.description || '';
+  if (family === 'write' && (!/overwrit|fully replace|completely replace|replace.*(?:file|content)/i.test(descriptionText) || /append/i.test(descriptionText))) return null;
+  if (family === 'edit' && (!/literal|exact/i.test(descriptionText) || /regex|regular expression/i.test(descriptionText))) return null;
+  if (family === 'read') {
+    for (const role of ['offset','limit']) {
+      const item = roles.get(role); if (!item) continue;
+      const text = String(item.property.description || '');
+      if (/byte|0[- ](?:based|indexed)|zero[- ](?:based|indexed)/i.test(text)) return null;
+      if (!/line/i.test(text) && !(role === 'offset' && item.property.minimum >= 1)) return null;
+    }
+  }
   const field = role => roles.get(role)?.name;
   const fields = Object.fromEntries([...roles].map(([role, item]) => [role, item.name]));
   const s = { type: 'string' }, properties = { Path: { type: 'string', minLength: 1 } };
@@ -34,9 +45,11 @@ function nativeView(tool, classified) {
     if (field('offset')) properties.StartLine = { type: 'integer', minimum: 1 };
     if (field('limit')) properties.EndLine = { type: 'integer', minimum: 1 };
     required = ['Path'];
+    if (field('offset') && tool.schema.required?.includes(field('offset'))) required.push('StartLine');
+    if (field('limit') && tool.schema.required?.includes(field('limit'))) required.push('EndLine');
     description = 'Read a file with the client executor. Path is absolute; StartLine and EndLine are inclusive, 1-indexed. Client output limits, formats and permission rules remain applicable. Byte-offset continuation is not supported by this view.';
   } else if (family === 'write') {
-    Object.assign(properties, { Content: s, Overwrite: { type: 'boolean', enum: [true] } });
+    Object.assign(properties, { Content: s, Overwrite: { type: 'boolean', description: 'Must be true for the client full-replacement operation.' } });
     required = ['Path', 'Content', 'Overwrite'];
     description = 'Create or completely replace a file through the client executor. Overwrite must be true. Append and artifact metadata are not supported. Client read-before-write and permission rules remain applicable.';
   } else {
@@ -47,13 +60,16 @@ function nativeView(tool, classified) {
   }
   const schema = { type: 'object', properties, required, additionalProperties: false };
   function toClient(args) {
-    if (!validateSchema(args, schema) || typeof args.Path !== 'string' || !args.Path.startsWith('/')) fail('原生文件视图参数无效。');
+    if (!validateSchema(args, schema) || typeof args.Path !== 'string' || !args.Path.startsWith('/') || args.Path.includes('\0')) fail('原生文件视图参数无效。');
+    if (family === 'write' && args.Overwrite !== true) fail('文件全量替换视图要求 Overwrite=true。');
+    if (family === 'read' && args.StartLine !== undefined && (!Number.isSafeInteger(args.StartLine) || args.StartLine < 1)) fail('文件起始行必须是正整数。');
+    if (family === 'edit' && (!args.Target.length || args.Target === args.Replacement)) fail('原生替换目标必须非空且产生变更。');
     const input = { [fields.path]: args.Path };
     if (family === 'read') {
       if (args.StartLine !== undefined) input[fields.offset] = args.StartLine;
       if (args.EndLine !== undefined) {
         const limit = args.EndLine - (args.StartLine ?? 1) + 1;
-        if (!Number.isSafeInteger(limit) || limit < 1) fail('文件行范围无效。');
+        if (!Number.isSafeInteger(args.EndLine) || !Number.isSafeInteger(limit) || limit < 1) fail('文件行范围无效。');
         input[fields.limit] = limit;
       }
     } else if (family === 'write') input[fields.content] = args.Content;
