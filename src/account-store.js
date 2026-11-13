@@ -136,6 +136,7 @@ class AccountStore {
     try {
       this.fs.writeFileSync(temporary, `${JSON.stringify(account, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
       this.permissions.file(temporary);
+      this.permissions.preserveOwner?.(temporary, target);
       this.fs.renameSync(temporary, target);
       this.permissions.file(target);
     } finally {
