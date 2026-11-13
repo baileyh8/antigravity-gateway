@@ -4,11 +4,12 @@
 
 ## 1.7.1-bailey.24 - 2026-11-13
 
+- POSIX root维护/续期原子写入保留原账号文件的uid/gid；新文件继承账号目录归属，失败时不替换旧凭据，防止0600凭据变为root所有后服务无法读取。
 - 修复长会话恢复无签名原生工具缓存时，覆盖此前兼容标记、再次触发缺thought_signature 400的问题。在全部历史恢复和工具映射后检查最终上游请求，不只处理空缓存。
 - 精确匹配缓存没有真实签名时，保留客户端显式回传且调用ID唯一的签名；已有真实缓存签名优先，不修改缓存原件，不放宽账号、模型和完整前缀边界。
 - 增加Gemini 3及Hydrogen四档在三种协议下的连续五轮/重启/缓存命中回归，并覆盖客户端签名、重复ID与真实缓存优先。
 
-English: Revalidate signatures after full native-history restoration and tool projection. Unsigned cached steps no longer erase compatibility markers or explicit client signatures. Genuine cached signatures and account/full-prefix isolation remain intact.
+English: Root maintenance writes preserve the service owner of POSIX credential files before atomic replacement. Revalidate signatures after full native-history restoration and tool projection. Unsigned cached steps no longer erase compatibility markers or explicit client signatures. Genuine cached signatures and account/full-prefix isolation remain intact.
 
 ## 1.7.1-bailey.23 - 2026-11-13
 

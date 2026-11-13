@@ -8,6 +8,39 @@ const test = require('node:test');
 const { AccountStore } = require('../src/account-store');
 const { AccountStoragePermissions } = require('../src/account-storage-permissions');
 
+for (const existing of [true, false]) test(`root credential replacement preserves ${existing ? 'existing file' : 'account directory'} ownership before rename`, t => {
+  if (process.platform === 'win32') return t.skip('POSIX ownership contract');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agw-owner-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const calls = [], fsImpl = { ...fs, chownSync(file, uid, gid) { calls.push({ file, uid, gid, mode: fs.statSync(file).mode & 0o777 }); } };
+  const store = new AccountStore({ configDir: root, fsImpl });store.ensureDirectory();
+  const record = existing ? store.save({ email: 'fixture@example.invalid', accessToken: 'old' }) : null;
+  const owner = fs.statSync(existing ? path.join(store.directory, 'fixture-example.invalid.json') : store.directory);
+  const previous = process.getuid;
+  try {
+    process.getuid = () => 0;
+    if (record) store.updateCredentials(record, { accessToken: 'new' });
+    else store.save({ email: 'fixture@example.invalid', accessToken: 'new' });
+  } finally { process.getuid = previous; }
+  assert.equal(calls.length, 1);assert.ok(calls[0].file.endsWith('.tmp'));
+  assert.equal(calls[0].uid, owner.uid);assert.equal(calls[0].gid, owner.gid);assert.equal(calls[0].mode, 0o600);
+  assert.equal(store.list()[0].accessToken, 'new');
+});
+
+test('a failed ownership preservation leaves the previous credential file intact', t => {
+  if (process.platform === 'win32') return t.skip('POSIX ownership contract');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agw-owner-failure-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = new AccountStore({ configDir: root, fsImpl: { ...fs, chownSync() { throw new Error('owner preservation denied'); } } });
+  const record = store.save({ email: 'fixture@example.invalid', accessToken: 'old' });
+  const file = path.join(store.directory, 'fixture-example.invalid.json'), before = fs.readFileSync(file, 'utf8');
+  const previous = process.getuid;
+  try { process.getuid = () => 0;assert.throws(() => store.updateCredentials(record, { accessToken: 'new' }), /owner preservation denied/); }
+  finally { process.getuid = previous; }
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(fs.readdirSync(store.directory).some(f => f.endsWith('.tmp')), false);
+});
+
 test('accounts stay private with umask 022, including temporary writes, old files and atomic replacement', t => {
   if (process.platform === 'win32') return t.skip('POSIX mode verification; Windows DACL uses its separate contract test');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agw-account-modes-'));

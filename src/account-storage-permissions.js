@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 // POSIX mode bits do not restrict Windows DACLs. Replace the DACL with a
@@ -56,6 +57,22 @@ class AccountStoragePermissions {
 
   directory(file) { this.protect(file, true); }
   file(file) { this.protect(file, false); }
+
+  preserveOwner(temporary, target) {
+    if (this.platform === 'win32' || typeof process.getuid !== 'function' || process.getuid() !== 0) return;
+    let owner;
+    try { owner = this.fs.lstatSync(target); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      owner = this.fs.lstatSync(path.dirname(target));
+    }
+    if (owner.isSymbolicLink() || (!owner.isFile() && !owner.isDirectory())) throw new Error('账号凭据归属参考路径无效。');
+    // A root maintenance/refresh must not replace a service-owned 0600 file
+    // with a root-owned file that the running service can no longer read.
+    this.fs.chownSync(temporary, owner.uid, owner.gid);
+    const current = this.fs.statSync(temporary);
+    if (current.uid !== owner.uid || current.gid !== owner.gid) throw new Error('无法保留账号凭据文件归属。');
+  }
 }
 
 module.exports = { AccountStoragePermissions, windowsAclScript };
