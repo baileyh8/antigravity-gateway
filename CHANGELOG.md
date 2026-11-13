@@ -1,6 +1,14 @@
 # Changelog
 
-当前版本 `1.7.1-bailey.22`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+当前版本 `1.7.1-bailey.23`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+
+## 1.7.1-bailey.23 - 2026-11-13
+
+- 修复网关 Responses / Chat 对外序列化时丢失工具思考签名、入站解析遗漏标准 `extra_content.google.thought_signature` 的问题；流式、非流式和自定义工具保持签名、调用 ID 与参数的往返。
+- Hydrogen Low / Medium / High / XHigh 统一处理旧会话无签名历史：真实签名及精确持久化恢复优先，缺失时仅为每个模型步骤首个工具调用补兼容标记，不伪造上游签名、不跨账号读取私有历史。
+- 签名仅接受有大小上限的字符串，不读取工具参数中的同名字段。账号调度、额度保护、并发、代理绑定和 Go/TLS 传输保持。
+
+English: Preserve per-call thought signatures through Responses/Chat serialization, SSE and input normalization. Cover all Hydrogen reasoning tiers for unsigned imported history, preserve genuine signatures and account-scoped replay, and bound opaque metadata sizes. Scheduling, quotas, concurrency and transport are unchanged.
 
 ## 1.7.1-bailey.22 - 2026-11-13
 

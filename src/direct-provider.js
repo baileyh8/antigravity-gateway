@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { errorDetails } = require('./diagnostic-log');
 const { LocalAgyAuthProvider, LocalAgyAuthError, discoverClientCredentials } = require('./local-agy-auth');
-const { toolNarrationInstruction } = require('./protocol');
+const { toolNarrationInstruction, readThoughtSignature } = require('./protocol');
 const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const { AgySessionStore, newState, contentFingerprint, restoreClientProjections, recordClientProjection,
   recordStreamProjection, recordStreamRecovery, clearStreamRecovery, recordToolStreamError } = require('./agy-session-state');
@@ -330,7 +330,7 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
   const toolNames = new Map();
   const callOrder = new Map();
   const contents = [];
-  const needsThoughtSignature = /^gemini-3(?:[.-]|$)/i.test(String(model || ''));
+  const needsThoughtSignature = /^gemini-(?:3(?:[.-]|$)|4-hydrogen(?:[.-]|$))/i.test(String(model || ''));
   for (const message of normalized.messages || []) {
     const nativeParts = [];
     const preserveFilenames = normalizedMessageParts(message).some(p => p?.type === 'media' && !/^image\//.test(p.mediaType || ''));
@@ -342,7 +342,7 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
         if (id) toolNames.set(id, name);
         if (id) callOrder.set(id, callOrder.size);
         const args = parseJsonValue(part.arguments ?? part.args ?? {});
-        const recoveredSignature = String(part.thoughtSignature || thoughtSignatures?.get?.(id) || '').trim();
+        const recoveredSignature = readThoughtSignature(part) || readThoughtSignature(thoughtSignatures?.get?.(id));
         nativeParts.push({
           functionCall: { ...(id ? { id } : {}), name, args },
           ...(recoveredSignature ? { thoughtSignature: recoveredSignature } : {})
@@ -569,7 +569,7 @@ function appendUpstreamToolCall(state, call, part = {}) {
   const id = String(call.id || '').trim();
   const name = String(call.name || '').trim();
   if (!name) return;
-  const thoughtSignature = String(part.thoughtSignature || part.thought_signature || call.thoughtSignature || '').trim();
+  const thoughtSignature = readThoughtSignature(part) || readThoughtSignature(call);
   const key = id || `${name}:${state.calls.length}`;
   let existing = state.callsByKey?.get(key);
   const rawArguments = call.args ?? call.arguments ?? {};
