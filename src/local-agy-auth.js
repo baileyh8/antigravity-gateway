@@ -1,4 +1,5 @@
 'use strict';
+const { nativeCloudCodeFetch } = require('./agy-native-transport');
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -262,7 +263,7 @@ class LocalAgyAuthProvider {
     homeDir = os.homedir(),
     agyPath = '',
     authFile = process.env.ANTIGRAVITY_LOCAL_AUTH_FILE || '',
-    fetchImpl = globalThis.fetch,
+    fetchImpl = nativeCloudCodeFetch,
     tokenEndpoint = TOKEN_ENDPOINT,
     clientCredentials = [],
     platform = process.platform,
@@ -336,9 +337,10 @@ class LocalAgyAuthProvider {
     let lastDetails = '';
     for (const candidate of candidates) {
       const form = new URLSearchParams({ client_id: candidate.clientId, client_secret: candidate.clientSecret, grant_type: 'refresh_token', refresh_token: refreshToken });
+      form.sort();
       let response;
       try {
-        response = await this.fetchImpl(this.tokenEndpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form, signal });
+        response = await this.fetchImpl(this.tokenEndpoint, { method: 'POST', headers: { 'user-agent': 'Go-http-client/2.0', 'content-type': 'application/x-www-form-urlencoded' }, body: form, signal });
       } catch (cause) {
         throw new LocalAgyAuthError('本地 agy 登录态刷新请求失败。', { code: 'local_agy_refresh_failed', status: 502, cause });
       }

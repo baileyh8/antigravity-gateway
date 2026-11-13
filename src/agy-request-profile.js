@@ -1,16 +1,19 @@
 'use strict';
 
-// Observed agy 1.4.2 agent requests, not optional fields from a protocol schema.
+// Observed agy 1.5.7 agent requests, captured with synthetic loopback-only fixtures.
 // The live account catalog takes precedence over this captured offline default.
+const AGY_CLI_VERSION = '1.5.7';
+const AGY_BUILD = '1019769835';
+function cliUserAgent({ platform = process.platform, arch = process.arch, authMethod = 'consumer' } = {}) {
+  const version = process.env.ANTIGRAVITY_CLI_VERSION || AGY_CLI_VERSION;
+  const build = process.env.ANTIGRAVITY_CLI_CHANGELIST || AGY_BUILD;
+  if (Boolean(process.env.ANTIGRAVITY_CLI_VERSION) !== Boolean(process.env.ANTIGRAVITY_CLI_CHANGELIST)) throw new Error('CLI version and changelist must be configured together');
+  const os = platform === 'win32' ? 'windows' : platform;
+  const cpu = arch === 'x64' ? 'amd64' : arch;
+  return `antigravity/cli/${version} (aidev_client; os_type=${os}; arch=${cpu}; cl=${build}; auth_method=${authMethod})`;
+}
 const AGY_SESSION_ID = '-3750763034362895579';
-const CAPTURED_MODELS = Object.freeze({
-  'gemini-3.8-flash-high': Object.freeze({ model: 'MODEL_PLACEHOLDER_M318',
-    displayName: 'Gemini 3.8 Flash (High)', maxOutputTokens: 65536, supportsThinking: true, thinkingBudget: -1 }),
-  'gemini-3.8-flash-medium': Object.freeze({ model: 'MODEL_PLACEHOLDER_M319',
-    displayName: 'Gemini 3.8 Flash (Medium)', maxOutputTokens: 65536, supportsThinking: true, thinkingBudget: 4000 }),
-  'gemini-3.8-flash-low': Object.freeze({ model: 'MODEL_PLACEHOLDER_M320',
-    displayName: 'Gemini 3.8 Flash (Low)', maxOutputTokens: 65536, supportsThinking: true, thinkingBudget: 1000 })
-});
+const { CAPTURED_MODELS, generationProfile, modelProfile } = require('./antigravity-model-config');
 
 // Fresh official high/medium/low switch captures preserve previous text and
 // tool-call signatures in both directions. Do not infer compatibility from a
@@ -19,18 +22,6 @@ const SHARED_HISTORY = new Set(['gemini-3.8-flash-high', 'gemini-3.8-flash-mediu
 function compatibleHistoryModels(source, target) {
   return typeof source === 'string' && source.length > 0 && typeof target === 'string' && target.length > 0
     && (source === target || (SHARED_HISTORY.has(source) && SHARED_HISTORY.has(target)));
-}
-
-function modelProfile(model, metadata) { return metadata || CAPTURED_MODELS[model] || {}; }
-
-function generationProfile(normalized, model, metadata) {
-  const profile = modelProfile(model, metadata);
-  const generation = { ...(profile.maxOutputTokens > 0 ? { maxOutputTokens: profile.maxOutputTokens } : {}),
-    ...normalized.generationConfig };
-  if (profile.supportsThinking && Number.isFinite(profile.thinkingBudget)) {
-    generation.thinkingConfig = { includeThoughts: true, thinkingBudget: profile.thinkingBudget };
-  }
-  return Object.keys(generation).length ? generation : null;
 }
 
 function agentEnvelope({ model, project, contents, systemInstruction, tools, generationConfig, toolConfig, state, metadata, step, requestType = 'agent', now = Date.now() }) {
@@ -85,4 +76,4 @@ function nativeSchema(schema) {
   return result;
 }
 
-module.exports = { AGY_SESSION_ID, CAPTURED_MODELS, agentEnvelope, generationProfile, modelProfile, nativeSchema, compatibleHistoryModels };
+module.exports = { AGY_CLI_VERSION, AGY_BUILD, cliUserAgent, AGY_SESSION_ID, CAPTURED_MODELS, agentEnvelope, generationProfile, modelProfile, nativeSchema, compatibleHistoryModels };

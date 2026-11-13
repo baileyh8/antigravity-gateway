@@ -1,0 +1,293 @@
+{
+  "provenance": "Official agy 1.5.7 (cl1019769835), macOS arm64, 2026-11-13. Loopback-only synthetic upstream. Catalog fields from one enabled account plus previously observed Hydrogen entries; not evidence of live entitlement or inference success.",
+  "models": {
+    "gemini-3.8-flash-tiered": {
+      "sentModel": "gemini-3.8-flash-tiered",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M322",
+      "toolMode": null
+    },
+    "gemini-4-hydrogen-low": {
+      "sentModel": "gemini-4-hydrogen-low",
+      "generationConfig": {
+        "maxOutputTokens": 262144,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M527",
+      "toolMode": null
+    },
+    "gemini-4-hydrogen-xhigh": {
+      "sentModel": "gemini-4-hydrogen-xhigh",
+      "generationConfig": {
+        "maxOutputTokens": 262144,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": 100
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M528",
+      "toolMode": null
+    },
+    "gemini-3.8-flash-high": {
+      "sentModel": "gemini-3.8-flash-high",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M318",
+      "toolMode": null
+    },
+    "claude-opus-5-5-high": {
+      "sentModel": "claude-opus-5-5-high",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M402",
+      "toolMode": null
+    },
+    "claude-sonnet-5-5-low": {
+      "sentModel": "claude-sonnet-5-5-low",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M403",
+      "toolMode": null
+    },
+    "gemini-3.1-flash-lite": {
+      "sentModel": "gemini-3.1-flash-lite",
+      "generationConfig": {
+        "maxOutputTokens": 65535,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M50",
+      "toolMode": null
+    },
+    "gemini-4-argon-medium": {
+      "sentModel": "gemini-4-argon-medium",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "MEDIUM"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M418",
+      "toolMode": null
+    },
+    "claude-opus-5-5-medium": {
+      "sentModel": "claude-opus-5-5-medium",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "MEDIUM"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M401",
+      "toolMode": null
+    },
+    "claude-sonnet-5-5-high": {
+      "sentModel": "claude-sonnet-5-5-high",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M405",
+      "toolMode": null
+    },
+    "claude-sonnet-5-5-medium": {
+      "sentModel": "claude-sonnet-5-5-medium",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "MEDIUM"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M404",
+      "toolMode": null
+    },
+    "gemini-3.8-flash-medium": {
+      "sentModel": "gemini-3.8-flash-medium",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "MEDIUM"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M319",
+      "toolMode": null
+    },
+    "gemini-4-argon-low": {
+      "sentModel": "gemini-4-argon-low",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M419",
+      "toolMode": null
+    },
+    "gemini-3-flash": {
+      "sentModel": "gemini-3-flash",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M18",
+      "toolMode": null
+    },
+    "gemini-4-argon-high": {
+      "sentModel": "gemini-4-argon-high",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M417",
+      "toolMode": null
+    },
+    "gemini-2.5-flash": {
+      "sentModel": "gemini-2.5-flash",
+      "generationConfig": {
+        "maxOutputTokens": 65535,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH",
+      "toolMode": null
+    },
+    "gpt-oss-120b-medium": {
+      "sentModel": "gpt-oss-120b-medium",
+      "generationConfig": {
+        "maxOutputTokens": 32768,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingBudget": 8192
+        }
+      },
+      "modelEnum": "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+      "toolMode": null
+    },
+    "gemini-3.8-flash-low": {
+      "sentModel": "gemini-3.8-flash-low",
+      "generationConfig": {
+        "maxOutputTokens": 65536,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M320",
+      "toolMode": null
+    },
+    "gemini-4-hydrogen-high": {
+      "sentModel": "gemini-4-hydrogen-high",
+      "generationConfig": {
+        "maxOutputTokens": 262144,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "HIGH"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M525",
+      "toolMode": null
+    },
+    "gemini-3.5-flash-lite": {
+      "sentModel": "gemini-3.5-flash-lite",
+      "generationConfig": {
+        "maxOutputTokens": 65535,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M198",
+      "toolMode": null
+    },
+    "claude-opus-5-5-low": {
+      "sentModel": "claude-opus-5-5-low",
+      "generationConfig": {
+        "maxOutputTokens": 128000,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M400",
+      "toolMode": null
+    },
+    "gemini-2.5-flash-thinking": {
+      "sentModel": "gemini-2.5-flash-thinking",
+      "generationConfig": {
+        "maxOutputTokens": 65535,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH_THINKING",
+      "toolMode": null
+    },
+    "gemini-4-hydrogen-medium": {
+      "sentModel": "gemini-4-hydrogen-medium",
+      "generationConfig": {
+        "maxOutputTokens": 262144,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "MEDIUM"
+        }
+      },
+      "modelEnum": "MODEL_PLACEHOLDER_M526",
+      "toolMode": null
+    },
+    "gemini-2.5-flash-lite": {
+      "sentModel": "gemini-2.5-flash-lite",
+      "generationConfig": {
+        "maxOutputTokens": 65535,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
+      "toolMode": null
+    }
+  }
+}

@@ -7,6 +7,7 @@ const path = require('node:path');
 const { DirectAntigravityProvider, DirectProviderError } = require('./direct-provider');
 const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const { errorDetails, maskEmail } = require('./diagnostic-log');
+const { accountGrantGeneration } = require('./account-store');
 const { ManagedAccountAuthProvider } = require('./managed-account-auth');
 
 const { SESSION_TTL_MS, TRANSIENT_COOLDOWN_MS, durationMs, retryDelay, geminiWeeklyPressure,
@@ -73,7 +74,6 @@ function accountIdentityKeys(account = {}) {
 function accountFingerprint(account = {}) {
   return crypto.createHash('sha256').update([
     account.id,
-    account.accessToken,
     account.refreshToken,
     account.projectId,
     account.clientId
@@ -197,8 +197,21 @@ class AccountPool {
       // Cloud Code auth/provider path; legacy accounts remain Cloud Code.
       if (account.providerType === 'robin' || account.accountType === 'gemini-app') continue;
       const previous = old.get(account.id);
+      const generation = accountGrantGeneration(account);
+      const sameGrant = previous?.grantGeneration === generation;
       const persistedHealth = this.health.get(account.id);
-      if (persistedHealth && persistedHealth.accountFingerprint !== accountFingerprint(account)) {
+      const healthMatches = persistedHealth?.grantGeneration
+        ? persistedHealth.grantGeneration === generation
+        : Boolean(persistedHealth);
+      // First upgrade must preserve an existing quarantine even if the old
+      // token-inclusive fingerprint changed. Bind it to the current generation
+      // conservatively; only explicit recovery or a new grant can clear it.
+      if (persistedHealth && !persistedHealth.grantGeneration && (!previous || sameGrant)) {
+        persistedHealth.grantGeneration = generation;
+        persistedHealth.accountFingerprint = accountFingerprint(account);
+        stateChanged = true;
+      }
+      if (persistedHealth && (!healthMatches || (previous && !sameGrant))) {
         this.health.delete(account.id);
         this.reportDiagnostic('account_health_cleared', account, {
           trigger: 'credential_fingerprint_changed',
@@ -207,10 +220,12 @@ class AccountPool {
         stateChanged = true;
       }
       const activeHealth = this.health.get(account.id);
-      const entry = previous && previous.account.updatedAt === account.updatedAt
-        ? { ...previous, account, provider: previous.provider }
-        : {
+      // An in-flight callback keeps this exact object. Ordinary reloads and
+      // enabled/weight edits must not detach health or cooldown from routing.
+      if (previous && !sameGrant) previous.provider?.localAuth?.disable?.();
+      const entry = sameGrant ? previous : {
             account,
+            grantGeneration: generation,
             provider: this.providerFactory(account),
             cooldownUntil: 0,
             modelCooldowns: new Map(),
@@ -220,6 +235,7 @@ class AccountPool {
             lastFailureAt: '',
             lastError: ''
           };
+      entry.account = { ...account, grantGeneration: generation };
       entry.healthState = activeHealth?.state || 'available';
       entry.healthReason = activeHealth?.reason || '';
       entry.healthSince = activeHealth?.since || '';
@@ -227,6 +243,9 @@ class AccountPool {
       if (activeHealth?.lastError) entry.lastError = activeHealth.lastError;
       next.set(account.id, entry);
       if (!previous || previous.provider !== entry.provider) changedEntries.push(entry);
+    }
+    for (const [accountId, entry] of old) {
+      if (!next.has(accountId)) entry.provider?.localAuth?.disable?.();
     }
     for (const accountId of this.health.keys()) {
       if (!next.has(accountId)) { this.health.delete(accountId); stateChanged = true; }
@@ -306,15 +325,28 @@ class AccountPool {
     if (routingKey && deleteAffinity(this.sessions, routingKey, model, 'cloudcode', expectedAccountId)) this.saveState();
   }
 
+  isCurrentEntry(entry) {
+    return Boolean(entry && this.entries.get(entry.account.id) === entry
+      && entry.grantGeneration === accountGrantGeneration(entry.account));
+  }
+
   markAccountIssue(entry, error, context = {}) {
+    if (!this.isCurrentEntry(entry)) return false;
     const health = accountHealth(error);
     const previousState = entry.healthState;
     const currentAccount = entry.provider?.localAuth?.account || entry.account;
-    if (currentAccount?.id === entry.account.id) entry.account = { ...entry.account, ...currentAccount };
+    if (currentAccount?.id === entry.account.id && accountGrantGeneration(currentAccount) === entry.grantGeneration) {
+      // Authentication refresh owns credential fields only, never dashboard
+      // enable/weight settings that may have changed during its await.
+      for (const key of ['accessToken', 'refreshToken', 'expiresAt', 'projectId', 'authMethod']) {
+        entry.account[key] = currentAccount[key];
+      }
+    }
     const record = {
       ...health,
       since: new Date(this.now()).toISOString(),
       accountFingerprint: accountFingerprint(entry.account),
+      grantGeneration: entry.grantGeneration,
       lastError: String(error?.message || error || '').slice(0, 1000)
     };
     entry.healthState = record.state;
@@ -335,7 +367,7 @@ class AccountPool {
   }
 
   observeAccountFailure(entry, error, context = {}) {
-    if (errorCategory(error) !== 'account') return false;
+    if (!this.isCurrentEntry(entry) || errorCategory(error) !== 'account') return false;
     entry.lastFailureAt = new Date(this.now()).toISOString();
     entry.lastError = String(error?.message || error || '');
     this.markAccountIssue(entry, error, context);
@@ -351,6 +383,7 @@ class AccountPool {
   }
 
   clearAccountIssue(entry, context = {}) {
+    if (!this.isCurrentEntry(entry)) return false;
     const previousState = entry.healthState;
     this.health.delete(entry.account.id);
     entry.healthState = 'available';
@@ -368,6 +401,29 @@ class AccountPool {
       trigger: context.source || 'unknown',
       previousState
     });
+  }
+
+  currentRecheckEntry(entry) {
+    const current = this.entries.get(entry.account.id);
+    const latest = this.store.list().find(account => account.id === entry.account.id);
+    const owned = entry.provider.localAuth?.account || entry.account;
+    if (current !== entry || !latest || latest.enabled === false
+      || accountGrantGeneration(latest) !== entry.grantGeneration
+      || accountFingerprint(latest) !== accountFingerprint(owned)) {
+      throw new DirectProviderError('账号已删除、停用或凭据已更换，请重新检测当前账号。', {
+        code: 'account_recheck_changed', status: 409
+      });
+    }
+    current.account = { ...latest, grantGeneration: entry.grantGeneration };
+    // Token renewal during a failed recheck is not service recovery. Keep the
+    // quarantine bound to the renewed credential instead of clearing on reload.
+    const health = this.health.get(latest.id);
+    if (health && health.accountFingerprint !== accountFingerprint(latest)) {
+      health.accountFingerprint = accountFingerprint(latest);
+      health.grantGeneration = entry.grantGeneration;
+      this.saveState();
+    }
+    return current;
   }
 
   async recheckAccount(accountId, { signal } = {}) {
@@ -388,12 +444,14 @@ class AccountPool {
     });
     try {
       await entry.provider.probeAuthentication(signal);
+      this.currentRecheckEntry(entry);
       entry.lastSuccessAt = new Date(this.now()).toISOString();
       this.clearAccountIssue(entry, { source: 'manual_recheck' });
       this.refreshAccountQuota(entry, { force: true, summaryOnly: false });
       this.reportDiagnostic('account_recheck_succeeded', entry.account, { durationMs: this.now() - startedAt });
       return { account: this.status().find((item) => item.id === entry.account.id), recovered: true };
     } catch (error) {
+      this.currentRecheckEntry(entry);
       const category = errorCategory(error);
       if (category === 'account') this.observeAccountFailure(entry, error, { source: 'manual_recheck' });
       this.reportDiagnostic('account_recheck_failed', entry.account, {
@@ -493,6 +551,7 @@ class AccountPool {
   }
 
   recordModelCatalog(entry, models) {
+    if (!this.isCurrentEntry(entry)) return [];
     const listed = [...new Set((Array.isArray(models) ? models : [])
       .map((model) => String(model || '').replace(/^models\//, '').trim())
       .filter(Boolean))];
@@ -547,7 +606,7 @@ class AccountPool {
   refreshAccountQuota(entry, options = {}) {
     // Scheduling never waits for quota I/O. QuotaManager coalesces and limits
     // targeted refreshes; older custom managers can continue without them.
-    if (!this.quotaManager?.refreshAccount || !this.isAccountHealthy(entry)) return;
+    if (!this.quotaManager?.refreshAccount || !this.isCurrentEntry(entry) || !this.isAccountHealthy(entry)) return;
     const minimum = boundedQuotaRefreshMs(options.minIntervalMs);
     const now = this.now();
     if (!options.force && now - (entry.quotaRefreshRequestedAt ?? -Infinity) < minimum) return;
@@ -689,7 +748,7 @@ class AccountPool {
       attempted.add(entry.account.id);
       let responseSeen = false;
       try {
-        if (this.entries.get(entry.account.id) !== entry) throw new DirectProviderError('账号已更新，请重试。', { code: 'account_changed', status: 409 });
+        if (!this.isCurrentEntry(entry)) throw new DirectProviderError('账号已更新，请重试。', { code: 'account_changed', status: 409 });
         options.signal?.throwIfAborted();
         options.onAccountSelected?.({
           accountId: entry.account.id,
@@ -706,14 +765,17 @@ class AccountPool {
         });
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: true, count: true });
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
-        entry.lastSuccessAt = new Date(this.now()).toISOString();
-        entry.lastError = '';
-        finishAffinity(true);
+        if (this.isCurrentEntry(entry)) {
+          entry.lastSuccessAt = new Date(this.now()).toISOString();
+          entry.lastError = '';
+          finishAffinity(true);
+        }
         return { ...result, accountId: entry.account.id };
       } catch (error) {
         if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
           throw error;
         }
+        if (!this.isCurrentEntry(entry)) throw error;
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
         entry.lastFailureAt = new Date(this.now()).toISOString();
@@ -789,14 +851,17 @@ class AccountPool {
           });
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: true, count: true });
         this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
-        entry.lastSuccessAt = new Date(this.now()).toISOString();
-        entry.lastError = '';
-        finishAffinity(true);
+        if (this.isCurrentEntry(entry)) {
+          entry.lastSuccessAt = new Date(this.now()).toISOString();
+          entry.lastError = '';
+          finishAffinity(true);
+        }
         return { ...result, accountId: entry.account.id };
       } catch (error) {
         if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
           throw error;
         }
+        if (!this.isCurrentEntry(entry)) throw error;
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
         entry.lastFailureAt = new Date(this.now()).toISOString();

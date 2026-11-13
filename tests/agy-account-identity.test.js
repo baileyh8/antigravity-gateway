@@ -12,7 +12,7 @@ const { AgySessionStore } = require('../src/agy-session-state');
 const model = 'gemini-3.8-flash-high';
 const account = { id: 'retained-record', subjectId: 'google-A', email: 'a@example.com', accessToken: 'access-A',
   refreshToken: 'refresh-A', projectId: 'project-A', expiresAt: '2099-01-01T00:00:00.000Z' };
-const auth = changes => new ManagedAccountAuthProvider({ account: { ...account, ...changes }, store: { save: value => value } });
+const auth = changes => new ManagedAccountAuthProvider({ account: { ...account, ...changes }, store: { updateCredentials: (current, tokens) => ({ ...current, ...tokens }) } });
 const namespace = changes => auth(changes).load().sourcePath;
 const first = { messages: [{ role: 'user', text: 'Remember amber.' }] };
 const follow = { messages: [...first.messages, { role: 'assistant', text: 'READY' }, { role: 'user', text: 'Recall it.' }] };
@@ -37,7 +37,7 @@ test('email fallback is normalized; missing identities are isolated by grant rat
 test('managed auth refresh preserves known identity namespace and its restarted representation', async () => {
   let saved;
   const provider = new ManagedAccountAuthProvider({ account: { ...account, expiresAt: '2000-01-01', clientId: 'client', clientSecret: 'secret' },
-    store: { save: value => (saved = value) },
+    store: { updateCredentials: (current, tokens) => (saved = { ...current, ...tokens }) },
     fetchImpl: async () => new Response(JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600 })) });
   const before = provider.load().sourcePath;
   const record = await provider.get();

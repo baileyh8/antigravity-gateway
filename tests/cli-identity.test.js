@@ -31,8 +31,8 @@ test('client identity defaults to the current official agy CLI release', () => {
   const ua = loadUserAgent();
   // The Cloud Code direct-path ClientHello is identical to this transport's,
   // so the identity can state the real current release. Values come from a
-  // captured fetchConfig request made by the official 1.5.2 CLI.
-  assert.equal(ua, `antigravity/cli/1.5.2 (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=1015175089; auth_method=consumer)`);
+  // captured fetchConfig request made by the official 1.5.7 CLI.
+  assert.equal(ua, `antigravity/cli/1.5.7 (aidev_client; os_type=${process.platform === 'win32' ? 'windows' : process.platform}; arch=${process.arch === 'x64' ? 'amd64' : process.arch}; cl=1019769835; auth_method=consumer)`);
   assert.doesNotMatch(ua, /1\.4\.2|1\.5\.1|1001591392|1014269460/);
 });
 
@@ -60,6 +60,6 @@ test('cloud code requests carry the configured identity', async () => {
   await provider.probeAuthentication();
   assert.ok(seen.length >= 1);
   assert.ok(seen.every(({ url }) => url.endsWith('/v1internal:fetchAvailableModels')));
-  assert.ok(seen.every(({ userAgent }) => /^antigravity\/cli\/1\.5\.2 .*cl=1015175089; auth_method=consumer\)$/.test(userAgent)));
+  assert.ok(seen.every(({ userAgent }) => /^antigravity\/cli\/1\.5\.7 .*cl=1019769835; auth_method=consumer\)$/.test(userAgent)));
 });
 

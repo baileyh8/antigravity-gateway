@@ -1,6 +1,17 @@
 # Changelog
 
-当前版本 `1.7.1-bailey.21`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+当前版本 `1.7.1-bailey.22`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+
+## 1.7.1-bailey.22 - 2026-11-13
+
+- 对照官方 agy CLI 1.5.7（cl1019769835）本地隔离抓包升级 HTTP/2 与 ALPN；元数据/同步 RPC 使用固定长度，流式 RPC 保留流式请求体，OAuth Token/Userinfo 也走原生传输。
+- 按模型区分思考配置：Gemini/Argon/Claude 5.5 各档使用 LOW/MEDIUM/HIGH；Hydrogen XHigh 保留官方实测的数字 100；GPT-OSS 使用 thinkingBudget 8192。输出上限与模型 enum 有逐模型回放测试；不把模型后缀当成权限。
+- 用完整 MCP 参数视图兼容已知和未知客户端。等价文件操作提供新原生文件视图，完整保留命令超时、后台/权限参数、自定义工具、原 system 和项目规则。工具名称、参数、回执及已签名历史能够往返；旧格式有显式回退开关。
+- 引入授权代次和凭据字段 CAS 合并，防止迟到刷新覆盖启停/权重或新授权；旧健康隔离在升级时保守保留。存储改用私有文件权限与原子替换。
+- 保持上游隐式缓存，过滤显式缓存控制字段，按真实缓存 Token 统计，不承诺固定命中阈值或折扣。调度、额度保留、粘连轮数及并发配置保持。
+- 感谢 LeeFeee 上游 v2.0.1/v2.0.2 的账号一致性修复与 HTTP/2 工作，本维护分支已结合独立后台及既有调度做兼容移植。抓包只证明协议行为，合成测试不等于全部模型实网可用或账号安全保证。
+
+English: HTTP/2 and per-model parameters are aligned with captured agy 1.5.7 behavior. Reversible MCP tool views preserve client execution constraints and signed history. Grant-generation CAS prevents stale credential writes. Implicit-cache accounting uses real upstream usage. Upstream LeeFeee attribution and MIT history are preserved; account enforcement and live entitlement remain separate from protocol compatibility.
 
 ## 1.7.1-bailey.21 - 2026-11-08
 

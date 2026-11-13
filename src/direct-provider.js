@@ -15,9 +15,11 @@ const { prepareNativeContext, completeNativeContext, interruptNativeContext, int
 const { isStreamError } = require('./agy-stream-recovery');
 const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
 const { AgyImageStore, registerImagePart } = require('./agy-image-references');
-const { agentEnvelope, generationProfile, nativeSchema } = require('./agy-request-profile');
+const { agentEnvelope, generationProfile, nativeSchema, cliUserAgent } = require('./agy-request-profile');
 const { prepareStructuredOutput, finishResult, finishResponse } = require('./agy-structured-output');
 const { nativeClientToolResponse } = require('./agy-tool-results');
+const { assertGenerationCompatibility } = require('./antigravity-model-config');
+const { prepare157ToolContract } = require('./agy-157-tool-contract');
 const { prepareToolAdapter, describeToolMapping } = require('./agy-tool-adapter');
 const { requestContext } = require('./request-log');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
@@ -34,19 +36,8 @@ const IMAGE_ASPECT_RATIOS = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', 
 const MODEL_DISCOVERY_TIMEOUT_MS = Number(process.env.ANTIGRAVITY_DIRECT_MODEL_DISCOVERY_TIMEOUT_MS || 8000);
 const DEFAULT_MAX_RETRIES = Math.max(0, Number(process.env.ANTIGRAVITY_DIRECT_MAX_RETRIES || 1));
 const DEFAULT_RETRY_BASE_MS = Math.max(100, Number(process.env.ANTIGRAVITY_DIRECT_RETRY_BASE_MS || 1500));
-// Keep (version, changelist) paired with the official agy CLI release. Google
-// stamps the same changelist into every platform binary of a release, and a
-// stale pair can hide Gemini quota groups or trigger upstream 404s.
-// A real ClientHello capture of the Cloud Code direct path (the path this
-// transport uses) showed the official 1.5.2 client and our Go 1.27.2 native
-// transport emit identical cipher suites, extension order, supported_groups,
-// key_share groups and signature algorithms, with no ALPN on either side. The
-// 1.5.1 build that advertised ALPN h2/http1.1 was the gateway-mode endpoint,
-// which this transport never calls. So the identity can track the current
-// release without creating an HTTP-versus-handshake mismatch.
-const AGY_CLI_VERSION = process.env.ANTIGRAVITY_CLI_VERSION || '1.5.2';
-const AGY_CLI_CHANGELIST = process.env.ANTIGRAVITY_CLI_CHANGELIST || '1015175089';
-const DEFAULT_USER_AGENT = `antigravity/cli/${AGY_CLI_VERSION} (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=${AGY_CLI_CHANGELIST}; auth_method=consumer)`;
+// Version, build and transport are verified together against official 1.5.7.
+const DEFAULT_USER_AGENT = cliUserAgent();
 const MODEL_SLUG = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const THOUGHT_SIGNATURE_SENTINEL = 'skip_thought_signature_validator';
 // Only statuses observed in actual agy error/retry/recovery captures belong
@@ -427,6 +418,7 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
 
 function buildDirectRequest(normalized, model, projectId, sessionId, repairInstruction = '', thoughtSignatures = null, native = {}) {
   native.toolAdapter = prepareToolAdapter(normalized, native);
+  if (!native.checkpoint && process.env.ANTIGRAVITY_TOOL_CONTRACT !== 'legacy') native.toolAdapter = prepare157ToolContract(normalized, native.toolAdapter);
   normalized = native.toolAdapter.normalized;
   // Record the translation outcome on the request log so an operator can tell
   // "not recognized" apart from "recognized but the declarations did not
@@ -486,20 +478,24 @@ function buildDirectRequest(normalized, model, projectId, sessionId, repairInstr
     }] }));
     const choice = normalized.toolChoice;
     const type = typeof choice === 'string' ? choice : choice?.type;
-    const mode = type === 'none' ? 'NONE' : /claude/i.test(model || '') ? 'VALIDATED' : type === 'required' || type === 'any' || type === 'tool' ? 'ANY' : 'AUTO';
+    const legacy = process.env.ANTIGRAVITY_TOOL_CONTRACT === 'legacy';
+    const mode = type === 'none' ? 'NONE' : ['required', 'any', 'tool', 'function'].includes(type) ? 'ANY'
+      : legacy ? (/claude/i.test(model || '') ? 'VALIDATED' : 'AUTO') : '';
+    if (!legacy) assertGenerationCompatibility(model, generationConfig, mode);
     const name = choice?.name || choice?.function?.name;
     // Default Gemini AUTO was absent from every captured agy agent request.
     // Explicit client constraints and the existing Claude bridge remain native
     // functionCallingConfig values, not private gateway metadata.
     if (mode !== 'AUTO' || name) {
-      request.toolConfig = { functionCallingConfig: { mode } };
-      if (name) request.toolConfig.functionCallingConfig.allowedFunctionNames = [name];
+      if (mode) request.toolConfig = { functionCallingConfig: { mode } };
+      if (name) { request.toolConfig ||= { functionCallingConfig: { mode: 'ANY' } }; request.toolConfig.functionCallingConfig.allowedFunctionNames = [name]; }
     }
   }
   const state = native.state || newState('', '');
   native.context = prepareNativeContext(state, request.contents, model, { metadata: native.modelInfo, now: native.now, checkpoint: native.checkpoint, compactionProfile: native.compactionProfile, clientProfile: native.clientProfile, imageStore: native.imageStore,
     restoreStreamRecovery: native.restoreStreamRecovery });
-  request.contents = native.context.contents;
+  request.contents = native.toolAdapter.projectContents ? native.toolAdapter.projectContents(native.context.contents) : native.context.contents;
+  native.context.contents = request.contents;
   return agentEnvelope({ ...request, model, project: projectId, state, metadata: native.modelInfo, now: native.now,
     step: native.context.step, requestType: native.checkpoint ? 'checkpoint' : 'agent' });
 }
@@ -773,7 +769,7 @@ class DirectAntigravityProvider {
         try {
           response = await this.fetchImpl(`${base}${MODELS_PATH}`, {
             method: 'POST',
-            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: '*/*', 'user-agent': this.userAgent },
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': this.userAgent },
             body: JSON.stringify(this.projectRequestBody()),
             signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS)]) : AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS)
           });
@@ -846,7 +842,7 @@ class DirectAntigravityProvider {
         try {
           const response = await this.fetchImpl(`${base}${MODELS_PATH}`, {
             method: 'POST',
-            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: '*/*', 'user-agent': this.userAgent },
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': this.userAgent },
             body: JSON.stringify(this.projectRequestBody()),
             signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS)]) : AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS)
           });
@@ -873,7 +869,7 @@ class DirectAntigravityProvider {
                 supportsThinking: Boolean(metadata.supportsThinking ?? metadata.supports_thinking),
                 ...(typeof metadata.model === 'string' ? { model: metadata.model } : {}),
                 ...(Number.isFinite(metadata.thinkingBudget) ? { thinkingBudget: metadata.thinkingBudget } : {}),
-                ...(Number.isFinite(metadata.thinkingLevel) ? { thinkingLevel: metadata.thinkingLevel } : {}),
+                ...((Number.isFinite(metadata.thinkingLevel) || typeof metadata.thinkingLevel === 'string') ? { thinkingLevel: metadata.thinkingLevel } : {}),
                 ...(typeof metadata.apiProvider === 'string' ? { apiProvider: metadata.apiProvider } : {})
               }];
             }));
@@ -936,7 +932,7 @@ class DirectAntigravityProvider {
       try {
         const response = await this.fetchImpl(`${base}${GENERATE_PATH}`, {
           method: 'POST', signal,
-          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json', 'user-agent': this.userAgent },
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': this.userAgent },
           body: JSON.stringify(requestBody)
         });
         onUpstreamAttempt?.({ phase: 'response', base, model: IMAGE_MODEL, status: response.status, success: response.ok });

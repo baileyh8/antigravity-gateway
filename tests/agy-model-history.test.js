@@ -45,13 +45,13 @@ test('image client projections remain restricted to the original model until cro
   assert.deepEqual(restoreClientProjections(state, [...prefix, receipt], 'other-model'), [...prefix, receipt]);
 });
 
-test('captured generation defaults use -1/4000/1000; live metadata and explicit client caps retain priority', () => {
+test('captured model names fix HIGH/MEDIUM/LOW while live limits and explicit client caps retain priority', () => {
   for (const [i, model] of models.entries()) {
-    assert.deepEqual(generationProfile({}, model), { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingBudget: [-1, 4000, 1000][i] } });
+    assert.deepEqual(generationProfile({}, model), { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingLevel: ['HIGH', 'MEDIUM', 'LOW'][i] } });
     assert.equal(CAPTURED_MODELS[model].model, `MODEL_PLACEHOLDER_M${318 + i}`);
     assert.deepEqual(generationProfile({ generationConfig: { maxOutputTokens: 2048 } }, model,
       { maxOutputTokens: 32768, supportsThinking: true, thinkingBudget: 1200 }),
-    { maxOutputTokens: 2048, thinkingConfig: { includeThoughts: true, thinkingBudget: 1200 } });
+    { maxOutputTokens: 2048, thinkingConfig: { includeThoughts: true, thinkingLevel: ['HIGH', 'MEDIUM', 'LOW'][i] } });
   }
 });
 

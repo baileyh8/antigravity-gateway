@@ -1,6 +1,6 @@
 {
   "name": "antigravity-gateway",
-  "version": "1.7.1-bailey.21",
+  "version": "1.7.1-bailey.22",
   "description": "Bailey-maintained Anthropic/OpenAI-compatible gateway with managed accounts, per-account proxies, multimodal APIs and bounded concurrency.",
   "license": "MIT",
   "type": "commonjs",
@@ -10,13 +10,12 @@
     "src/",
     "scripts/",
     "skills/",
-    "docs/robin-provider.md",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "native/",
-    "docs/windows-native.md"
+    "docs/agy-1.5.7-compatibility.md"
   ],
   "bin": {
     "antigravity-gateway": "antigravity-gateway.js"
@@ -28,13 +27,11 @@
   "scripts": {
     "start": "node antigravity-gateway.js",
     "postinstall": "node scripts/check-environment.js",
-    "check": "node --check antigravity-gateway.js && node --check src/account-pool.js && node --check src/account-store.js && node --check src/agy-worker.js && node --check src/artifacts.js && node --check src/diagnostic-log.js && node --check src/direct-provider.js && node --check src/local-account-importer.js && node --check src/local-agy-auth.js && node --check src/managed-account-auth.js && node --check src/multimedia.js && node --check src/oauth-flow.js && node --check src/protocol.js && node --check src/quota-manager.js && node --check src/service-manager.js && node --check src/service-runner.js && node --check src/session-manager.js && node --check src/terminal-console.js && node --check src/usage-store.js && node --check src/proxy-manager.js && node --check src/graceful-shutdown.js && node --check src/resource-budget.js && node --check src/sse-writer.js && node --check src/provider-router.js && node --check src/robin-account-pool.js && node --check src/robin-auth.js && node --check src/robin-conversations.js && node --check src/robin-oauth-flow.js && node --check src/robin-phenotype.js && node --check src/robin-proto.js && node --check src/robin-provider.js && node --check src/robin-quota.js && node --check src/robin-response.js && node --check src/robin-proxy.js && node --check src/robin-onboarding.js && node --check src/account-scheduling.js && node --check src/admin-api.js && node --check src/admin-oauth.js && node --check src/key-store.js && node --check src/request-log.js && node --check src/model-settings.js && node --check src/account-labels.js && node --check src/model-visibility.js && node --check src/admission-control.js && node --check src/session-affinity.js",
+    "check": "node --check antigravity-gateway.js && node --check src/account-format.js && node --check src/account-labels.js && node --check src/account-pool.js && node --check src/account-scheduling.js && node --check src/account-storage-permissions.js && node --check src/account-store.js && node --check src/admin-api.js && node --check src/admin-oauth.js && node --check src/admission-control.js && node --check src/agy-157-tool-contract.js && node --check src/agy-client-compaction.js && node --check src/agy-client-profile.js && node --check src/agy-context-state.js && node --check src/agy-dsh-profile.js && node --check src/agy-file-lease.js && node --check src/agy-hermes-profile.js && node --check src/agy-image-references.js && node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-retry-policy.js && node --check src/agy-session-state.js && node --check src/agy-stream-recovery.js && node --check src/agy-structured-output.js && node --check src/agy-tool-adapter.js && node --check src/agy-tool-mapping.js && node --check src/agy-tool-results.js && node --check src/agy-tool-semantics.js && node --check src/agy-worker.js && node --check src/antigravity-model-config.js && node --check src/artifacts.js && node --check src/diagnostic-log.js && node --check src/direct-provider.js && node --check src/gemini-account-store.js && node --check src/graceful-shutdown.js && node --check src/key-context.js && node --check src/key-store.js && node --check src/local-account-importer.js && node --check src/local-agy-auth.js && node --check src/log-reader.js && node --check src/managed-account-auth.js && node --check src/model-settings.js && node --check src/model-visibility.js && node --check src/multimedia.js && node --check src/oauth-flow.js && node --check src/protocol.js && node --check src/provider-router.js && node --check src/proxy-manager.js && node --check src/quota-manager.js && node --check src/request-log.js && node --check src/resource-budget.js && node --check src/service-manager.js && node --check src/service-runner.js && node --check src/session-affinity.js && node --check src/session-manager.js && node --check src/sse-writer.js && node --check src/terminal-console.js && node --check src/tool-history.js && node --check src/usage-store.js",
     "test": "node --test tests/*.test.js",
     "build:native": "node scripts/build-native-transport.js",
-    "check:native": "node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-session-state.js && node --check src/agy-file-lease.js && node --check src/agy-context-state.js && node --check src/agy-image-references.js && node --check src/agy-tool-results.js && node --check src/agy-structured-output.js && node --check scripts/build-native-transport.js",
-    "postcheck": "npm run check:windows && npm run check:native && npm run check:robin-adapter",
-    "check:robin-adapter": "node --check src/robin-client-adapter.js && node --check src/agy-tool-adapter.js && node --check src/agy-hermes-profile.js && node --check src/tool-history.js",
-    "check:windows": "node --check src/gemini-account-store.js && node --check src/gemini-windows-auth.js && node --check src/gemini-windows-login.js && node --check src/gemini-windows-protocol.js && node --check src/gemini-windows-provider.js && node --check src/gemini-windows-quota.js",
+    "check:native": "node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-session-state.js && node --check src/agy-file-lease.js && node --check src/agy-context-state.js && node --check src/agy-image-references.js && node --check src/agy-tool-results.js && node --check src/agy-structured-output.js && node --check scripts/build-native-transport.js && node --check src/agy-157-tool-contract.js && node --check src/antigravity-model-config.js && node --check src/account-storage-permissions.js",
+    "postcheck": "npm run check:native",
     "manager:check": "npm --prefix manager/server run check",
     "manager:test": "npm --prefix manager/server test",
     "manager:build": "npm --prefix manager/web run build"

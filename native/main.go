@@ -30,7 +30,8 @@ func capturedMetadataPath(path string) bool {
 	switch path {
 	case "/v1internal:fetchAvailableModels", "/v1internal:retrieveUserQuotaSummary",
 		"/v1internal:loadCodeAssist", "/v1internal:fetchUserInfo",
-		"/v1internal:fetchAdminControls", "/v1internal:listExperiments":
+		"/v1internal:fetchAdminControls", "/v1internal:listExperiments",
+		"/v1internal:generateContent", "/v1internal:onboardUser", "/v1internal:getCodeAssistGlobalUserSetting", "/token":
 		return true
 	default:
 		return false
@@ -102,9 +103,8 @@ func newClient() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	// agy 1.4.2 captures: HTTP/1.1, no ALPN, Go cipher/extension ordering,
-	// hybrid ML-KEM groups and no client session ticket cache. Do not clone
-	// http.DefaultTransport: it enables HTTP/2 and changes the ClientHello.
+	// Official agy 1.5.7 negotiates h2 with HTTP/1.1 fallback.
+	// Use the same Go TLS defaults; retain certificate validation and account proxy.
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -114,7 +114,7 @@ func newClient() (*http.Client, error) {
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   8,
-		ForceAttemptHTTP2:     false,
+		ForceAttemptHTTP2:     true,
 	}
 	return &http.Client{
 		Transport: transport,

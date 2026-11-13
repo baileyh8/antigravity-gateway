@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.20 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.22 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,9 +44,13 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.20
+### 当前源码版本：1.7.1-bailey.22
 
-客户端身份对齐官方 agy CLI 1.5.2：`antigravity/cli/1.5.2 (... cl=1015175089; auth_method=consumer)`。版本号与 changelist 必须成对，可用 `ANTIGRAVITY_CLI_VERSION` / `ANTIGRAVITY_CLI_CHANGELIST` 覆盖；`os_type`、`arch` 仍取运行时值。本版本的工具映射按声明形状自动识别，未识别的客户端也能转换到上游原生工具名；映射前需通过可逆性检查，冲突时保持原样透传。
+本版对照本机官方 agy CLI **1.5.7 / cl1019769835** 的隔离抓包，更新 Go HTTP/2 与 TLS ALPN，逐模型发送已观察到的思考参数和输出上限，并修复 Token 刷新覆盖账号启停、权重或新授权的问题。
+
+工具采用完整、可逆的 MCP 视图，适用于 Codex/OpenCodex、DSH、Hermes、Claude 和未知客户端；可等价表达的文件操作另提供 `read_file / write_file / edit_file` 视图。命令超时、后台任务、权限参数不会被偷换成官方执行器能力。完整保留调用方的 system、项目规则与工具约束；不复制不适用的官方工作区/执行器提示。`ANTIGRAVITY_TOOL_CONTRACT=legacy` 可临时回退旧工具格式。
+
+缓存由上游隐式处理，不创建或传输 `cachedContents`，用量取真实 `cachedContentTokenCount`。命中阈值及折扣取决于实际模型和服务，不承诺统一“4096 tokens / 95%”。协议兼容不代表账号不会受到服务限制。详见 [1.5.7 对照与边界](docs/agy-1.5.7-compatibility.md)。
 
 请求总超时后，Responses 流明确返回 `response.failed` / `request_timeout`，保留响应 ID、事件序号和已输出内容；日志按有效失败状态 504 记录，SSE 已发出的 HTTP 200 响应头不变。迟到的上游回调不能再补发成功结束。总超时仍为默认 300 秒。
 
@@ -588,8 +592,8 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | 网关监听端口 |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | 空 | 自定义网关 Key；非本机监听时必须设置 |
 | `ANTIGRAVITY_CLI_PATH` | 自动查找 `agy` | 指定 agy 路径 |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.2` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1015175089` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.7` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1019769835` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | 按参数形状识别未抓包客户端的工具声明；设为 `off` 恢复严格透传 |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | 空 | 设为 `on` 时每请求输出 `profile=... mapped=N/M` 日志 |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | 空 | 设为 `on` 时在上一项基础上输出逐对映射明细 |
@@ -686,9 +690,13 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.20
+### Current source version: 1.7.1-bailey.22
 
-The client identity matches the official agy CLI 1.5.2: `antigravity/cli/1.5.2 (... cl=1015175089; auth_method=consumer)`. Version and changelist are configurable as a pair; `os_type` and `arch` remain runtime values. Tool mapping now identifies declarations by argument shape, so clients without a captured profile can also translate to native tool names; every inferred mapping must pass a reversibility check, and contested or unmatched declarations stay as submitted.
+This release is checked against isolated captures of official **agy CLI 1.5.7 / cl1019769835**. It enables Go HTTP/2 with matching ALPN, resolves per-model thinking/output settings, and prevents token refresh from overwriting account enable/weight settings or replacement authorizations.
+
+Tools retain complete reversible MCP views for Codex/OpenCodex, DSH, Hermes, Claude and unknown clients. Equivalent file operations also expose `read_file / write_file / edit_file` views. Client system instructions, execution limits and permissions are preserved. Unsupported official workspace/executor claims are not transplanted. Set `ANTIGRAVITY_TOOL_CONTRACT=legacy` for the explicit historical wire fallback.
+
+Caching remains implicit upstream: no `cachedContents` creation or forwarding; usage comes from actual `cachedContentTokenCount`. No universal cache threshold, discount or account-safety guarantee is implied. See [capture evidence and limits](docs/agy-1.5.7-compatibility.md).
 
 On the overall request deadline, Responses streams end with `response.failed` / `request_timeout`, preserving response IDs, event sequence and partial output. Logs record the effective failure status 504 even when SSE headers were already sent as HTTP 200. Late provider callbacks cannot append a successful completion. The default overall deadline remains 300 seconds.
 
@@ -1023,8 +1031,8 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | Listen port |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | empty | Custom gateway key; required for non-loopback binding |
 | `ANTIGRAVITY_CLI_PATH` | auto-detected | Custom agy path |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.2` | agy CLI version in the client identity; keep paired with the changelist |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1015175089` | Changelist (`cl`) of the same official build; update together with the version |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.7` | agy CLI version in the client identity; keep paired with the changelist |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1019769835` | Changelist (`cl`) of the same official build; update together with the version |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | Identify uncaptured clients by declaration shape; `off` restores strict passthrough |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | empty | `on` logs `profile=... mapped=N/M` per request |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | empty | `on` adds the per-tool mapping pairs to the trace |

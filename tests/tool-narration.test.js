@@ -1,4 +1,6 @@
 'use strict';
+// Historical wire compatibility remains available behind the explicit fallback.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
