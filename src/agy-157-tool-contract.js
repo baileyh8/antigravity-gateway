@@ -99,6 +99,7 @@ function prepare157ToolContract(normalized, legacy) {
   const counts = new Map();
   for (const view of candidates) if (view) counts.set(view.name, (counts.get(view.name) || 0) + 1);
   const provider = new Map(), client = new Map(), tools = [], guides = [];
+  let nativeViewCount = 0;
   for (const [index, tool] of sources.entries()) {
     if (tool.internal) { tools.push(tool); continue; }
     const alias = `mcp_gateway_${crypto.createHash('sha256').update(tool.name).digest('hex').slice(0, 16)}`;
@@ -110,7 +111,7 @@ function prepare157ToolContract(normalized, legacy) {
       type: 'object', properties: { argumentsJson: { type: 'string', description: 'Complete original client arguments as one JSON value; preserve every field. Original schema: ' + JSON.stringify(tool.schema || {}) }, toolSummary: { type: 'string', description: SUMMARY } },
       required: ['argumentsJson', 'toolSummary'], additionalProperties: false
     } });
-    if (record.native) { provider.set(record.native.name, record); tools.push({ ...record.native, kind: 'function' }); }
+    if (record.native) { nativeViewCount++; provider.set(record.native.name, record); tools.push({ ...record.native, kind: 'function' }); }
     guides.push(`${JSON.stringify(tool.name)} -> ${alias}${record.native ? `; reversible file view: ${record.native.name}` : ''}`);
   }
   function toClient(call) {
@@ -164,6 +165,9 @@ function prepare157ToolContract(normalized, legacy) {
   // executor. Preserve the complete source system and append an explicit index.
   const system = [IDENTITY, normalized.system, 'Client tool reference index. Only use declared functions. Client instructions and approval restrictions remain in force. Use the complete MCP view whenever the native view cannot express all arguments:\n' + guides.join('\n')].filter(Boolean).join('\n\n');
   return { ...legacy, normalized: { ...normalized, system, tools, toolChoice }, toClient, toProvider, projectContents,
-    adapted: client.size > 0, mappingCount: client.size, toolCount: client.size };
+    adapted: client.size > 0, mappingCount: client.size, toolCount: client.size,
+    nativeViewCount,
+    pairs: String(process.env.ANTIGRAVITY_TOOL_MAPPING_DEBUG || '').toLowerCase() === 'on'
+      ? [...client.values()].map(record => `${record.tool.name}→${record.alias}${record.native ? '/' + record.native.name : ''}`) : [] };
 }
 module.exports = { prepare157ToolContract };

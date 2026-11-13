@@ -158,7 +158,7 @@ test('native file wire schemas avoid boolean enums and enforce destructive-opera
  const declaration=w.normalized.tools.find(t=>t.name==='write_file');assert.equal(declaration.schema.properties.Overwrite.enum,undefined);
  assert.throws(()=>w.toClient({name:'write_file',arguments:{Path:'/tmp/a',Content:'new',Overwrite:false}}),/Overwrite/);
  const read=normalized('chat','read_file',{path:'/tmp/a',offset:1,limit:2});read.tools[0].schema.properties.offset.description='1-indexed line number';read.tools[0].schema.properties.limit.description='Number of lines';const r=prepare157ToolContract(read,prepareToolAdapter(read));
- for(const StartLine of [0,-1,1.5])assert.throws(()=>r.toClient({name:'read_file',arguments:{Path:'/tmp/a',StartLine}}));
+ for(const StartLine of [0,-1,1.5])assert.throws(()=>r.toClient({name:'read_file',arguments:{Path:'/tmp/a',StartLine,EndLine:2}}));
  const edit=normalized('chat','edit',{path:'/tmp/a',old_string:'old',new_string:'new',replace_all:true});edit.tools[0].description='Replace exact literal strings in an existing file.';const e=prepare157ToolContract(edit,prepareToolAdapter(edit));
  assert.throws(()=>e.toClient({name:'edit_file',arguments:{Path:'/tmp/a',Target:'',Replacement:'new'}}));
 });
