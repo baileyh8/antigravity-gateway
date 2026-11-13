@@ -16,6 +16,7 @@ for (const existing of [true, false]) test(`root credential replacement preserve
   const store = new AccountStore({ configDir: root, fsImpl });store.ensureDirectory();
   const record = existing ? store.save({ email: 'fixture@example.invalid', accessToken: 'old' }) : null;
   const owner = fs.statSync(existing ? path.join(store.directory, 'fixture-example.invalid.json') : store.directory);
+  calls.length = 0;
   const previous = process.getuid;
   try {
     process.getuid = () => 0;
@@ -31,11 +32,15 @@ test('a failed ownership preservation leaves the previous credential file intact
   if (process.platform === 'win32') return t.skip('POSIX ownership contract');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agw-owner-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const store = new AccountStore({ configDir: root, fsImpl: { ...fs, chownSync() { throw new Error('owner preservation denied'); } } });
+  let deny = false;
+  const store = new AccountStore({ configDir: root, fsImpl: { ...fs, chownSync(file, uid, gid) {
+    if (deny) throw new Error('owner preservation denied');
+    fs.chownSync(file, uid, gid);
+  } } });
   const record = store.save({ email: 'fixture@example.invalid', accessToken: 'old' });
   const file = path.join(store.directory, 'fixture-example.invalid.json'), before = fs.readFileSync(file, 'utf8');
   const previous = process.getuid;
-  try { process.getuid = () => 0;assert.throws(() => store.updateCredentials(record, { accessToken: 'new' }), /owner preservation denied/); }
+  try { deny = true;process.getuid = () => 0;assert.throws(() => store.updateCredentials(record, { accessToken: 'new' }), /owner preservation denied/); }
   finally { process.getuid = previous; }
   assert.equal(fs.readFileSync(file, 'utf8'), before);
   assert.equal(fs.readdirSync(store.directory).some(f => f.endsWith('.tmp')), false);
