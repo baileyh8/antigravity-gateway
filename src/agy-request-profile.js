@@ -35,9 +35,9 @@ function agentEnvelope({ model, project, contents, systemInstruction, tools, gen
     request_id: `${state.trajectoryId}-${state.requestIndex}`,
     root_cascade_id: state.cascadeId,
     trajectory_id: state.trajectoryId,
-    used_claude: String(Boolean(state.usedClaude)),
-    used_claude_conservative: 'false',
-    used_non_gemini_model: String(Boolean(state.usedNonGemini))
+    used_claude: String(Boolean(state.usedClaude) || profile.capturedLabels?.used_claude === 'true'),
+    used_claude_conservative: String(Boolean(state.usedClaude) || profile.capturedLabels?.used_claude_conservative === 'true'),
+    used_non_gemini_model: String(Boolean(state.usedNonGemini) || profile.capturedLabels?.used_non_gemini_model === 'true')
   };
   return {
     project,

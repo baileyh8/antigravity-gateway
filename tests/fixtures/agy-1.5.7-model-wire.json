@@ -11,7 +11,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M322",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-hydrogen-low": {
       "sentModel": "gemini-4-hydrogen-low",
@@ -23,7 +28,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M527",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-4-hydrogen-xhigh": {
       "sentModel": "gemini-4-hydrogen-xhigh",
@@ -35,7 +45,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M528",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-3.8-flash-high": {
       "sentModel": "gemini-3.8-flash-high",
@@ -47,7 +62,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M318",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "claude-opus-5-5-high": {
       "sentModel": "claude-opus-5-5-high",
@@ -59,7 +79,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M402",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "claude-sonnet-5-5-low": {
       "sentModel": "claude-sonnet-5-5-low",
@@ -71,7 +96,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M403",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-3.1-flash-lite": {
       "sentModel": "gemini-3.1-flash-lite",
@@ -83,7 +113,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M50",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-argon-medium": {
       "sentModel": "gemini-4-argon-medium",
@@ -95,7 +130,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M418",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "claude-opus-5-5-medium": {
       "sentModel": "claude-opus-5-5-medium",
@@ -107,7 +147,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M401",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "claude-sonnet-5-5-high": {
       "sentModel": "claude-sonnet-5-5-high",
@@ -119,7 +164,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M405",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "claude-sonnet-5-5-medium": {
       "sentModel": "claude-sonnet-5-5-medium",
@@ -131,7 +181,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M404",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-3.8-flash-medium": {
       "sentModel": "gemini-3.8-flash-medium",
@@ -143,7 +198,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M319",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-argon-low": {
       "sentModel": "gemini-4-argon-low",
@@ -155,7 +215,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M419",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-3-flash": {
       "sentModel": "gemini-3-flash",
@@ -167,7 +232,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M18",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-argon-high": {
       "sentModel": "gemini-4-argon-high",
@@ -179,7 +249,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M417",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-2.5-flash": {
       "sentModel": "gemini-2.5-flash",
@@ -191,7 +266,12 @@
         }
       },
       "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gpt-oss-120b-medium": {
       "sentModel": "gpt-oss-120b-medium",
@@ -203,7 +283,12 @@
         }
       },
       "modelEnum": "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-3.8-flash-low": {
       "sentModel": "gemini-3.8-flash-low",
@@ -215,7 +300,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M320",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-hydrogen-high": {
       "sentModel": "gemini-4-hydrogen-high",
@@ -227,7 +317,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M525",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-3.5-flash-lite": {
       "sentModel": "gemini-3.5-flash-lite",
@@ -239,7 +334,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M198",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "claude-opus-5-5-low": {
       "sentModel": "claude-opus-5-5-low",
@@ -251,7 +351,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M400",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "true",
+        "used_claude_conservative": "true",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-2.5-flash-thinking": {
       "sentModel": "gemini-2.5-flash-thinking",
@@ -263,7 +368,12 @@
         }
       },
       "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH_THINKING",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     },
     "gemini-4-hydrogen-medium": {
       "sentModel": "gemini-4-hydrogen-medium",
@@ -275,7 +385,12 @@
         }
       },
       "modelEnum": "MODEL_PLACEHOLDER_M526",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "true"
+      }
     },
     "gemini-2.5-flash-lite": {
       "sentModel": "gemini-2.5-flash-lite",
@@ -287,7 +402,12 @@
         }
       },
       "modelEnum": "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
-      "toolMode": null
+      "toolMode": null,
+      "historyLabels": {
+        "used_claude": "false",
+        "used_claude_conservative": "false",
+        "used_non_gemini_model": "false"
+      }
     }
   }
 }

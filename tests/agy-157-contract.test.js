@@ -53,6 +53,7 @@ test('every captured model sends its actual 1.5.7 reasoning fields and output ca
     const request = buildDirectRequest({ messages: [{ role: 'user', text: 'fixture' }] }, model, 'p', '', '', null, { modelInfo: catalog[model] });
     assert.deepEqual(request.request.generationConfig, row.generationConfig, model);
     assert.equal(request.request.labels.model_enum, row.modelEnum, model);
+    for (const [key,value] of Object.entries(row.historyLabels)) assert.equal(request.request.labels[key],value,model+':'+key);
     assert.equal(request.request.toolConfig, undefined);
   }
   assert.equal(generationProfile({}, 'gemini-4-hydrogen-xhigh', catalog['gemini-4-hydrogen-xhigh']).thinkingConfig.thinkingLevel, 100);
