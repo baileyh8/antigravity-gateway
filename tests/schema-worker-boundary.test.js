@@ -181,3 +181,21 @@ test('async-only request scope also prevents invoking an offline-compiled valida
   });
   assert.equal(validate({}), true, 'offline callers outside the request remain isolated');
 });
+
+
+test('standalone worker timeout releases capacity before the process may exit', async () => {
+  const script = `
+    const {SchemaWorkerPool,compileSchemaAsync}=require('./src/schema-contract');
+    (async()=>{
+      const pool=new SchemaWorkerPool({workers:1,validateMs:20});
+      for(let i=0;i<3;i++){
+        const bad=await compileSchemaAsync({type:'string',pattern:'^(a+)+$'},{pool});
+        try{await bad('a'.repeat(32)+'!');throw Error('accepted');}catch(e){if(e.code!=='schema_execution_timeout')throw e;}
+        const good=await compileSchemaAsync({type:'integer'},{pool});
+        if(!await good(i))throw Error('capacity not restored');
+      }
+      await pool.close();process.stdout.write('RECOVERED');
+    })().catch(e=>{console.error(e.message);process.exitCode=1;});`;
+  const result=await promisify(execFile)(process.execPath,['-e',script],{cwd:path.resolve(__dirname,'..'),timeout:10000});
+  assert.equal(result.stdout,'RECOVERED');
+});
