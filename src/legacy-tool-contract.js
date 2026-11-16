@@ -12,4 +12,15 @@ function prepareLegacyToolContract(normalized,options={}){
   toClientResult:result=>({...result,name:reverse.get(result.name)||result.name}),
   resultContract:name=>({clientName:reverse.get(name)||name,clientKind:source.find(t=>t.name===(reverse.get(name)||name))?.kind||'function',mode:'native'})};
 }
-module.exports={prepareLegacyToolContract};
+async function prepareLegacyToolContractAsync(normalized, options = {}) {
+ const {validateSchemaAsync}=require('./schema-contract'),{GatewayError}=require('./protocol');
+ const adapter=prepareLegacyToolContract(normalized,{...options,validator:()=>true});
+ const validate=async(call,strict)=>{const tool=(normalized.tools||[]).find(t=>t.name===call.name);if(!tool)return true;
+  let args=call.arguments;
+  if(typeof args==='string'&&tool.schema?.type==='object'){try{args=JSON.parse(args);}catch{ /* Worker rejects incomplete JSON. */ }}
+  const valid=await validateSchemaAsync(args,tool.schema||{}, {signal:options.signal});
+  if(!valid&&strict)throw new GatewayError('工具参数不符合客户端契约。',{code:'invalid_tool_arguments',status:502});return valid;};
+ return {...adapter,toClient:async call=>{const result=adapter.toClient(call);await validate(result,true);return result;},
+  toProvider:async call=>await validate(call,false)?adapter.toProvider(call):call};
+}
+module.exports={prepareLegacyToolContract,prepareLegacyToolContractAsync};

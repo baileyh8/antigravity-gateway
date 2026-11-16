@@ -50,7 +50,10 @@ function* prepareStructuredOutputSteps(normalized, { checkpoint = false, compile
 }
 
 function* finishResultSteps(schema, calls, normalize = normalizeStructured) {
-  if (process.env.ANTIGRAVITY_TOOL_CONTRACT === 'legacy') return require('./legacy-structured-output').finishResult(schema, calls);
+  if (process.env.ANTIGRAVITY_TOOL_CONTRACT === 'legacy') {
+    const result = require('./legacy-structured-output').finishResult(schema, calls, text => text);
+    return result ? { ...result, text: yield normalize(result.text, schema) } : null;
+  }
   if (!schema || !calls.some(call => call.name === 'finish')) return null;
   if (calls.length !== 1) throw new GatewayError('结构化完成工具不能与其他工具混合调用。', { code: 'invalid_structured_output', status: 502 });
   const call = calls[0];

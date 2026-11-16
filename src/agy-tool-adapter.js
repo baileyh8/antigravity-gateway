@@ -235,7 +235,7 @@ function declaration(tool, rule, mappings, target) {
   return { ...tool, name: rule.name, description, schema: { type: 'object', properties, required, additionalProperties: false } };
 }
 
-function clientCall(call, tool, rule, target) {
+function clientCall(call, tool, rule, target, validate = validateSchema) {
   let args = call.arguments;
   try { if (typeof args === 'string') args = JSON.parse(args); } catch { args = null; }
   const fail = () => { throw new GatewayError('上游工具参数无法无损转换为客户端工具参数。', { code: 'invalid_tool_arguments', status: 502 }); };
@@ -284,16 +284,16 @@ function clientCall(call, tool, rule, target) {
     }
     if (args.Pages !== undefined) input.pages = args.Pages;
   }
-  if (!validateSchema(input, tool.schema)) return fail();
+  if (!validate(input, tool.schema)) return fail();
   return { ...call, name: tool.name, arguments: input };
 }
 
-function providerCall(call, tool, rule, target) {
+function providerCall(call, tool, rule, target, validate = validateSchema) {
   let input = call.arguments;
   try { if (typeof input === 'string') input = JSON.parse(input); } catch { return call; }
   // Historical calls with changed/unknown capabilities stay as submitted.
   // Never manufacture missing values to make them fit the current profile.
-  if (!input || typeof input !== 'object' || Array.isArray(input) || !validateSchema(input, tool.schema)) return call;
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !validate(input, tool.schema)) return call;
   const parameters = rule.parameters || (tool.name === 'Read'
     ? { file_path: 'AbsolutePath', offset: 'StartLine', limit: 'EndLine', pages: 'Pages' }
     : { file_path: 'TargetFile', content: 'CodeContent' });
@@ -305,12 +305,12 @@ function providerCall(call, tool, rule, target) {
   if (rule.escalation && Object.hasOwn(input, 'sandbox_permissions')) args.sandbox_permissions = input.sandbox_permissions === 'danger-full-access';
   if (rule.session) args.Action = input.chars ? 'send_input' : 'status';
   const mapped = { ...call, name: rule.name, arguments: args };
-  try { if (!isDeepStrictEqual(clientCall(mapped, tool, rule, target).arguments, input)) return call; }
+  try { if (!isDeepStrictEqual(clientCall(mapped, tool, rule, target, validate).arguments, input)) return call; }
   catch { return call; }
   return mapped;
 }
 
-function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false, target = 'cloudcode' } = {}) {
+function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false, target = 'cloudcode', validator = validateSchema } = {}) {
   const names = new Set((normalized.tools || []).map(t => t.name));
   const profile = profiles[clientProfile];
   const recognized = !checkpoint && !normalized.autoMode && profile && normalized.protocol === profile.protocol
@@ -358,8 +358,8 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
   return {
     normalized: mappings.size || system !== normalized.system ? { ...normalized, system, toolChoice,
       tools: (normalized.tools || []).map(t => mappings.has(t.name) ? declaration(t, mappings.get(t.name), mappings, target) : t) } : normalized,
-    toClient: call => byNative.has(call.name) ? clientCall(call, source.get(call.name), byNative.get(call.name), target) : call,
-    toProvider: call => mappings.has(call.name) ? providerCall(call, source.get(mappings.get(call.name).name), mappings.get(call.name), target) : call,
+    toClient: call => byNative.has(call.name) ? clientCall(call, source.get(call.name), byNative.get(call.name), target, validator) : call,
+    toProvider: call => mappings.has(call.name) ? providerCall(call, source.get(mappings.get(call.name).name), mappings.get(call.name), target, validator) : call,
     adapted: mappings.size > 0,
     profileName: clientProfile || '',
     mappingCount: mappings.size,
