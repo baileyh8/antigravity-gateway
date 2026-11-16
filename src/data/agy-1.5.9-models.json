@@ -1,0 +1,102 @@
+{
+  "claude-opus-5-5-high": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "claude-opus-5-5-low": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "claude-opus-5-5-medium": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "MEDIUM"
+  },
+  "claude-sonnet-5-5-high": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "claude-sonnet-5-5-low": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "claude-sonnet-5-5-medium": {
+    "maxOutputTokens": 128000,
+    "supportsThinking": true,
+    "thinkingLevel": "MEDIUM"
+  },
+  "gemini-2.5-flash-lite": {
+    "maxOutputTokens": 65535,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "gemini-3-flash": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "gemini-3.1-flash-lite": {
+    "maxOutputTokens": 65535,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "gemini-3.8-flash-high": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "gemini-3.8-flash-low": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "gemini-3.8-flash-medium": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "MEDIUM"
+  },
+  "gemini-4-argon-high": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "gemini-4-argon-low": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "gemini-4-argon-medium": {
+    "maxOutputTokens": 65536,
+    "supportsThinking": true,
+    "thinkingLevel": "MEDIUM"
+  },
+  "gemini-4-hydrogen-high": {
+    "maxOutputTokens": 262144,
+    "supportsThinking": true,
+    "thinkingLevel": "HIGH"
+  },
+  "gemini-4-hydrogen-low": {
+    "maxOutputTokens": 262144,
+    "supportsThinking": true,
+    "thinkingLevel": "LOW"
+  },
+  "gemini-4-hydrogen-medium": {
+    "maxOutputTokens": 262144,
+    "supportsThinking": true,
+    "thinkingLevel": "MEDIUM"
+  },
+  "gemini-4-hydrogen-xhigh": {
+    "maxOutputTokens": 262144,
+    "supportsThinking": true,
+    "thinkingLevel": 100
+  },
+  "gpt-oss-120b-medium": {
+    "maxOutputTokens": 32768,
+    "supportsThinking": true,
+    "thinkingBudget": 8192
+  }
+}

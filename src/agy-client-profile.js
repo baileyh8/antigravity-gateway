@@ -5,6 +5,7 @@ const { capturedHermesClient } = require('./agy-hermes-profile');
 const { capturedDshClient } = require('./agy-dsh-profile');
 
 const CODEX_CLIENT_PROFILE = 'codex-exec-0.159.2';
+const CODEX_167_CLIENT_PROFILE = 'codex-exec-0.167.2';
 const CLAUDE_304_CLIENT_PROFILE = 'claude-code-2.1.304';
 const CLAUDE_284_CLIENT_PROFILE = 'claude-code-2.1.284';
 
@@ -64,4 +65,4 @@ function capturedCodexClient(req, normalized) {
   return CODEX_ORIGINATORS.has(String(req?.headers?.originator || '').trim());
 }
 
-module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CODEX_ORIGINATORS, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE };
+module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CODEX_ORIGINATORS, CODEX_167_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE };

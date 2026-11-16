@@ -14,7 +14,7 @@ const root = path.resolve(__dirname, '..');
 const source = path.join(root, 'native');
 const go = process.env.ANTIGRAVITY_BUILD_GO || 'go';
 const version = execFileSync(go, ['version'], { encoding: 'utf8' }).trim();
-if (!/\bgo1\.27\.2\b/.test(version)) throw new Error('Use Go 1.27.2 to build the captured agy 1.4.2 transport profile.');
+if (!/\bgo1\.27\.2\b/.test(version)) throw new Error('Use Go 1.27.2 to build the verified native transport.');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const targets = [
   ['darwin', 'arm64', 'darwin', 'arm64'], ['darwin', 'x64', 'darwin', 'amd64'],

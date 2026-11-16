@@ -1,0 +1,128 @@
+{
+  "provenance": "Synthetic fixture produced by unmodified bailey.24 (3719a04), no account credentials or user history.",
+  "identity": "managed-account:synthetic-migration",
+  "sessionId": "issued-24-cache",
+  "model": "gemini-4-hydrogen-low",
+  "payload": {
+    "input": [
+      {
+        "role": "user",
+        "content": "Use the synthetic lookup."
+      },
+      {
+        "id": "fc_02ae12a61dbf4b798fa9e1741d931f88",
+        "type": "function_call",
+        "status": "completed",
+        "call_id": "old-issued",
+        "name": "lookup",
+        "arguments": "{\"query\":\"before\"}",
+        "extra_content": {
+          "google": {
+            "thought_signature": "genuine-fixture-signature"
+          }
+        }
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "old-issued",
+        "output": "synthetic-result"
+      },
+      {
+        "role": "user",
+        "content": "Continue."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "lookup",
+        "description": "Return a synthetic value.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  "state": {
+    "version": 1,
+    "owner": "3adaef0f0019c521a7ea4df3f365b70d29de2c7602cd2bae377e52e2a9855bfb",
+    "key": "f734c673a1d27cf95d81e86ea33ca68307a980d5b76572f10faf5c4e6baa41e7",
+    "cascadeId": "c94b7ac1-3846-4077-bcc1-5d8cbbfdbe6d",
+    "trajectoryId": "6eaa13e0-4e3c-4e49-9186-834a37495e02",
+    "requestIndex": 1,
+    "at": 1794812424879,
+    "lastExecutionId": "",
+    "usedClaude": false,
+    "usedNonGemini": true,
+    "responses": {
+      "ab30e4a301bc075b05ecf2edcac83484d0a75b52c12353675dbdafbfb85f7f35": {
+        "model": "gemini-4-hydrogen-low",
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "id": "old-issued",
+                "name": "mcp_gateway_29a1af58c1382740",
+                "args": {
+                  "argumentsJson": "{\"query\":\"before\"}",
+                  "toolSummary": "Synthetic lookup"
+                }
+              },
+              "thoughtSignature": "genuine-fixture-signature"
+            }
+          ]
+        },
+        "at": 1794812424878
+      }
+    },
+    "currentModel": "gemini-4-hydrogen-low",
+    "currentModelDisplay": "Gemini 4 Hydrogen (Low)",
+    "nextStep": 2,
+    "timeline": [
+      {
+        "fingerprint": "9e7b6e4b0d4cb37b3963d94d90721513902050f27c670c501d2c079332775e4d",
+        "timestamp": "2026-11-16T15:00:24+08:00",
+        "settingFrom": "None",
+        "settingTo": "Gemini 4 Hydrogen (Low)"
+      },
+      {
+        "fingerprint": "e6f0f63a0810642727a3621ae22cd2fe90e80a95c7075f780d8b12ac47fd3e64",
+        "timestamp": "2026-11-16T15:00:24+08:00"
+      }
+    ],
+    "projections": {
+      "b9a212db83c11c27d7a486874e33c0ee93ee267eb95416321909250405a055d7": {
+        "model": "gemini-4-hydrogen-low",
+        "contents": [
+          {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "id": "old-issued",
+                  "name": "mcp_gateway_29a1af58c1382740",
+                  "args": {
+                    "argumentsJson": "{\"query\":\"before\"}",
+                    "toolSummary": "Synthetic lookup"
+                  }
+                },
+                "thoughtSignature": "genuine-fixture-signature"
+              }
+            ]
+          }
+        ],
+        "at": 1794812424879
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ const { FileLease, acquireFileLease, cleanupPendingLeases } = require('./agy-fil
 const { compatibleHistoryModels } = require('./agy-request-profile');
 const { streamErrorContent, isStreamError, validStreamContents, capturedCancellationPair } = require('./agy-stream-recovery');
 const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
+const { clientToolResultSource, createToolReceiptTransform, restoreToolReceipt } = require('./agy-tool-results');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -46,7 +47,7 @@ function historyPrefix(contents) {
 }
 
 function newState(owner, key, now = Date.now()) {
-  return { version: 1, owner, key, cascadeId: crypto.randomUUID(), trajectoryId: crypto.randomUUID(),
+  return { version: 2, owner, key, cascadeId: crypto.randomUUID(), trajectoryId: crypto.randomUUID(),
     requestIndex: 0, at: now, lastExecutionId: '', usedClaude: false, usedNonGemini: false, responses: {} };
 }
 
@@ -58,8 +59,25 @@ function validTimeline(value) {
       && [entry.settingFrom, entry.settingTo].every(text => text === undefined || (typeof text === 'string' && text.length < 1024)));
 }
 
+function validReceiptTransforms(value) {
+  const name = value => typeof value === 'string' && value.length > 0 && value.length <= 4096;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.entries(value).length <= 512
+    && Object.entries(value).every(([key, record]) => HASH.test(key) && record?.version === 1
+      && typeof record.model === 'string' && Number.isFinite(record.at) && HASH.test(record.sourceFingerprint)
+      && Array.isArray(record.transforms) && record.transforms.length > 0
+      && record.transforms.every(item => Number.isSafeInteger(item.index) && item.index >= 0
+        && name(item.id) && name(item.client) && name(item.native) && HASH.test(item.callKey)
+        && ['native', 'mcp'].includes(item.mode) && Array.isArray(item.references)
+        && item.references.every(reference => name(reference.client) && Number.isSafeInteger(reference.count) && reference.count > 0 && Array.isArray(reference.providers)
+          && reference.providers.length > 0 && reference.providers.every(name))));
+}
+
 function validState(value, owner, key) {
-  return value?.version === 1 && value.owner === owner && value.key === key
+  // This fork's .24 v1 states contain genuine same-account issued calls.
+  // Validate the full state and retain exact-prefix/signature ownership checks
+  // while migrating; never discard signed history merely for a format bump.
+  return (value?.version === 2 || value?.version === 1) && value.owner === owner && value.key === key
     && UUID.test(value.cascadeId) && UUID.test(value.trajectoryId)
     && Number.isSafeInteger(value.requestIndex) && value.requestIndex >= 0
     && Number.isFinite(value.at) && (!value.lastExecutionId || UUID.test(value.lastExecutionId))
@@ -71,7 +89,9 @@ function validState(value, owner, key) {
       && (value.pendingCompaction.retainedTimeline === undefined || validTimeline(value.pendingCompaction.retainedTimeline))))
     && (value.projections === undefined || (value.projections && typeof value.projections === 'object' && !Array.isArray(value.projections)
       && Object.entries(value.projections).every(([k, v]) => HASH.test(k) && typeof v?.model === 'string' && Number.isFinite(v.at)
+        && (v.kind === undefined || v.kind === 'client_tools')
         && Array.isArray(v.contents) && v.contents.length <= 3 && v.contents.every(c => c?.role === 'model' && Array.isArray(c.parts)))))
+    && (value.receiptTransforms === undefined || validReceiptTransforms(value.receiptTransforms))
     && ['streamProjections', 'streamRecoveries'].every(group => value[group] === undefined || (value[group]
       && typeof value[group] === 'object' && !Array.isArray(value[group])
       && Object.entries(value[group]).every(([k, v]) => HASH.test(k) && typeof v?.model === 'string'
@@ -90,10 +110,6 @@ function validState(value, owner, key) {
     && value.responses && typeof value.responses === 'object' && !Array.isArray(value.responses);
 }
 
-// Called only after an exact full-prefix cache match. A cached unsigned step
-// must not erase a genuine signature explicitly returned by the client. Match
-// unique call IDs inside that verified projection; never search other sessions
-// or copy a signature to parallel/duplicate/foreign calls.
 function preserveProvidedSignatures(restored, submitted) {
   const source = (submitted.parts || []).filter(p => p.functionCall?.id);
   const targets = restored.flatMap(c => c.parts || []).filter(p => p.functionCall?.id);
@@ -108,14 +124,15 @@ function preserveProvidedSignatures(restored, submitted) {
   return restored;
 }
 
-function restoreHistory(state, contents, model) {
+function restoreHistory(state, contents, model, { verifiedToolSteps } = {}) {
   let prefix = hash('agy-history-v1');
-  return contents.map(content => {
+  return contents.map((content, index) => {
     const key = historyKey(prefix, content);
     prefix = key;
     const entry = state.responses[key];
     if (content.role === 'model' && compatibleHistoryModels(entry?.model, model) && Array.isArray(entry.content?.parts)
         && contentFingerprint(entry.content) === contentFingerprint(content)) {
+      if (entry.content.parts.some(part => part.functionCall)) verifiedToolSteps?.add(index);
       return preserveProvidedSignatures([structuredClone(entry.content)], content)[0];
     }
     return content;
@@ -130,9 +147,9 @@ function recordResponse(state, contents, model, content, now = Date.now()) {
 }
 
 function pruneResponses(state) {
-  // Only server-produced parts are stored, including hidden native image-tool
-  // output; never save submitted user history or arbitrary removed prefixes.
-  const entries = ['responses', 'projections', 'streamProjections', 'streamRecoveries', 'toolStreamErrors'].flatMap(group => Object.entries(state[group] || {})
+  // Store server-produced content and receipt mapping metadata, never submitted
+  // user results/history. All groups share the same bounded private cache.
+  const entries = ['responses', 'projections', 'streamProjections', 'streamRecoveries', 'toolStreamErrors', 'receiptTransforms'].flatMap(group => Object.entries(state[group] || {})
     .map(([key, value]) => ({ group, key, value }))).sort((a, b) => a.value.at - b.value.at);
   let bytes = Buffer.byteLength(JSON.stringify(state));
   while (entries.length > 512 || bytes > MAX_FILE_BYTES - 4096) {
@@ -143,38 +160,74 @@ function pruneResponses(state) {
   }
 }
 
-function restoreClientProjections(state, contents, model, { nativeErrors, pendingRecovery, clientProfile = '', restoreStreamRecovery = true } = {}) {
+function restoreToolReceipts(state, submitted, prefix, model, toolNames, toolAdapter, now) {
+  if (!toolNames.size || !submitted.parts.some(part => part.functionResponse)) return submitted;
+  const key = historyKey(prefix, submitted);
+  // Non-wire metadata distinguishes explicit errors from identical-looking
+  // successful text without changing the established contentFingerprint.
+  const sourceFingerprint = hash(JSON.stringify(canonical({ content: contentFingerprint(submitted),
+    sources: submitted.parts.map(part => part.functionResponse ? clientToolResultSource(part.functionResponse) : null) })));
+  const saved = state.receiptTransforms?.[key];
+  const previous = saved?.version === 1 && compatibleHistoryModels(saved.model, model)
+    && saved.sourceFingerprint === sourceFingerprint ? saved : null;
+  const counts = new Map(), transforms = [];
+  let changed = !previous;
+  for (const part of submitted.parts) if (part.functionResponse) {
+    const id = part.functionResponse.id; counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const parts = submitted.parts.map((part, index) => {
+    const result = part.functionResponse, mapping = result && toolNames.get(result.id);
+    if (!mapping || !result.id || result.name !== mapping.client || counts.get(result.id) !== 1) return part;
+    // A result can only use the exact call projection encountered in this
+    // traversal. A persisted mapping alone cannot authorize foreign history.
+    const stored = previous?.transforms.find(item => item.index === index && item.id === result.id
+      && item.client === mapping.client && item.native === mapping.native && item.callKey === mapping.callKey);
+    if (!stored) changed = true;
+    const transform = stored || { index, id: result.id, ...mapping,
+      ...createToolReceiptTransform(result, mapping.native, toolAdapter) };
+    transforms.push(transform);
+    toolNames.delete(result.id);
+    return { ...part, functionResponse: restoreToolReceipt(result, mapping.native, transform) };
+  });
+  if (transforms.length && changed) {
+    state.receiptTransforms ||= {};
+    state.receiptTransforms[key] = { version: 1, model, sourceFingerprint, transforms, at: now };
+    pruneResponses(state);
+  }
+  return { ...submitted, parts };
+}
+
+function restoreClientProjections(state, contents, model, { nativeErrors, pendingRecovery, clientProfile = '', restoreStreamRecovery = true,
+  toolAdapter, now = Date.now(), verifiedToolSteps } = {}) {
   let prefix = hash('agy-history-v1'), skipUntil = 0, awaitingToolError; const restored = [], toolNames = new Map();
   for (const [index, submitted] of contents.entries()) {
     if (index < skipUntil) continue;
-    const content = { ...submitted, parts: submitted.parts.map(part => {
-      const result = part.functionResponse, mapping = result && toolNames.get(result.id);
-      return mapping && result.name === mapping.client ? { ...part, functionResponse: { ...result, name: mapping.native } } : part;
-    }) };
+    const content = restoreToolReceipts(state, submitted, prefix, model, toolNames, toolAdapter, now);
     const key = historyKey(prefix, content);
     const stream = restoreStreamRecovery && content.role === 'model' ? state.streamProjections?.[key] : null;
     const entry = stream?.model === model ? stream : content.role === 'model' ? state.projections?.[key] : null;
     // Exact issued client-visible content AND full preceding history must
     // match. A copied receipt in another session or an edited prefix cannot
     // resurrect hidden exchanges or trigger broad text-pattern stripping.
-    // Cross-model image/projection exchanges have not been captured yet.
-    const replacement = entry?.model === model ? structuredClone(entry.contents) : [content];
-    if (entry?.model === model) preserveProvidedSignatures(replacement, content);
+    // Only explicitly marked client-tool projections share already verified
+    // history-compatible models. Images, finish and stream projections do not.
+    const matchedProjection = entry?.model === model || entry?.kind === 'client_tools' && compatibleHistoryModels(entry.model, model);
+    const replacement = matchedProjection ? preserveProvidedSignatures(structuredClone(entry.contents), content) : [content];
     for (const part of content.parts) if (part.functionCall) toolNames.delete(part.functionCall.id);
     // Rename receipts only from an exact, previously issued call projection.
     // No global tool-name guessing, foreign-ID repair or rewriting old signed
     // client history when a tool adapter is first enabled mid-conversation.
-    if (entry?.model === model) {
+    if (matchedProjection) {
       const calls = replacement.flatMap(c => c.parts).filter(p => p.functionCall).map(p => p.functionCall);
       for (const p of content.parts) if (p.functionCall) {
         const matches = calls.filter(c => c.id === p.functionCall.id);
-        if (matches.length === 1 && content.parts.filter(q => q.functionCall?.id === p.functionCall.id).length === 1
-          && matches[0].name !== p.functionCall.name)
-          toolNames.set(p.functionCall.id, { client: p.functionCall.name, native: matches[0].name });
+        if (p.functionCall.id && matches.length === 1 && content.parts.filter(q => q.functionCall?.id === p.functionCall.id).length === 1)
+          toolNames.set(p.functionCall.id, { client: p.functionCall.name, native: matches[0].name, callKey: key });
       }
     }
     for (const item of replacement) {
       if (entry === stream && stream?.model === model && isStreamError(item)) nativeErrors?.add(restored.length);
+      if (matchedProjection && item.parts.some(part => part.functionCall)) verifiedToolSteps?.add(restored.length);
       restored.push(item); prefix = historyKey(prefix, item);
       if (awaitingToolError) {
         const results = item.role === 'model' ? item.parts?.filter(p => p.functionResponse).map(p => p.functionResponse) || [] : [];
@@ -204,7 +257,7 @@ function restoreClientProjections(state, contents, model, { nativeErrors, pendin
     // an observed client cancellation is local UI state, not two native turns.
     // Ordinary user text, edited prefixes, unknown clients and timeout/HTTP
     // failures never authorize removing these strings from submitted history.
-    if (clientProfile === CLAUDE_COMPACTION_PROFILE && entry?.model === model
+    if (clientProfile === CLAUDE_COMPACTION_PROFILE && matchedProjection
       && entry.clientCancelled && capturedCancellationPair(contents, index + 1)) skipUntil = index + 3;
     // An interrupted API response may have delivered no assistant message at
     // all. Restore only an actually recorded hidden exchange at its exact
@@ -216,6 +269,7 @@ function restoreClientProjections(state, contents, model, { nativeErrors, pendin
       if (index === contents.length - 1) Object.assign(pendingRecovery, { recovery, inputContents: [...restored] });
       for (const item of recovery.contents) {
         if (isStreamError(item)) nativeErrors?.add(restored.length);
+        if (item.parts.some(part => part.functionCall)) verifiedToolSteps?.add(restored.length);
         restored.push(item); prefix = historyKey(prefix, item);
       }
       if (clientProfile === CLAUDE_COMPACTION_PROFILE && recovery.clientCancelled
@@ -256,10 +310,12 @@ function recordToolStreamError(state, prefix, model, content, retryCount, readyA
   pruneResponses(state);
 }
 
-function recordClientProjection(state, prefix, visible, model, contents, now = Date.now()) {
+function recordClientProjection(state, prefix, visible, model, contents, now = Date.now(), { kind } = {}) {
   if (!contents.length || contents.length > 3 || contents.some(c => c.role !== 'model')) return;
+  if (kind !== undefined && kind !== 'client_tools') throw new TypeError('未知的客户端历史投影类型。');
   state.projections ||= {};
-  state.projections[historyKey(historyPrefix(prefix), visible)] = { model, contents: structuredClone(contents), at: now };
+  state.projections[historyKey(historyPrefix(prefix), visible)] = { model, contents: structuredClone(contents), at: now,
+    ...(kind ? { kind } : {}) };
   pruneResponses(state);
 }
 
@@ -313,7 +369,7 @@ class AgySessionStore {
       const stat = fs.lstatSync(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) throw new Error('会话状态文件无效。');
       const state = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (validState(state, owner, key) && this.now() - state.at < this.ttlMs) return state;
+      if (validState(state, owner, key) && this.now() - state.at < this.ttlMs) { state.version = 2; return state; }
     } catch (error) {
       if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
     }

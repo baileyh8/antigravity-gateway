@@ -1,4 +1,6 @@
 'use strict';
+// Replays archived native wire traces; current default has separate contract tests.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -58,7 +60,7 @@ test('explicit client output and tool constraints remain native fields; catalog 
   assert.equal(request.request.labels.model_enum, 'MODEL_UPDATED');
   assert.deepEqual(request.request.generationConfig, { maxOutputTokens: 2048, temperature: 0.2,
     thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } });
-  assert.deepEqual(request.request.toolConfig, { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['mcp_gateway_c9f8123bd2726fc2'] } });
+  assert.deepEqual(request.request.toolConfig, { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['read_file'] } });
 });
 
 test('native preparation preserves the entire caller system prompt and confines image instructions to its tool', () => {
@@ -66,7 +68,7 @@ test('native preparation preserves the entire caller system prompt and confines 
   assert.equal(prepared.normalized.system, source.system);
   assert.equal(prepared.normalized.tools.length, 1);
   assert.equal(prepared.normalized.tools[0].name, 'generate_image');
-  assert.match(prepared.normalized.tools[0].description, /delivered automatically once/);
+  assert.match(prepared.normalized.tools[0].description, /Generate an image, or edit existing images/);
   const constrained = { ...source, toolChoice: 'none' };
   assert.equal(prepareNativeMultimodal(constrained).normalized, constrained);
 });

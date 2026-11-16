@@ -49,8 +49,9 @@ for (const model of modelIds) for (const protocol of ['responses', 'chat', 'anth
             assert.equal(p.thoughtSignature, i < 3 ? 'genuine-' + (i+1) : marker, `turn ${turn}, call ${i+1}`);
             assert.equal(p.functionCall.id, 'step-' + (i+1));
           }
-          const nativeName = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_')).name;
-          const parts = turn < 5 ? [{ functionCall: { id: 'step-' + turn, name: nativeName, args: { argumentsJson: JSON.stringify({ value: String(turn) }), toolSummary: 'Synthetic step' } },
+          const declaration = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_'));
+          const nativeName = declaration.name;
+          const parts = turn < 5 ? [{ functionCall: { id: 'step-' + turn, name: nativeName, args: declaration.parameters.properties.argumentsJson ? { argumentsJson: JSON.stringify({ value: String(turn) }), toolSummary: 'Synthetic step' } : { value: String(turn), toolSummary: 'Synthetic step' } },
             ...(turn < 4 ? { thoughtSignature: 'genuine-' + turn } : {}) }] : [{ text: 'DONE' }];
           return new Response(JSON.stringify({ candidates: [{ content: { role: 'model', parts } }] }));
         } });
@@ -74,9 +75,10 @@ for (const protocol of ['responses', 'chat', 'anthropic']) test(`${protocol}: va
           assert.equal(call.thoughtSignature, 'explicit-client-signature');
           assert.equal(call.functionCall.id, 'unsigned-step');
         }
-        const name = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_')).name;
+        const declaration = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_'));
+        const name = declaration.name;
         return new Response(JSON.stringify({ candidates: [{ content: { parts: turn ? [{ text: 'DONE' }] : [
-          { functionCall: { id: 'unsigned-step', name, args: { argumentsJson: '{"value":"fixture"}', toolSummary: 'Fixture' } } }] } }] }));
+          { functionCall: { id: 'unsigned-step', name, args: declaration.parameters.properties.argumentsJson ? { argumentsJson: '{"value":"fixture"}', toolSummary: 'Fixture' } : { value: 'fixture', toolSummary: 'Fixture' } } }] } }] }));
       } });
     const result = await provider.send(f.normalize(f.payload), 'gemini-4-hydrogen-xhigh', { sessionId: 'explicit-signed-session' });
     if (!turn) f.append(result, 'explicit-client-signature');else assert.equal(result.text, 'DONE');

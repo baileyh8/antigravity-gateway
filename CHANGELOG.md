@@ -1,6 +1,17 @@
 # Changelog
 
-当前版本 `1.7.1-bailey.24`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+当前版本 `1.7.1-bailey.25`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+
+## 1.7.1-bailey.25 - 2026-11-16
+
+- 对照官方 CLI 1.5.9 / cl1021519450 的 Mac/Linux 隔离直连抓包更新传输：模型 HTTP/1.1、OAuth HTTP/2，按模型保留实测思考参数；不将别名回落或未完成捕获算作成功。
+- 感谢 LeeFeee v2.0.5：移植直接字段/完整 JSON 双视图、namespace/custom 工具、严格回执与参数校验，保留客户端执行、权限与并行约束。
+- Schema 使用有界 worker，默认 1 个，队列 32 项 / 8 MiB，空闲 30 秒释放；转换错误不冷却账号、不跨账号重试。
+- 保留独立后台、Chat Completions、账号调度和固定出口、额度/并发策略、Hydrogen 最终出站签名补验和账号文件归属修复；支持 `.24` 已签名/无签名持久化缓存迁移。
+- 修复 Responses SSE 初始工具参数重复、截断/过滤被误报完成，禁止执行未完整结束的内部生图调用；保留流式回压、缓存/推理用量和上下文溢出语义。
+- 保留用户 system/SOUL/项目规则，只处理精确框架证据，工具旁白默认关闭。协议对照不等于所有客户端完成实网验收，也不是账号风控保证。
+
+English: Align the captured CLI 1.5.9 transport and model settings; selectively port LeeFeee 2.0.5 reversible tool contracts and bounded worker validation. Preserve this fork's admin, scheduling, quotas, proxies and Hydrogen signature/ownership fixes, including `.24` persisted-cache migration. Correct stream argument/termination semantics and keep conversion failures separate from account health. Capture, CI, live inference and deployment remain separate acceptance gates.
 
 ## 1.7.1-bailey.24 - 2026-11-13
 

@@ -1,6 +1,6 @@
 {
   "name": "antigravity-gateway",
-  "version": "1.7.1-bailey.24",
+  "version": "1.7.1-bailey.25",
   "description": "Bailey-maintained Anthropic/OpenAI-compatible gateway with managed accounts, per-account proxies, multimodal APIs and bounded concurrency.",
   "license": "MIT",
   "type": "commonjs",
@@ -15,19 +15,22 @@
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "native/",
-    "docs/agy-1.5.7-compatibility.md"
+    "docs/agy-1.5.7-compatibility.md",
+    "docs/agy-1.5.9-compatibility.md"
   ],
   "bin": {
     "antigravity-gateway": "antigravity-gateway.js"
   },
   "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "undici": "^6.29.1",
     "ws": "8.22.0"
   },
   "scripts": {
     "start": "node antigravity-gateway.js",
     "postinstall": "node scripts/check-environment.js",
-    "check": "node --check antigravity-gateway.js && node --check src/account-format.js && node --check src/account-labels.js && node --check src/account-pool.js && node --check src/account-scheduling.js && node --check src/account-storage-permissions.js && node --check src/account-store.js && node --check src/admin-api.js && node --check src/admin-oauth.js && node --check src/admission-control.js && node --check src/agy-157-tool-contract.js && node --check src/agy-client-compaction.js && node --check src/agy-client-profile.js && node --check src/agy-context-state.js && node --check src/agy-dsh-profile.js && node --check src/agy-file-lease.js && node --check src/agy-hermes-profile.js && node --check src/agy-image-references.js && node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-retry-policy.js && node --check src/agy-session-state.js && node --check src/agy-stream-recovery.js && node --check src/agy-structured-output.js && node --check src/agy-tool-adapter.js && node --check src/agy-tool-mapping.js && node --check src/agy-tool-results.js && node --check src/agy-tool-semantics.js && node --check src/agy-worker.js && node --check src/antigravity-model-config.js && node --check src/artifacts.js && node --check src/diagnostic-log.js && node --check src/direct-provider.js && node --check src/gemini-account-store.js && node --check src/graceful-shutdown.js && node --check src/key-context.js && node --check src/key-store.js && node --check src/local-account-importer.js && node --check src/local-agy-auth.js && node --check src/log-reader.js && node --check src/managed-account-auth.js && node --check src/model-settings.js && node --check src/model-visibility.js && node --check src/multimedia.js && node --check src/oauth-flow.js && node --check src/protocol.js && node --check src/provider-router.js && node --check src/proxy-manager.js && node --check src/quota-manager.js && node --check src/request-log.js && node --check src/resource-budget.js && node --check src/service-manager.js && node --check src/service-runner.js && node --check src/session-affinity.js && node --check src/session-manager.js && node --check src/sse-writer.js && node --check src/terminal-console.js && node --check src/tool-history.js && node --check src/usage-store.js",
+    "check": "node --check antigravity-gateway.js && node --check src/account-format.js && node --check src/account-labels.js && node --check src/account-pool.js && node --check src/account-scheduling.js && node --check src/account-storage-permissions.js && node --check src/account-store.js && node --check src/admin-api.js && node --check src/admin-oauth.js && node --check src/admission-control.js && node --check src/agy-157-tool-contract.js && node --check src/agy-client-compaction.js && node --check src/agy-client-profile.js && node --check src/agy-context-state.js && node --check src/agy-dsh-profile.js && node --check src/agy-file-lease.js && node --check src/agy-hermes-profile.js && node --check src/agy-image-references.js && node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-retry-policy.js && node --check src/agy-session-state.js && node --check src/agy-stream-recovery.js && node --check src/agy-structured-output.js && node --check src/agy-tool-adapter.js && node --check src/agy-tool-mapping.js && node --check src/agy-tool-results.js && node --check src/agy-tool-semantics.js && node --check src/agy-worker.js && node --check src/antigravity-model-config.js && node --check src/artifacts.js && node --check src/diagnostic-log.js && node --check src/direct-provider.js && node --check src/gemini-account-store.js && node --check src/graceful-shutdown.js && node --check src/key-context.js && node --check src/key-store.js && node --check src/local-account-importer.js && node --check src/local-agy-auth.js && node --check src/log-reader.js && node --check src/managed-account-auth.js && node --check src/model-settings.js && node --check src/model-visibility.js && node --check src/multimedia.js && node --check src/oauth-flow.js && node --check src/protocol.js && node --check src/provider-router.js && node --check src/proxy-manager.js && node --check src/quota-manager.js && node --check src/request-log.js && node --check src/resource-budget.js && node --check src/service-manager.js && node --check src/service-runner.js && node --check src/session-affinity.js && node --check src/session-manager.js && node --check src/sse-writer.js && node --check src/terminal-console.js && node --check src/tool-history.js && node --check src/usage-store.js && node -e \"for (const f of require('node:fs').readdirSync('src').filter(f=>f.endsWith('.js'))) require('node:child_process').execFileSync(process.execPath,['--check','src/'+f])\"",
     "test": "node --test tests/*.test.js",
     "build:native": "node scripts/build-native-transport.js",
     "check:native": "node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-session-state.js && node --check src/agy-file-lease.js && node --check src/agy-context-state.js && node --check src/agy-image-references.js && node --check src/agy-tool-results.js && node --check src/agy-structured-output.js && node --check scripts/build-native-transport.js && node --check src/agy-157-tool-contract.js && node --check src/antigravity-model-config.js && node --check src/account-storage-permissions.js",

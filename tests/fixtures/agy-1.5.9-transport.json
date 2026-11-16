@@ -1,0 +1,238 @@
+{
+  "officialVersion": "1.5.9",
+  "cases": [
+    {
+      "platform": "darwin-arm64",
+      "scenario": "tls13-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "darwin-arm64",
+      "scenario": "tls12-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "darwin-arm64",
+      "scenario": "hrr-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8",
+            "6908e0fae946dcea0d518b3b684b968ae372bce1b5163c4db8e181af237d5118"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8",
+            "6908e0fae946dcea0d518b3b684b968ae372bce1b5163c4db8e181af237d5118"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "darwin-arm64",
+      "scenario": "tls13-h1-close",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "darwin-arm64",
+      "scenario": "oauth-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "darwin-arm64",
+      "scenario": "oauth-h2",
+      "target": "oauth2.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "626e17115883d922b120d4ebe92a3d0741a5cce73fae26df2fc582340ae427d3"
+          ],
+          [
+            "c1434c625b9218bd3f88a1b50461dd0779009c5a9e714daeee3320fc9804256c"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "626e17115883d922b120d4ebe92a3d0741a5cce73fae26df2fc582340ae427d3"
+          ],
+          [
+            "c1434c625b9218bd3f88a1b50461dd0779009c5a9e714daeee3320fc9804256c"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "tls13-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "tls12-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "hrr-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8",
+            "6908e0fae946dcea0d518b3b684b968ae372bce1b5163c4db8e181af237d5118"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8",
+            "6908e0fae946dcea0d518b3b684b968ae372bce1b5163c4db8e181af237d5118"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "tls13-h1-close",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "oauth-h2",
+      "target": "daily-cloudcode-pa.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "190297ff15aee881c6ce5f4364dc899d8b06f49f4cf6e706704a732510ba98e8"
+          ]
+        ]
+      }
+    },
+    {
+      "platform": "linux-x64",
+      "scenario": "oauth-h2",
+      "target": "oauth2.googleapis.com:443",
+      "match": true,
+      "helloSignatures": {
+        "official": [
+          [
+            "626e17115883d922b120d4ebe92a3d0741a5cce73fae26df2fc582340ae427d3"
+          ],
+          [
+            "c1434c625b9218bd3f88a1b50461dd0779009c5a9e714daeee3320fc9804256c"
+          ]
+        ],
+        "rebuilt": [
+          [
+            "626e17115883d922b120d4ebe92a3d0741a5cce73fae26df2fc582340ae427d3"
+          ],
+          [
+            "c1434c625b9218bd3f88a1b50461dd0779009c5a9e714daeee3320fc9804256c"
+          ]
+        ]
+      }
+    }
+  ],
+  "scope": "Mac arm64 and Linux x64 isolated synthetic endpoints. Only random/session/keyshare/PSK bytes normalized. Not source-build equivalence or production acceptance."
+}

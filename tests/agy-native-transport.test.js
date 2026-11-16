@@ -150,7 +150,7 @@ test('native executable cache is verified before execution', async t => {
 });
 
 test('native TLS matches captured agy extensions, including signature algorithms beyond JA3', async t => {
-  const expected = require('./fixtures/agy-1.5.7-tls.json');
+  const expected = require('./fixtures/agy-1.5.9-tls.json');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-native-hello-'));
   const binary = resolveNativeBinary({ cacheDir: directory });
   const sockets = new Set();

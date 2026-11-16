@@ -1,4 +1,4 @@
-// Native Cloud Code transport. Credentials travel only over inherited pipes;
+// Native Antigravity and OAuth transport. Credentials travel only over inherited pipes;
 // the helper has no listening socket and never logs request headers or bodies.
 package main
 
@@ -26,12 +26,12 @@ import (
 const protocolVersion = 1
 const maxCommandBytes = 256 << 20
 
-func capturedMetadataPath(path string) bool {
+func capturedFixedLengthPath(path string) bool {
 	switch path {
 	case "/v1internal:fetchAvailableModels", "/v1internal:retrieveUserQuotaSummary",
 		"/v1internal:loadCodeAssist", "/v1internal:fetchUserInfo",
-		"/v1internal:fetchAdminControls", "/v1internal:listExperiments",
-		"/v1internal:generateContent", "/v1internal:onboardUser", "/v1internal:getCodeAssistGlobalUserSetting", "/token":
+		"/v1internal:fetchAdminControls", "/v1internal:listExperiments", "/v1internal:onboardUser",
+		"/v1internal:generateContent", "/v1internal:getCodeAssistGlobalUserSetting", "/token":
 		return true
 	default:
 		return false
@@ -45,6 +45,7 @@ type command struct {
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body"`
+	Profile string            `json:"profile,omitempty"`
 }
 
 type event struct {
@@ -66,12 +67,13 @@ type activeRequest struct {
 }
 
 type bridge struct {
-	client *http.Client
-	writer io.Writer
-	output sync.Mutex
-	mu     sync.Mutex
-	active map[string]*activeRequest
-	wg     sync.WaitGroup
+	client      *http.Client
+	oauthClient *http.Client
+	writer      io.Writer
+	output      sync.Mutex
+	mu          sync.Mutex
+	active      map[string]*activeRequest
+	wg          sync.WaitGroup
 }
 
 func certificatePool() (*x509.CertPool, error) {
@@ -98,23 +100,31 @@ func certificatePool() (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func newClient() (*http.Client, error) {
+func newClient() (*http.Client, error) { return newClientForProfile(false) }
+
+func newOAuthClient() (*http.Client, error) { return newClientForProfile(true) }
+
+func newClientForProfile(oauth bool) (*http.Client, error) {
 	roots, err := certificatePool()
 	if err != nil {
 		return nil, err
 	}
-	// Official agy 1.5.7 negotiates h2 with HTTP/1.1 fallback.
-	// Use the same Go TLS defaults; retain certificate validation and account proxy.
+	// agy 1.5.9 model RPCs advertise only HTTP/1.1. The separate OAuth
+	// transport continues to negotiate HTTP/2.
+	tlsConfig := &tls.Config{RootCAs: roots}
+	if !oauth {
+		tlsConfig.NextProtos = []string{"http/1.1"}
+	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSClientConfig:       &tls.Config{RootCAs: roots},
+		TLSClientConfig:       tlsConfig,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 300 * time.Second,
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   8,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     oauth,
 	}
 	return &http.Client{
 		Transport: transport,
@@ -138,6 +148,10 @@ func (b *bridge) finish(id string) {
 }
 
 func (b *bridge) start(c command) {
+	if c.Profile != "" && c.Profile != "antigravity" && c.Profile != "oauth" {
+		b.emit(event{Type: "error", ID: c.ID, Code: "invalid_profile", Error: "unknown native transport profile"})
+		return
+	}
 	parsed, err := url.Parse(c.URL)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil ||
 		(parsed.Scheme != "https" && parsed.Scheme != "http") {
@@ -167,14 +181,11 @@ func (b *bridge) start(c command) {
 		var body io.Reader
 		if c.Body != "" {
 			reader := bytes.NewReader([]byte(c.Body))
-			if method == http.MethodPost && capturedMetadataPath(parsed.Path) {
-				// Raw agy captures distinguish metadata RPCs (Content-Length)
-				// from generation (one HTTP data chunk). A known-length Reader
-				// lets net/http emit the captured header order and byte length.
+			if c.Profile == "oauth" || (method == http.MethodPost && capturedFixedLengthPath(parsed.Path)) {
+				// Metadata, OAuth and synchronous generation send a known byte length.
 				body = reader
 			} else {
-				// Preserve the observed generation framing and the existing
-				// fallback for paths whose native wire shape is still unknown.
+				// Streaming RPCs use chunked request framing over HTTP/1.1.
 				body = io.NopCloser(reader)
 			}
 		}
@@ -186,7 +197,11 @@ func (b *bridge) start(c command) {
 		for key, value := range c.Headers {
 			req.Header.Set(key, value)
 		}
-		resp, err := b.client.Do(req)
+		client := b.client
+		if c.Profile == "oauth" {
+			client = b.oauthClient
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			code, message := "upstream_network_error", "native upstream connection failed"
 			if errors.Is(err, context.Canceled) {
@@ -249,8 +264,12 @@ func (b *bridge) control(c command) {
 	}
 }
 
-func run(input io.Reader, output io.Writer, client *http.Client) error {
-	b := &bridge{client: client, writer: output, active: make(map[string]*activeRequest)}
+func run(input io.Reader, output io.Writer, client *http.Client, oauthClients ...*http.Client) error {
+	oauthClient := client
+	if len(oauthClients) > 0 && oauthClients[0] != nil {
+		oauthClient = oauthClients[0]
+	}
+	b := &bridge{client: client, oauthClient: oauthClient, writer: output, active: make(map[string]*activeRequest)}
 	defer func() {
 		b.mu.Lock()
 		for _, a := range b.active {
@@ -259,6 +278,9 @@ func run(input io.Reader, output io.Writer, client *http.Client) error {
 		b.mu.Unlock()
 		b.wg.Wait()
 		client.CloseIdleConnections()
+		if oauthClient != client {
+			oauthClient.CloseIdleConnections()
+		}
 	}()
 	b.emit(event{Type: "ready", Protocol: protocolVersion, GoVersion: runtime.Version()})
 	scanner := bufio.NewScanner(input)
@@ -287,7 +309,11 @@ func main() {
 	}
 	client, err := newClient()
 	if err == nil {
-		err = run(os.Stdin, os.Stdout, client)
+		var oauthClient *http.Client
+		oauthClient, err = newOAuthClient()
+		if err == nil {
+			err = run(os.Stdin, os.Stdout, client, oauthClient)
+		}
 	}
 	if err != nil {
 		// Error strings above are deliberately static: no URL query, headers,
