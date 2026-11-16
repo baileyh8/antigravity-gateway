@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+const { clientError } = require('./src/client-error');
+
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -814,10 +816,9 @@ function parseMultipart(buffer, contentType) {
 }
 
 function errorBody(error, protocol) {
-  const message = error.message || 'Gateway error';
-  const code = error.code || 'gateway_error';
-  if (protocol === 'anthropic') return { type: 'error', error: { type: code, message } };
-  return { error: { message, type: code, code } };
+  const detail = clientError(error);
+  if (protocol === 'anthropic') return { type: 'error', error: detail };
+  return { error: detail };
 }
 
 function mapAgyError(error) {
@@ -1383,7 +1384,7 @@ function createResponsesTextEmitter(res, model, responseId) {
         content: [{ type: 'output_text', text: state.text, annotations: [] }] });
     emit({ type: 'response.failed', response: {
       id: responseId, object: 'response', created_at: createdAt, model, status: 'failed', output,
-      error: { code: error.code || 'server_error', message: error.message || 'Gateway error' },
+      error: clientError(error),
       incomplete_details: null, usage: null
     } });
     endStream(res);

@@ -1,9 +1,10 @@
 'use strict';
 
-// Google Antigravity API protocol: official 1.5.7 synthetic captures, 2026-11-13.
+// Google Antigravity API protocol: official 1.5.7 and 1.5.9 synthetic captures, 2026-11-13.
 // These are exact discovered IDs, not inferred combinations of model suffixes.
 const CAPTURED_MODELS = Object.freeze({
   ...require('./data/agy-1.5.7-models.json'),
+  ...require('./data/agy-1.5.9-models.json'),
   'gemini-3.8-flash-high': Object.freeze({ model: 'MODEL_PLACEHOLDER_M318',
     displayName: 'Gemini 3.8 Flash (High)', maxOutputTokens: 65536, supportsThinking: true, thinkingLevel: 'HIGH' }),
   'gemini-3.8-flash-medium': Object.freeze({ model: 'MODEL_PLACEHOLDER_M319',

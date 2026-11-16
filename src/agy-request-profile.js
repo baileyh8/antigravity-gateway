@@ -1,9 +1,9 @@
 'use strict';
 
-// Observed agy 1.5.7 agent requests, captured with synthetic loopback-only fixtures.
+// Observed agy 1.5.9 agent requests, captured with synthetic loopback-only fixtures.
 // The live account catalog takes precedence over this captured offline default.
-const AGY_CLI_VERSION = '1.5.7';
-const AGY_BUILD = '1019769835';
+const AGY_CLI_VERSION = '1.5.9';
+const AGY_BUILD = '1021519450';
 function cliUserAgent({ platform = process.platform, arch = process.arch, authMethod = 'consumer' } = {}) {
   const version = process.env.ANTIGRAVITY_CLI_VERSION || AGY_CLI_VERSION;
   const build = process.env.ANTIGRAVITY_CLI_CHANGELIST || AGY_BUILD;

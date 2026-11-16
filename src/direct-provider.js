@@ -7,6 +7,7 @@ const path = require('node:path');
 const { errorDetails } = require('./diagnostic-log');
 const { LocalAgyAuthProvider, LocalAgyAuthError, discoverClientCredentials } = require('./local-agy-auth');
 const { toolNarrationInstruction, readThoughtSignature } = require('./protocol');
+const { sanitizeClientIdentity } = require('./client-identity');
 const { nativeCloudCodeFetch } = require('./agy-native-transport');
 const { AgySessionStore, newState, contentFingerprint, restoreClientProjections, recordClientProjection,
   recordStreamProjection, recordStreamRecovery, clearStreamRecovery, recordToolStreamError } = require('./agy-session-state');
@@ -423,6 +424,9 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
 }
 
 function buildDirectRequest(normalized, model, projectId, sessionId, repairInstruction = '', thoughtSignatures = null, native = {}) {
+  const identity = sanitizeClientIdentity(normalized, { clientProfile: native.identityClientProfile || native.clientProfile || '' });
+  native.clientIdentity = identity.metadata.profile;
+  normalized = identity.normalized;
   native.toolAdapter = prepareToolAdapter(normalized, native);
   if (!native.checkpoint && process.env.ANTIGRAVITY_TOOL_CONTRACT !== 'legacy') native.toolAdapter = prepare157ToolContract(normalized, native.toolAdapter);
   normalized = native.toolAdapter.normalized;

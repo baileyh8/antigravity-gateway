@@ -71,6 +71,15 @@ function abortError(signal) {
   return signal?.reason instanceof Error ? signal.reason : new DOMException('The request was aborted.', 'AbortError');
 }
 
+function nativeRequestProfile(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) return null;
+  if (/^(daily-)?cloudcode-pa\.googleapis\.com$/.test(parsed.hostname)) return 'antigravity';
+  if ((parsed.hostname === 'oauth2.googleapis.com' && parsed.pathname === '/token')
+      || (parsed.hostname === 'www.googleapis.com' && parsed.pathname === '/oauth2/v2/userinfo')) return 'oauth';
+  return null;
+}
+
 class AgyNativeTransport {
   constructor({ binaryPath, env = process.env, spawnImpl = spawn, binaryResolver = resolveNativeBinary,
     startupTimeoutMs = 10000 } = {}) {
@@ -228,7 +237,7 @@ class AgyNativeTransport {
       this.reference(true);
       signal?.addEventListener('abort', state.abort, { once: true });
       if (signal?.aborted) { state.abort(); return; }
-      if (!this.write({ type: 'request', id, url: String(url), method: state.method, headers, body: data })) {
+      if (!this.write({ type: 'request', id, url: String(url), method: state.method, headers, body: data, profile: nativeRequestProfile(url) === 'oauth' ? 'oauth' : 'antigravity' })) {
         this.fail(id, new NativeTransportError('原生传输不可用。', 'native_transport_exited'));
       }
     });
@@ -281,4 +290,4 @@ function closeNativeTransport() {
   proxyTransports.clear();
 }
 
-module.exports = { AgyNativeTransport, NativeTransportError, nativeCloudCodeFetch, resolveNativeBinary, closeNativeTransport, closeNativeProxy };
+module.exports = { AgyNativeTransport, NativeTransportError, nativeCloudCodeFetch, nativeRequestProfile, resolveNativeBinary, closeNativeTransport, closeNativeProxy };
