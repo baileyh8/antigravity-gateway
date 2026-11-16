@@ -23,7 +23,7 @@ const { prepareStructuredOutput, prepareStructuredOutputAsync, finishResultAsync
 const { nativeClientToolResponse, attachClientToolResult } = require('./agy-tool-results');
 const { runSync, runAsync } = require('./schema-steps');
 const { prepareAntigravityTools, prepareAntigravityToolsAsync } = require('./antigravity-tool-contract');
-const { prepareLegacyToolContract } = require('./legacy-tool-contract');
+const { prepareLegacyToolContract, prepareLegacyToolContractAsync } = require('./legacy-tool-contract');
 const { nativeSchema } = require('./agy-request-profile');
 const { cleanToolSchema } = require('./legacy-tool-schema');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
@@ -313,7 +313,7 @@ function contentsFromNormalized(normalized, thoughtSignatures = null, model = ''
 }
 
 function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repairInstruction = '', thoughtSignatures = null, native = {}, effects = {}) {
-  const prepareTools = process.env.ANTIGRAVITY_TOOL_CONTRACT === 'legacy' ? prepareLegacyToolContract : effects.prepareTools || prepareAntigravityTools;
+  const prepareTools = process.env.ANTIGRAVITY_TOOL_CONTRACT === 'legacy' ? effects.prepareLegacyTools || prepareLegacyToolContract : effects.prepareTools || prepareAntigravityTools;
   const prepareStructured = effects.prepareStructured || prepareStructuredOutput;
   const prepareContext = effects.prepareContext || prepareNativeContext;
   validateToolChoice(normalized.tools, normalized.toolChoice);
@@ -379,7 +379,7 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
 const buildDirectRequest = (...args) => runSync(buildDirectRequestSteps(...args));
 const buildDirectRequestAsync = (normalized, model, projectId, sessionId, repair = '', signatures = null, native = {}) =>
   runAsync(buildDirectRequestSteps(normalized, model, projectId, sessionId, repair, signatures, native, {
-    prepareTools: prepareAntigravityToolsAsync, prepareStructured: prepareStructuredOutputAsync,
+    prepareTools: prepareAntigravityToolsAsync, prepareLegacyTools: prepareLegacyToolContractAsync, prepareStructured: prepareStructuredOutputAsync,
     prepareContext: prepareNativeContextAsync
   }));
 

@@ -38,7 +38,7 @@ function prepareStructuredOutput(normalized, { checkpoint = false } = {}) {
   } };
 }
 
-function finishResult(schema, calls) {
+function finishResult(schema, calls, normalize = normalizeStructured) {
   if (!schema || !calls.some(call => call.name === 'finish')) return null;
   if (calls.length !== 1) throw new GatewayError('结构化完成工具不能与其他工具混合调用。', { code: 'invalid_structured_output', status: 502 });
   const call = calls[0];
@@ -48,7 +48,7 @@ function finishResult(schema, calls) {
     throw new GatewayError('结构化完成工具未返回 JSON 对象。', { code: 'invalid_structured_output', status: 502 });
   }
   const { toolAction, toolSummary, ...value } = args;
-  return { call, text: normalizeStructured(JSON.stringify(value), schema) };
+  return { call, text: normalize(JSON.stringify(value), schema) };
 }
 
 function finishResponse(call, now = Date.now()) {
