@@ -101,8 +101,11 @@ class SchemaWorkerPool {
     return slot;
   }
   park(slot) {
+    // A retiring worker still owns capacity until its exit promise settles.
+    // Unref only a genuinely idle live worker, never an in-flight retirement.
+    if (slot.retired || slot.job) return;
     slot.worker.unref();
-    if (slot.idleTimer || slot.retired || slot.job) return;
+    if (slot.idleTimer) return;
     slot.idleTimer = setTimeout(() => {
       slot.idleTimer = null;
       if (!slot.job && !slot.retired) this.retire(slot, failure('Idle schema worker retired.', 'schema_worker_idle'));
@@ -112,6 +115,7 @@ class SchemaWorkerPool {
   retire(slot, error) {
     if (slot.retired) return;
     slot.retired = true; clearTimeout(slot.startupTimer); clearTimeout(slot.idleTimer);
+    slot.worker.ref();
     if (slot.job) { this.settle(slot.job, error); slot.job = null; }
     // terminate actually interrupts runaway RegExp/compilation, not merely its
     // waiting promise. A replacement is created only if another job needs it.
