@@ -48,9 +48,10 @@ test('runaway worker is terminated while a different schema request completes, t
 });
 
 test('cancellation, bounded queue, argument size and close release work without leaving runaway threads', async t => {
-  const pool = new SchemaWorkerPool({ workers: 1, queue: 1, validateMs: 1000, queueMs: 80 }); t.after(() => pool.close());
+  const pool = new SchemaWorkerPool({ workers: 1, queue: 1, validateMs: 1000, queueMs: 2000 }); t.after(() => pool.close());
   const controller = new AbortController();
   const bad = await compileSchemaAsync(patternSchema, { pool, signal: controller.signal });
+  pool.limits.queueMs = 80; // Measure the waiting queue after worker startup.
   const running = assert.rejects(bad(bomb), { name: 'AbortError' });
   const queued = pool.execute('compile', '{}');
   const waiting = assert.rejects(queued, { code: 'schema_capacity_exceeded' });
@@ -59,6 +60,7 @@ test('cancellation, bounded queue, argument size and close release work without 
   controller.abort(); await running;
   assert.equal(pool.queue.length, 0);
   assert.equal(pool.queuedBytes, 0);
+  pool.limits.queueMs = 2000; // A replacement worker has its own cold startup.
   const good = await compileSchemaAsync({ type: 'string' }, { pool });
   await assert.rejects(good('x'.repeat(MAX_VALUE_BYTES)), { code: 'invalid_tool_schema' });
   assert.equal(await good('still works'), true);
