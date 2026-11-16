@@ -146,7 +146,7 @@ function supported(tool, rule) {
 }
 
 function systemText(text, target) {
-  return String(text || '').replace(/^You are an AI coding agent operating behind a protocol-compatible client\.[ \t]*$/gm,
+  return String(text || '').replace(/^(?:You are an AI coding agent operating behind a protocol-compatible client\.|You are a Claude agent, built on Anthropic's Claude Agent SDK\.)[ \t]*$/gm,
     target === 'robin' ? '' : 'You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.');
   // System text also contains user/project instructions and literal examples.
   // A generic replacement of `Read` would change those instructions. Only

@@ -34,7 +34,7 @@ test('the three protocols preserve reasoning effort without leaking it into Clou
   }
 });
 
-test('Claude Code provider identity marker is neutralized without dropping system instructions', () => {
+test('normalization retains unverified identity text for evidence-based provider sanitization', () => {
   const normalized = normalizeAnthropic({
     system: [
       { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.276.132; cc_entrypoint=sdk-cli;' },
@@ -43,19 +43,19 @@ test('Claude Code provider identity marker is neutralized without dropping syste
     ],
     messages: [{ role: 'user', content: 'hello' }]
   });
-  assert.doesNotMatch(normalized.system, /x-anthropic-billing-header/i);
-  assert.doesNotMatch(normalized.system, /cc_version=2\.1\.276/);
-  assert.doesNotMatch(normalized.system, /Anthropic's Claude Agent SDK/);
-  assert.match(normalized.system, /AI coding agent operating behind a protocol-compatible client/);
+  assert.match(normalized.system, /x-anthropic-billing-header/i);
+  assert.match(normalized.system, /cc_version=2\.1\.276/);
+  assert.match(normalized.system, /Anthropic's Claude Agent SDK/);
+  assert.doesNotMatch(normalized.system, /AI coding agent operating behind a protocol-compatible client/);
   assert.match(normalized.system, /Keep all project and permission instructions/);
 });
 
-test('Claude Code billing metadata is removed without changing adjacent system text', () => {
+test('an arbitrary billing-looking line inside user instructions is preserved', () => {
   const normalized = normalizeAnthropic({
     system: 'Before\nx-anthropic-billing-header: cc_version=2.1.276.132; cc_entrypoint=sdk-cli;\nAfter',
     messages: [{ role: 'user', content: 'hello' }]
   });
-  assert.equal(normalized.system, 'Before\nAfter');
+  assert.equal(normalized.system, 'Before\nx-anthropic-billing-header: cc_version=2.1.276.132; cc_entrypoint=sdk-cli;\nAfter');
 });
 
 test('Claude Code system-role environment messages remain instructions, not extra user turns', () => {
@@ -222,7 +222,7 @@ test('tool_choice none and required are enforced', () => {
 });
 
 test('Responses previous transcript is prepended without mutating it', () => {
-  const previous = { system: 'S', messages: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'answer' }] };
+  const previous = { system: 'S', instructionMessages: [], messages: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'answer' }] };
   const normalized = normalizeResponses({ model: 'm', input: 'second' }, previous);
   assert.deepEqual(normalized.messages.map((item) => item.text), ['first', 'answer', 'second']);
   assert.equal(previous.messages.length, 2);

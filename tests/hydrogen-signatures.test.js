@@ -107,8 +107,9 @@ test('Hydrogen tool projection restores genuine signed parts after restart, whil
       localAuth: { isConfigured: () => false, load: () => ({ sourcePath: 'managed-account:' + account }) },
       fetchImpl: async (_url, options) => {
         const body = JSON.parse(options.body);seen.push(body);
-        const name = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_')).name;
-        const parts = replyCall ? [{ functionCall: { id: 'fixture-call', name, args: { argumentsJson: JSON.stringify(args), toolSummary: 'Fixture' } }, thoughtSignature: signature }] : [{ text: 'DONE' }];
+        const declaration = body.request.tools.flatMap(t => t.functionDeclarations).find(t => t.name.startsWith('mcp_gateway_'));
+        const name = declaration.name;
+        const parts = replyCall ? [{ functionCall: { id: 'fixture-call', name, args: declaration.parameters.properties.argumentsJson ? { argumentsJson: JSON.stringify(args), toolSummary: 'Fixture' } : { ...args, toolSummary: 'Fixture' } }, thoughtSignature: signature }] : [{ text: 'DONE' }];
         return new Response(JSON.stringify({ candidates: [{ content: { parts } }] }));
       } });
     return provider.send(normalizeResponses(payload), models[3], { sessionId: 'fixture-session' });

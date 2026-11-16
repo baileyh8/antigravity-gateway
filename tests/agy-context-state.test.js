@@ -1,4 +1,6 @@
 'use strict';
+// Replays archived native wire traces; current default has separate contract tests.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 const assert = require('node:assert/strict'), test = require('node:test'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { newState, contentFingerprint, AgySessionStore } = require('../src/agy-session-state');
 const { prepareNativeContext, completeNativeContext } = require('../src/agy-context-state');

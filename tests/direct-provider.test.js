@@ -56,7 +56,7 @@ test('direct request follows Antigravity Claude tool mode and strips unsupported
       required: ['command']
     } }]
   }, 'claude-sonnet-5', 'project-1', '-123');
-  assert.equal(request.request.toolConfig.functionCallingConfig.mode, 'VALIDATED');
+  assert.equal(request.request.toolConfig, undefined);
   assert.deepEqual(request.request.generationConfig, { maxOutputTokens: 42 });
   assert.equal(request.request.tools[0].functionDeclarations[0].parameters.title, undefined);
   assert.equal(request.request.tools[0].functionDeclarations[0].parameters.properties.command.format, undefined);
@@ -195,14 +195,8 @@ test('direct request maps tool results to the original function name and ID', ()
   assert.equal(request.request.contents[2].role, 'model');
 });
 
-test('direct request keeps an orphaned tool result as text instead of inventing a function name', () => {
-  const request = buildDirectRequest({
-    ...normalized(),
-    messages: [{ role: 'user', text: '[CLIENT_TOOL_RESULT id=orphan]\nold output' }],
-    tools: [{ name: 'shell', description: 'run', schema: { type: 'object' } }]
-  }, 'gemini-test-high', 'project-1', '-123');
-  assert.equal(request.request.contents[0].parts[0].functionResponse, undefined);
-  assert.match(request.request.contents[0].parts[0].text, /^<USER_REQUEST>\nold output\n<\/USER_REQUEST>/);
+test('an orphaned tool result is rejected before any upstream call', () => {
+  assert.throws(() => buildDirectRequest({ ...normalized(), messages: [{ role: 'tool', parts: [{ type: 'tool_result', id: 'orphan', content: 'result' }] }] }, 'gemini-test-high', 'p', 's'), { code: 'invalid_tool_history', status: 400 });
 });
 
 test('direct request restores the Cloud Code thought signature for a prior tool call', () => {
@@ -473,7 +467,7 @@ test('concurrent local refreshes share one exchange and caller cancellation stay
   assert.equal(count, 1);
 });
 
-test('direct provider model-discovery fallback uses the current default family', async () => {
+test('failed live discovery does not invent account model permissions', async () => {
   const provider = new DirectAntigravityProvider({
     localAuth: null,
     accessToken: 'token',
@@ -482,7 +476,7 @@ test('direct provider model-discovery fallback uses the current default family',
     models: [],
     fetchImpl: async () => new Response('temporarily unavailable', { status: 503 })
   });
-  assert.deepEqual(await provider.listModels(), ['gemini-3.8-flash-high']);
+  await assert.rejects(provider.listModels(), { code: 'direct_model_discovery_failed', status: 503 });
 });
 
 test('direct provider returns native function calls without a gateway envelope', async () => {

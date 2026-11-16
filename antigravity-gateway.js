@@ -47,11 +47,11 @@ const {
   anthropicResponse,
   buildPrompt,
   chatResponse,
-  finalizeModelResult,
+  finalizeModelResult, finalizeModelResultAsync, normalizeAnthropicAsync, normalizeChatAsync, normalizeResponsesAsync,
   normalizeAnthropic,
   normalizeChat,
   normalizeResponses,
-  NATIVE_IMAGE_TOOL_NAME,
+  NATIVE_IMAGE_TOOL_NAME, upstreamTermination,
   prepareNativeMultimodal,
   responsesResponse,
   toolNarrationEnabled
@@ -822,7 +822,7 @@ function errorBody(error, protocol) {
 }
 
 function mapAgyError(error) {
-  if (error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
+  if (require('./src/conversion-errors').isConversionError(error) || error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
     || error instanceof MultimediaError || error instanceof ProviderRouterError
     || error instanceof SessionIdentityError) return error;
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || /request aborted/i.test(String(error?.message || ''))) {
@@ -905,8 +905,8 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
       const upstreamModel = argonVideoFallback ? await argonVideoFallbackModel() : model;
       const providerType = 'cloudcode';
       const prepared = prepareNativeMultimodal(resolved);
-      const finalize = (raw) => {
-        try { return finalizeModelResult(normalized, raw); }
+      const finalize = async (raw) => {
+        try { return await finalizeModelResultAsync(normalized, raw, { signal }); }
         catch (error) { throw error; }
       };
       const trace = identityTrace({ sessionId, routingKey, requestId, clientId, clientLabel });
@@ -928,6 +928,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         ? (raw.toolCalls || []).filter((call) => call.name === NATIVE_IMAGE_TOOL_NAME)
         : [];
       if (internalCalls.length) {
+        if (upstreamTermination(raw) !== 'complete') throw new GatewayError('上游生图工具调用未完整结束，未执行生图。', { code: 'incomplete_native_image_call', status: 502 });
         if (internalCalls.length > 1 || (raw.toolCalls || []).some((call) => call.name !== NATIVE_IMAGE_TOOL_NAME)) {
           throw new GatewayError('原生生图工具必须单独调用且每轮只能调用一次。', { code: 'invalid_native_image_call', status: 502 });
         }
@@ -1008,19 +1009,19 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
           signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope,
           clientProjection: { source: prepared.normalized, images: [image], streamedPrefix: onDelta ? raw.streamedText || raw.text || '' : '' }
         });
-        const final = finalize(raw);
+        const final = await finalize(raw);
         return { ...final, images: [image], usage: combinedUsage(initialUsage, generated.usage, raw.usage) };
       }
       try {
-        return finalize(raw);
+        return await finalize(raw);
       } catch (error) {
         if (error.code === 'invalid_auto_mode_classifier_output') {
           raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, { signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope, repairInstruction: 'Return only the XML verdict required by the client contract. No prose or Markdown.' });
-          return finalize(raw);
+          return await finalize(raw);
         }
         if (error.code === 'invalid_structured_output') {
           raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, { signal, sessionId, routingKey, requestId, clientId, clientLabel, onAccountSelected, reuseConversation, ...taskScope, repairInstruction: `Return only one valid JSON value conforming to this schema: ${JSON.stringify(normalized.structuredSchema)}` });
-          return finalize(raw);
+          return await finalize(raw);
         }
         throw error;
       }
@@ -1065,15 +1066,15 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
     };
     let raw = await trackedSend(prompt, { signal, onDelta });
     try {
-      return finalizeModelResult(normalized, raw);
+      return await finalizeModelResultAsync(normalized, raw, { signal });
     } catch (error) {
       if (error.code === 'invalid_auto_mode_classifier_output') {
         raw = await trackedSend('AUTO_MODE_XML_REPAIR: Return only the XML verdict required by the original system contract. No prose or Markdown.', { signal, onDelta });
-        return finalizeModelResult(normalized, raw);
+        return await finalizeModelResultAsync(normalized, raw, { signal });
       }
       if (error.code === 'invalid_structured_output') {
         raw = await trackedSend(`STRUCTURED_OUTPUT_REPAIR: Return only one valid JSON value conforming to this schema: ${JSON.stringify(normalized.structuredSchema)}`, { signal, onDelta });
-        return finalizeModelResult(normalized, raw);
+        return await finalizeModelResultAsync(normalized, raw, { signal });
       }
       throw error;
     }
@@ -1315,6 +1316,8 @@ function emitChatStream(res, body, { includeUsage = false } = {}) {
 
 function emitResponsesItem(emit, item, outputIndex) {
   emit({ type: 'response.output_item.added', output_index: outputIndex, item: { ...item, status: 'in_progress', content: item.content ? [] : undefined,
+    ...(item.type === 'function_call' ? { arguments: '' } : {}),
+    ...(item.type === 'custom_tool_call' ? { input: '' } : {}),
     ...(item.type === 'reasoning' ? { summary: [] } : {}) } });
   if (item.type === 'message') {
     const part = item.content[0];
@@ -1333,6 +1336,9 @@ function emitResponsesItem(emit, item, outputIndex) {
   } else if (item.type === 'function_call') {
     emit({ type: 'response.function_call_arguments.delta', item_id: item.id, output_index: outputIndex, delta: item.arguments });
     emit({ type: 'response.function_call_arguments.done', item_id: item.id, output_index: outputIndex, arguments: item.arguments });
+  } else if (item.type === 'custom_tool_call') {
+    emit({ type: 'response.custom_tool_call_input.delta', item_id: item.id, output_index: outputIndex, delta: item.input });
+    emit({ type: 'response.custom_tool_call_input.done', item_id: item.id, output_index: outputIndex, input: item.input });
   }
   emit({ type: 'response.output_item.done', output_index: outputIndex, item });
 }
@@ -1403,8 +1409,8 @@ function createResponsesTextEmitter(res, model, responseId) {
       const part = kind === 'reasoning' ? { type: 'summary_text', text: state.text }
         : { type: 'output_text', text: state.text, annotations: message?.content?.[0]?.annotations || [] };
       const item = kind === 'reasoning'
-        ? { id: state.id, type: 'reasoning', status: 'completed', summary: [part] }
-        : { id: state.id, type: 'message', role: 'assistant', status: 'completed', content: [part] };
+        ? { id: state.id, type: 'reasoning', status: body.status === 'incomplete' ? 'incomplete' : 'completed', summary: [part] }
+        : { id: state.id, type: 'message', role: 'assistant', status: body.status === 'incomplete' ? 'incomplete' : 'completed', content: [part] };
       const ids = { item_id: state.id, output_index: state.index,
         ...(kind === 'reasoning' ? { summary_index: 0 } : { content_index: 0 }) };
       emit({ type: kind === 'reasoning' ? 'response.reasoning_summary_text.done' : 'response.output_text.done', ...ids, text: state.text });
@@ -1417,7 +1423,7 @@ function createResponsesTextEmitter(res, model, responseId) {
     body.output = [...completed, ...remaining];
     remaining.forEach((item, index) => emitResponsesItem(emit, item, completed.length + index));
     terminated = true;
-    emit({ type: 'response.completed', response: body });
+    emit({ type: body.status === 'incomplete' ? 'response.incomplete' : 'response.completed', response: body });
     writeStream(res, 'data: [DONE]\n\n');
     endStream(res);
   } };
@@ -1428,7 +1434,7 @@ function emitResponsesStream(res, body) {
   let sequence = 0;
   sendSse(res, null, { type: 'response.created', sequence_number: sequence++, response: { ...body, status: 'in_progress', output: [] } });
   body.output.forEach((item, index) => emitResponsesItem((event) => sendSse(res, null, { ...event, sequence_number: sequence++ }), item, index));
-  sendSse(res, null, { type: 'response.completed', sequence_number: sequence++, response: body });
+  sendSse(res, null, { type: body.status === 'incomplete' ? 'response.incomplete' : 'response.completed', sequence_number: sequence++, response: body });
   writeStream(res, 'data: [DONE]\n\n');
   endStream(res);
 }
@@ -1577,9 +1583,10 @@ async function testAdminModel(id) {
 }
 
 async function handleAnthropic(payload, req, res, signal) {
+  if (payload.safeguards != null && (!Array.isArray(payload.safeguards) || payload.safeguards.length)) throw new GatewayError('Server-side safeguards are not enabled; use the client permission workflow.', { code: 'unsupported_safeguards', status: 400 });
   payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
-  const normalized = normalizeAnthropic(payload);
+  const normalized = await normalizeAnthropicAsync(payload, { signal });
   const model = await resolveModel(normalized.model, { preferFast: normalized.autoMode });
   const requestClass = normalized.autoMode ? 'auto-mode' : 'client';
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
@@ -1598,7 +1605,7 @@ async function handleAnthropic(payload, req, res, signal) {
 async function handleChat(payload, req, res, signal) {
   payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
-  const normalized = normalizeChat(payload);
+  const normalized = await normalizeChatAsync(payload, { signal });
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/chat/completions model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
@@ -1621,7 +1628,7 @@ async function handleResponses(payload, req, res, signal) {
   if (payload.previous_response_id && !previous) {
     throw new GatewayError('previous_response_id 不属于当前客户端会话。', { code: 'previous_response_not_found', status: 400 });
   }
-  const normalized = normalizeResponses(payload, previous);
+  const normalized = await normalizeResponsesAsync(payload, previous, { signal });
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, previous, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/responses model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
@@ -1645,6 +1652,8 @@ async function handleResponses(payload, req, res, signal) {
     ...(identity.anonymousTask ? { anonymousTask: true } : {}),
     routingKey: identity.routingKey,
     system: normalized.system,
+    instructions: normalized.instructions,
+    instructionMessages: normalized.instructionMessages || [],
     messages: [...normalized.messages, {
       role: 'assistant',
       text: result.text || '',
@@ -1900,7 +1909,7 @@ function createServer({ directoryGuard = null } = {}) {
       context = auth.context;
     }
     const logContext = isApi ? REQUEST_LOG.createContext(req, context) : null;
-    const runHandler = () => keyContext.run(context, () => requestHandler(req, res));
+    const runHandler = () => keyContext.run(context, () => require('./src/schema-contract').withAsyncSchemaBoundary(() => requestHandler(req, res)));
     const pending = trackTransaction(logContext ? runRequestLog(logContext, runHandler) : runHandler()).catch(() => {
       if (!res.headersSent && !res.destroyed) sendJson(res, 500, { error: { message: 'Antigravity Gateway 内部错误。' } });
       else res.destroy();

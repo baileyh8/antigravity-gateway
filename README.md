@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.24 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.25 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,19 +44,19 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.24
+### 当前源码版本：1.7.1-bailey.25
 
-本次同时修复root维护写入保留账号文件归属，避免服务用户读不到私有凭据。
+本版参考 [LeeFeee 上游 v2.0.5](https://github.com/LeeFeee/antigravity-gateway/tree/v2.0.5) 移植工具兼容优化，保留本分支的独立管理后台、账号调度、出口绑定、额度保护和 Hydrogen 签名修复。感谢上游持续维护；本项目是原项目的独立维护分支。
 
-本次补齐长会话缓存恢复路径：完成全部历史恢复和工具映射后再次检查工具签名，防止无签名缓存覆盖兼容标记；精确缓存没有真实签名时保留客户端显式回传的签名。
+对照官方 **agy CLI 1.5.9 / cl1021519450** 在 macOS arm64 与 Linux x64 上的隔离直连抓包，更新 Go 传输和请求标识。模型 RPC 使用 HTTP/1.1，OAuth 单次必要刷新使用 HTTP/2；TLS 1.2 / 1.3、HelloRetryRequest 与连接重建均有实测对照，其他平台不作同等取证声明。
 
-本次修复 Hydrogen 工具历史缺少思考签名导致的 400：Responses / Chat 的工具回包与回传使用 `extra_content.google.thought_signature` 保存原始签名，同时兼容已有 camelCase/snake_case 字段。原始签名优先；确实缺失的旧历史仅在每个模型步骤的首个工具调用使用兼容标记，不跨账号恢复私有缓存。
+工具支持 Codex/OpenCodex、DSH、Hermes、Claude 和未知客户端。简单 Schema 使用直接字段；复杂 Schema、业务同名字段及不能等价表达的工具保留完整 JSON 视图，执行前校验原始契约。namespace、自定义文本工具、工具选择与并行限制按客户端语义往返；只有精确匹配且语义等价的文件工具才提供原生视图。工具仍在客户端执行。
 
-本版对照本机官方 agy CLI **1.5.7 / cl1019769835** 的隔离抓包，更新 Go HTTP/2 与 TLS ALPN，逐模型发送已观察到的思考参数和输出上限，并修复 Token 刷新覆盖账号启停、权重或新授权的问题。
+Schema 校验在有界 worker 中运行：默认 1 个、排队最多 32 项 / 8 MiB，空闲 30 秒释放。校验超时或资源不足不会冷却账号或换号重试。保留 Chat Completions 的缓存/推理用量、流式回压和可识别的上下文溢出错误。`ANTIGRAVITY_TOOL_CONTRACT=legacy` 保留历史工具格式，供短期回退；默认采用新合同。
 
-工具采用完整、可逆的 MCP 视图，适用于 Codex/OpenCodex、DSH、Hermes、Claude 和未知客户端；可等价表达的文件操作另提供 `read_file / write_file / edit_file` 视图。命令超时、后台任务、权限参数不会被偷换成官方执行器能力。完整保留调用方的 system、项目规则与工具约束；不复制不适用的官方工作区/执行器提示。`ANTIGRAVITY_TOOL_CONTRACT=legacy` 可临时回退旧工具格式。
+保留真实工具签名、同账号精确历史恢复及最终出站补验；旧版 `.24` 落盘缓存可迁移。完整保留自定义 system、SOUL.md 和项目规则，只清理有抓包证据的客户端框架片段；工具旁白默认关闭。不注入不适用的官方工作区或执行器能力。
 
-缓存由上游隐式处理，不创建或传输 `cachedContents`，用量取真实 `cachedContentTokenCount`。命中阈值及折扣取决于实际模型和服务，不承诺统一“4096 tokens / 95%”。协议兼容不代表账号不会受到服务限制。详见 [1.5.7 对照与边界](docs/agy-1.5.7-compatibility.md)。
+缓存仍由上游隐式处理，不创建或传输 `cachedContents`，用量取真实 `cachedContentTokenCount`，不承诺统一命中阈值、折扣或账号安全。详见 [1.5.9 对照与验证边界](docs/agy-1.5.9-compatibility.md)。
 
 请求总超时后，Responses 流明确返回 `response.failed` / `request_timeout`，保留响应 ID、事件序号和已输出内容；日志按有效失败状态 504 记录，SSE 已发出的 HTTP 200 响应头不变。迟到的上游回调不能再补发成功结束。总超时仍为默认 300 秒。
 
@@ -256,7 +256,7 @@ acc
 
 两者均通过统一的 Antigravity Cloud Code 账号池调用，不再添加单独的 Gemini App / Robin 账号。使用标准添加账号入口，按原有流程绑定出口；目录不代表所有账号均有相同权限。
 
-模型 ID 以 `/v1/models` 的实际返回为准。例如 Argon 为 `gemini-4-argon-low/medium/high`，Hydrogen 为 `gemini-4-hydrogen-low/medium/high/xhigh`；不使用已移除的裸名 `gemini-4-argon`。对应思考参数见 [1.5.7 对照](docs/agy-1.5.7-compatibility.md)。
+模型 ID 以 `/v1/models` 的实际返回为准。例如 Argon 为 `gemini-4-argon-low/medium/high`，Hydrogen 为 `gemini-4-hydrogen-low/medium/high/xhigh`；不使用已移除的裸名 `gemini-4-argon`。对应思考参数见 [1.5.9 对照](docs/agy-1.5.9-compatibility.md)。
 
 ### 前台终端命令
 
@@ -580,8 +580,8 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | 网关监听端口 |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | 空 | 自定义网关 Key；非本机监听时必须设置 |
 | `ANTIGRAVITY_CLI_PATH` | 自动查找 `agy` | 指定 agy 路径 |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.7` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1019769835` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.9` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1021519450` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | 按参数形状识别未抓包客户端的工具声明；设为 `off` 恢复严格透传 |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | 空 | 设为 `on` 时每请求输出 `profile=... mapped=N/M` 日志 |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | 空 | 设为 `on` 时在上一项基础上输出逐对映射明细 |
@@ -678,7 +678,7 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.24
+### Current source version: 1.7.1-bailey.25
 
 Root maintenance writes also preserve the service owner of private credential files.
 
@@ -686,11 +686,15 @@ This update rechecks tool signatures after all native-history and tool-projectio
 
 This update fixes Hydrogen tool-history 400 errors caused by missing thought signatures. Responses and Chat tool calls round-trip opaque signatures through `extra_content.google.thought_signature`, with existing camelCase/snake_case fields accepted. Genuine signatures take priority; unsigned imported history uses a compatibility marker only on the first call per model step. Private server-side replay remains account-scoped.
 
-This release is checked against isolated captures of official **agy CLI 1.5.7 / cl1019769835**. It enables Go HTTP/2 with matching ALPN, resolves per-model thinking/output settings, and prevents token refresh from overwriting account enable/weight settings or replacement authorizations.
+This release selectively ports tool compatibility from [LeeFeee gateway v2.0.5](https://github.com/LeeFeee/antigravity-gateway/tree/v2.0.5), with thanks to the upstream maintainers. This independent fork retains its manager, account scheduling, fixed egress, quota reserves and Hydrogen signature/ownership protections.
 
-Tools retain complete reversible MCP views for Codex/OpenCodex, DSH, Hermes, Claude and unknown clients. Equivalent file operations also expose `read_file / write_file / edit_file` views. Client system instructions, execution limits and permissions are preserved. Unsupported official workspace/executor claims are not transplanted. Set `ANTIGRAVITY_TOOL_CONTRACT=legacy` for the explicit historical wire fallback.
+Isolated official **agy CLI 1.5.9 / cl1021519450** captures on macOS arm64 and Linux x64 establish model HTTP/1.1 and separate OAuth HTTP/2 transport behavior, including TLS 1.2/1.3, HelloRetryRequest and reconnect cases. Other platforms are built, not equally capture-verified.
 
-Caching remains implicit upstream: no `cachedContents` creation or forwarding; usage comes from actual `cachedContentTokenCount`. No universal cache threshold, discount or account-safety guarantee is implied. See [capture evidence and limits](docs/agy-1.5.7-compatibility.md).
+Simple tool contracts use direct fields; complex schemas and conflicting business fields retain a complete JSON view. Original schemas are validated before client execution. Namespace/custom tools, named choices, receipt IDs and parallel limits round-trip without inventing executor capabilities. Exact, equivalent file declarations may expose native views; unknown clients use the generic contract. Historical format remains available through `ANTIGRAVITY_TOOL_CONTRACT=legacy`.
+
+Schema validation uses one bounded worker, at most 32 queued jobs / 8 MiB, retiring after 30 idle seconds. Conversion failures do not cool down accounts or cause account retries. Chat usage details, async stream backpressure, context errors, genuine signatures and exact account-scoped `.24` cache migration are preserved. User system/SOUL/project instructions remain intact; only evidence-matched framework fragments are sanitized. Narration stays off by default.
+
+Caching remains implicit upstream, without explicit `cachedContents`. Usage comes from real upstream counts. No universal cache discount or account-safety guarantee is implied. See [capture evidence and limits](docs/agy-1.5.9-compatibility.md).
 
 On the overall request deadline, Responses streams end with `response.failed` / `request_timeout`, preserving response IDs, event sequence and partial output. Logs record the effective failure status 504 even when SSE headers were already sent as HTTP 200. Late provider callbacks cannot append a successful completion. The default overall deadline remains 300 seconds.
 
@@ -826,7 +830,7 @@ Run the gateway in foreground mode and type `add` to authorize another account. 
 
 Both families use the unified Antigravity Cloud Code account pool. Add accounts and bind egress using the standard account flow; there is no separate Gemini App / Robin account channel.
 
-Use the exact IDs returned by `/v1/models`, such as `gemini-4-argon-low/medium/high` and `gemini-4-hydrogen-low/medium/high/xhigh`. The retired bare ID `gemini-4-argon` is not a routing target. Availability is account-specific. See [1.5.7 parameter evidence](docs/agy-1.5.7-compatibility.md).
+Use the exact IDs returned by `/v1/models`, such as `gemini-4-argon-low/medium/high` and `gemini-4-hydrogen-low/medium/high/xhigh`. The retired bare ID `gemini-4-argon` is not a routing target. Availability is account-specific. See [1.5.9 parameter evidence](docs/agy-1.5.9-compatibility.md).
 
 | Command | Purpose |
 |---|---|
@@ -1008,8 +1012,8 @@ Common failures:
 | `ANTIGRAVITY_GATEWAY_PORT` | `9897` | Listen port |
 | `ANTIGRAVITY_GATEWAY_API_KEY` | empty | Custom gateway key; required for non-loopback binding |
 | `ANTIGRAVITY_CLI_PATH` | auto-detected | Custom agy path |
-| `ANTIGRAVITY_CLI_VERSION` | `1.5.7` | agy CLI version in the client identity; keep paired with the changelist |
-| `ANTIGRAVITY_CLI_CHANGELIST` | `1019769835` | Changelist (`cl`) of the same official build; update together with the version |
+| `ANTIGRAVITY_CLI_VERSION` | `1.5.9` | agy CLI version in the client identity; keep paired with the changelist |
+| `ANTIGRAVITY_CLI_CHANGELIST` | `1021519450` | Changelist (`cl`) of the same official build; update together with the version |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | Identify uncaptured clients by declaration shape; `off` restores strict passthrough |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | empty | `on` logs `profile=... mapped=N/M` per request |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | empty | `on` adds the per-tool mapping pairs to the trace |
@@ -1091,6 +1095,6 @@ Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermed
 
 ### Argon / Hydrogen 模型目录 / Model metadata
 
-模型目录取账号实际返回的 Cloud Code 元数据；公开 ID、输入窗口、输出上限与思考参数分别处理。当前已观察到 Argon 三档、Hydrogen 四档，默认输出上限分别为65,536及262,144，输入窗口均为1,048,576。目录规格不是所有账号的权限或所有媒体场景的实测结果。客户端旧条目需重新同步目录；具体参数与验证边界见 [1.5.7 对照](docs/agy-1.5.7-compatibility.md)。
+模型目录取账号实际返回的 Cloud Code 元数据；公开 ID、输入窗口、输出上限与思考参数分别处理。当前已观察到 Argon 三档、Hydrogen 四档，默认输出上限分别为65,536及262,144，输入窗口均为1,048,576。目录规格不是所有账号的权限或所有媒体场景的实测结果。客户端旧条目需重新同步目录；具体参数与验证边界见 [1.5.9 对照](docs/agy-1.5.9-compatibility.md)。
 
 Model metadata comes from the account's actual Cloud Code catalog. Public IDs, context limits, output caps and thinking settings are handled separately. Observed Argon and Hydrogen entries have default output caps of 65,536 and 262,144 respectively and context limits of 1,048,576. These are directory values, not proof of every account's entitlement or every media path. Refresh previously saved client entries; see the compatibility report for evidence and limits.

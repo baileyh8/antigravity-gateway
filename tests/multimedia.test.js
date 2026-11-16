@@ -85,7 +85,7 @@ test('native multimodal preparation lets the model choose image generation witho
   assert.equal(prepared.imageToolInjected, true);
   assert.equal(prepared.normalized.tools.at(-1).name, 'generate_image');
   assert.equal(prepared.normalized.system, normalized.system);
-  assert.match(prepared.normalized.tools.at(-1).description, /not for analyzing attachments/i);
+  assert.match(prepared.normalized.tools.at(-1).description, /Generate an image, or edit existing images/i);
   assert.doesNotMatch(prepared.normalized.system, /gateway/i);
   const request = buildDirectRequest(prepared.normalized, 'gemini-test', 'project', 'session');
   assert.equal(request.request.contents[0].parts[1].inlineData.mimeType, 'image/png');

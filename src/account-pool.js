@@ -23,6 +23,7 @@ function quotaReserveError() {
 }
 
 function errorCategory(error) {
+  if (require('./conversion-errors').isConversionError(error)) return 'request';
   const status = Number(error?.status) || 0;
   const source = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.cause?.code || ''} ${error?.cause?.message || ''}`;
   if (error?.code === 'request_timeout' || error?.code === 'request_aborted' || /abort(?:ed|error)|请求已取消|网关请求超时/i.test(source)) return 'request';

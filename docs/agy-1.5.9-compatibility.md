@@ -34,3 +34,30 @@ are never recursively treated as generation settings.
 Offline transport and model captures consume no real account quota. Production
 acceptance, deployed version and client round trips are recorded separately in
 release notes after their respective gates complete.
+
+## Tool contract and resource limits
+
+Simple object contracts use direct fields. Complex schemas, arbitrary JSON roots,
+namespace collisions, custom text/patch inputs and business metadata names keep
+lossless compatibility views and are validated against the original contract.
+File-native views require exact captured declarations and equivalent semantics;
+commands, timeouts, approval modes and background behavior remain client-owned.
+Receipts correlate with an actual submitted call ID/name; only structured tool
+references are remapped. Never rewrite arbitrary user text by tool-name search.
+
+All HTTP/schema effects use asynchronous bounded validation: one worker, 32
+waiting jobs, 8 MiB queued payloads, 64 MiB old-generation limit, 30-second idle
+retirement. Validation has bounded deadlines/cancellation; capacity and conversion
+errors cannot cause account cooldown or cross-account retries. Offline fixture
+wrappers remain synchronous; the HTTP scope rejects accidental sync fallback.
+
+The fork migrates validated, account/session-owned `.24` v1 cache files to v2.
+Only exact historical projections restore signatures and original calls; already
+issued MCP aliases remain declared compatibility views. Unsigned restored steps
+receive the existing Hydrogen marker only at final egress. No signature is derived
+from a tool ID, arguments or another account. Account-store ownership guards and
+all existing scheduling/manager configuration remain independent of this layer.
+
+The legacy adapter is an explicit short-term fallback, not the default. Claude
+server-managed tool review/search orchestration is outside this port. No transport
+or prompt compatibility claim establishes reduced enforcement risk.

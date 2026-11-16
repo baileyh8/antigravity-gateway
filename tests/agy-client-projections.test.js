@@ -1,4 +1,6 @@
 'use strict';
+// Replays archived native wire traces; current default has separate contract tests.
+process.env.ANTIGRAVITY_TOOL_CONTRACT = 'legacy';
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const { newState, AgySessionStore, recordClientProjection, restoreClientProjections } = require('../src/agy-session-state');
 const { DirectAntigravityProvider } = require('../src/direct-provider');

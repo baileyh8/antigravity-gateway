@@ -76,7 +76,7 @@ test('three public protocols complete an issued MCP tool, restart, restore signa
       fetchImpl: async (_url, options) => {
         const request = JSON.parse(options.body); seen.push(request);
         const declaration = request.request.tools.flatMap(tool => tool.functionDeclarations).find(tool => tool.name.startsWith('mcp_gateway_'));
-        const parts = seen.length === 1 ? [{ functionCall: { id: 'issued-1', name: declaration.name, args: { argumentsJson: JSON.stringify(args), toolSummary: 'Fixture execution' } }, thoughtSignature: 'signed-issued-call' }] : [{ text: 'DONE' }];
+        const parts = seen.length === 1 ? [{ functionCall: { id: 'issued-1', name: declaration.name, args: declaration.parameters.properties.argumentsJson ? { argumentsJson: JSON.stringify(args), toolSummary: 'Fixture execution' } : { ...args, toolSummary: 'Fixture execution' } }, thoughtSignature: 'signed-issued-call' }] : [{ text: 'DONE' }];
         return new Response(JSON.stringify({ candidates: [{ content: { role: 'model', parts } }] }));
       }
     }).send(normalize(payload), common.model, { sessionId: protocol + '-fixture' });
@@ -117,7 +117,7 @@ test('web OAuth uses a verifier bound to its S256 challenge and current native h
  const flow=new OAuthFlow({ clientCredentials:[{clientId:'fixture-client',clientSecret:'fixture-secret'}], openBrowserImpl:async()=>false, timeoutMs:3000, fetchImpl:async(url,options)=>{
   if(String(url).endsWith('/token')) { exchanges++; const f=new URLSearchParams(options.body); assert.equal(crypto.createHash('sha256').update(f.get('code_verifier')).digest('base64url'),challenge); assert.equal(options.headers['user-agent'],'Go-http-client/2.0'); return new Response(JSON.stringify({access_token:'fixture-access',refresh_token:'fixture-refresh',expires_in:3600})); }
   if(String(url).includes('/userinfo'))return new Response(JSON.stringify({email:'fixture@example.invalid'}));
-  assert.match(options.headers['user-agent'], /antigravity\/cli\/1\.5\.7/);
+  assert.match(options.headers['user-agent'], /antigravity\/cli\/1\.5\.9/);
   return new Response(JSON.stringify({cloudaicompanionProject:'fixture-project'}));
  } });
  const account=await flow.start({onReady:({url})=>{const u=new URL(url); assert.equal(u.searchParams.get('code_challenge_method'),'S256'); challenge=u.searchParams.get('code_challenge'); const redirect=u.searchParams.get('redirect_uri'); setImmediate(()=>flow.submit(redirect+'?code=synthetic-code&state='+u.searchParams.get('state')));}});

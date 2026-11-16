@@ -29,7 +29,7 @@ test('native image continuation gets usable delivery addresses and preserves cli
     assert.equal(internal.delivery.visible_receipt, 'automatic');
     assert.equal(internal.delivery.repeat_in_assistant_text, false);
     assert.equal(typeof result.response.output, 'string');
-    assert.match(result.response.output, /^Created At: [^\n]+\nCompleted At: [^\n]+\nCreated file file:\/\//);
+    assert.match(result.response.output, /^Created At: [^\n]+\nCompleted At: [^\n]+\nGenerated image is saved at /);
     assert.ok(result.response.output.includes(internal.artifact.url));
     assert.equal(result.media.length, 1);
     assert.equal(result.media[0].type, 'media');
