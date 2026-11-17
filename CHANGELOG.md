@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.26 - 2026-11-17
+
+- 修复流式累计 usage 后续片段省略缓存/思考字段时，将已报告计数覆盖为零的问题；明确零值仍覆盖，不累加累计快照、不取最大值掩盖修正。
+- 识别客户端独立线程标识，隔离原生会话与 Responses 所有权；保留根会话的账号路由亲和及既有根会话状态。
+- 为未传线程 ID 或共用 cache key 的未知客户端，按完整历史前缀有界保存时间戳等元数据，保持交错历史和重启后的旧消息前缀。索引最多 2,048 项 / 512 KiB，仅保存哈希及元数据，不保存用户原文、不跨账号复用签名。
+- 修复均在网关内完成，不要求修改 OpenCodex、DSH、Hermes 或其他客户端。额度兜底、并发、出口和 20/5 次轮换保持；隐式缓存仍由上游决定，不承诺固定命中率。
+
+English: Merge only present cumulative usage fields, isolate explicit child-thread state and response ownership, and preserve exact-prefix metadata across interleaved histories and restarts using a bounded account-private index. No client patch is required. Quota reserves, concurrency, egress, rotation and signature boundaries remain intact; implicit upstream cache hits are not guaranteed.
+
 当前版本 `1.7.1-bailey.25`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
 
 ## 1.7.1-bailey.25 - 2026-11-16

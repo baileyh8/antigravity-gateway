@@ -721,7 +721,7 @@ function setCors(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-claude-code-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-session-id, session-id, session_id, x-session-affinity, x-claude-session-id, x-claude-code-session-id, x-codex-session-id, x-deepseek-harness-session-id, x-deepseek-harness-user-id, x-deepseek-harness-compact, x-client-session-id, conversation-id, x-conversation-id, thread-id, x-codex-thread-id, x-thread-id, x-client-id, x-agent-id, x-client-name, parent-session-id, x-parent-session-id, x-affinity-id, x-routing-affinity-id, x-request-id');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, DELETE, OPTIONS');
   return true;
 }

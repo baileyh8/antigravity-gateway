@@ -1,7 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { canonical, contentFingerprint, recordResponse, restoreHistory, restoreClientProjections } = require('./agy-session-state');
+const { canonical, contentFingerprint, recordResponse, restoreHistory, restoreClientProjections,
+  historyPrefix, historyKeyFromFingerprint, rememberTimelineEntries } = require('./agy-session-state');
 const { streamErrorContent } = require('./agy-stream-recovery');
 const { modelProfile } = require('./agy-request-profile');
 const { saveImageReference } = require('./agy-image-references');
@@ -93,6 +94,8 @@ function* prepareNativeContextSteps(state, sourceContents, model, { translateHis
     ...(pending?.profile === CLAUDE_COMPACTION_PROFILE && Array.isArray(pending.retainedTimeline)
       && sourceContents.some(content => capturedSummaryReplacement(content, pending)) ? pending.retainedTimeline : [])];
   const fingerprints = sourceContents.map(contentFingerprint);
+  let prefix = historyPrefix([]);
+  const historyKeys = fingerprints.map(fingerprint => (prefix = historyKeyFromFingerprint(prefix, fingerprint)));
   const matches = alignTimeline(previous, fingerprints);
   const lastMatch = matches.size ? Math.max(...matches.keys()) : -1;
   let nextStep = Number.isSafeInteger(state.nextStep) && state.nextStep >= 0 ? state.nextStep : 0;
@@ -106,7 +109,10 @@ function* prepareNativeContextSteps(state, sourceContents, model, { translateHis
   const replacementIndex = pending ? sourceContents.findIndex((content, i) => !matches.has(i) && content.role === 'user'
     && (summaryContent(content) || capturedSummaryReplacement(content, pending) || digest(textContent(content).trim()) === pending.summaryHash)) : -1;
   const entries = sourceContents.map((content, index) => {
-    const existing = matches.get(index);
+    // A client may multiplex forked histories under one cache/session key.
+    // Recover only metadata at the exact history prefix, never user text or
+    // another account's signatures. The latest timeline alone loses old forks.
+    const existing = state.timelineAnchors?.[historyKeys[index]]?.entry || matches.get(index);
     const entry = existing || { fingerprint: fingerprints[index], timestamp: localTimestamp(now) };
     if (index === replacementIndex && capturedSummaryReplacement(content, pending)) entry.contextSummary = true;
     if (imageLayout(content) && content.parts.some(p => p.inlineData) && !nativeWrapped(content) && entry.uploadedAt === undefined) {
@@ -135,6 +141,8 @@ function* prepareNativeContextSteps(state, sourceContents, model, { translateHis
   }
   state.nextStep = nextStep;
   state.timeline = entries.filter((_, i) => i !== instructionIndex).slice(-MAX_TIMELINE);
+  rememberTimelineEntries(state, entries.flatMap((entry, index) => index !== instructionIndex && imageLayout(sourceContents[index])
+    && !nativeWrapped(sourceContents[index]) ? [{ key: historyKeys[index], entry }] : []), now);
   const restored = restoreHistory(state, sourceContents, model, { verifiedToolSteps });
   // Signatures supplied by the caller are opaque bytes, not proof that this
   // account issued the step at this prefix. Conversely, a genuine upstream

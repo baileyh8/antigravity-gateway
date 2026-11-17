@@ -49,8 +49,8 @@ function clientIdentity(req, payload = {}) {
   return explicitClientId(req, payload) || firstString(header(req, 'user-agent'), 'unknown-client');
 }
 
-function explicitSessionId(req, payload = {}, { legacy = true, cacheKey = true } = {}) {
-  return firstString(
+function explicitSessionId(req, payload = {}, { legacy = true, cacheKey = true, thread = true } = {}) {
+  const session = firstString(
     header(req, 'x-session-id'),
     header(req, 'x-claude-session-id'),
     header(req, 'x-claude-code-session-id'),
@@ -61,19 +61,23 @@ function explicitSessionId(req, payload = {}, { legacy = true, cacheKey = true }
     header(req, 'session_id'),
     header(req, 'conversation-id'),
     header(req, 'x-conversation-id'),
-    header(req, 'x-thread-id'),
     payload?.metadata?.session_id,
     payload?.metadata?.conversation_id,
-    payload?.metadata?.thread_id,
     cacheKey ? payload?.prompt_cache_key : '',
     payload?.session_id,
     payload?.conversation_id,
-    payload?.thread_id,
     // Retained last for clients that historically used these fields as their
     // only stable conversation identifier.
     legacy ? payload?.metadata?.user_id : '',
     legacy ? payload?.user : ''
   );
+  if (!thread) return session;
+  const own = firstString(header(req, 'thread-id'), header(req, 'x-codex-thread-id'), header(req, 'x-thread-id'),
+    payload?.metadata?.thread_id, payload?.thread_id);
+  // Codex session-id / prompt_cache_key can identify an entire agent tree.
+  // Native state and response ownership belong to the individual thread. Keep
+  // root-only identities unchanged so existing signed history remains usable.
+  return own && session && own !== session ? JSON.stringify(['thread', session, own]) : own || session;
 }
 
 function explicitParentSessionId(req, payload = {}) {
@@ -224,12 +228,13 @@ class SessionManager {
     this.cleanup();
     const scope = clientScope(req, payload);
     const explicit = explicitSessionId(req, payload);
+    const routingSession = explicitSessionId(req, payload, { thread: false });
     const parent = explicitParentSessionId(req, payload);
     const explicitAffinity = explicitAffinityId(req, payload);
     const fallback = fallbackSeed(payload, normalized);
     const nativeExplicit = taskProvider ? explicitSessionId(req, payload, { legacy: false, cacheKey: false }) : explicit;
     const conversationRaw = firstString(nativeExplicit, explicit, fallback);
-    const affinityRaw = firstString(explicitAffinity, parent, explicit, fallback);
+    const affinityRaw = firstString(explicitAffinity, parent, routingSession, explicit, fallback);
     const auxiliary = auxiliaryScope(req, normalized, taskProvider);
     const nativeCompaction = detectNativeCompaction(req, normalized);
     const nativeClientProfile = capturedNativeClient(req, normalized);

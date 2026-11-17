@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.25 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.26 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.25
+### 当前源码版本：1.7.1-bailey.26
+
+本次修复在网关内完成，不要求修改 OpenCodex 或其他客户端。流式用量按实际上报的字段合并：省略缓存/思考字段不再清零，明确的零值仍有效。显式 `thread-id`、`x-codex-thread-id`、`x-thread-id` 或请求体线程字段区分原生会话，根会话继续提供账号路由亲和；未传线程标识或多条历史共享 cache key 时，按完整历史前缀恢复旧消息元数据，避免 A→B→A 历史交替重建时间戳。索引仅保存哈希和元数据，每份账号私有状态最多 2,048 项 / 512 KiB，保留原有签名隔离、TTL、额度、并发与 20/5 次轮换。隐式缓存是否命中仍由上游决定，旧用量记录不会被追溯改写。
 
 本版参考 [LeeFeee 上游 v2.0.5](https://github.com/LeeFeee/antigravity-gateway/tree/v2.0.5) 移植工具兼容优化，保留本分支的独立管理后台、账号调度、出口绑定、额度保护和 Hydrogen 签名修复。感谢上游持续维护；本项目是原项目的独立维护分支。
 
@@ -678,7 +680,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.25
+### Current source version: 1.7.1-bailey.26
+
+The cache fix runs entirely in the gateway; OpenCodex and other clients need no patch. Cumulative stream usage merges only reported fields, preserving omitted cache/thought counters while honoring explicit zeros. Explicit thread headers or body metadata isolate native conversations while retaining root account-routing affinity. Clients without thread IDs, or multiplexing histories under a shared cache key, recover historical metadata by exact history prefix. The account-private hash/metadata index is capped at 2,048 entries / 512 KiB. Signature isolation, TTL, quotas, concurrency and 20/5-turn rotation remain intact. Upstream implicit cache hits are not guaranteed and historical usage is not rewritten.
 
 Root maintenance writes also preserve the service owner of private credential files.
 
