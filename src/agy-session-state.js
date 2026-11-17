@@ -14,6 +14,8 @@ const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_TIMELINE_ANCHORS = 2048;
+const MAX_TIMELINE_ANCHOR_BYTES = 512 * 1024;
 const locks = new Map();
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -39,7 +41,8 @@ function contentFingerprint(content) {
   return hash(JSON.stringify(canonical({ role: content.role, text: content.role === 'model' ? text.trim() : text, parts })));
 }
 
-function historyKey(prefix, content) { return hash(`${prefix}\0${contentFingerprint(content)}`); }
+function historyKeyFromFingerprint(prefix, fingerprint) { return hash(`${prefix}\0${fingerprint}`); }
+function historyKey(prefix, content) { return historyKeyFromFingerprint(prefix, contentFingerprint(content)); }
 function historyPrefix(contents) {
   let prefix = hash('agy-history-v1');
   for (const content of contents) prefix = historyKey(prefix, content);
@@ -57,6 +60,26 @@ function validTimeline(value) {
       && (entry.uploadedAt === undefined || (Number.isSafeInteger(entry.uploadedAt) && entry.uploadedAt >= 0))
       && (entry.contextSummary === undefined || typeof entry.contextSummary === 'boolean')
       && [entry.settingFrom, entry.settingTo].every(text => text === undefined || (typeof text === 'string' && text.length < 1024)));
+}
+
+function validTimelineAnchors(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length <= MAX_TIMELINE_ANCHORS
+    && Object.entries(value).every(([key, record]) => HASH.test(key) && Number.isFinite(record?.at)
+      && validTimeline([record.entry]))
+    && Buffer.byteLength(JSON.stringify(value)) <= MAX_TIMELINE_ANCHOR_BYTES;
+}
+
+function rememberTimelineEntries(state, records, now) {
+  const anchors = state.timelineAnchors ||= {};
+  for (const { key, entry } of records) anchors[key] = { entry: { ...entry }, at: now };
+  const ordered = Object.entries(anchors).map(([key, value]) => ({ key, value,
+    bytes: Buffer.byteLength(JSON.stringify(value)) + key.length + 4 })).sort((a, b) => a.value.at - b.value.at);
+  let bytes = Buffer.byteLength(JSON.stringify(anchors)), count = ordered.length;
+  for (const item of ordered) {
+    if (count <= MAX_TIMELINE_ANCHORS && bytes <= MAX_TIMELINE_ANCHOR_BYTES) break;
+    delete anchors[item.key]; bytes -= item.bytes; count--;
+  }
 }
 
 function validReceiptTransforms(value) {
@@ -84,6 +107,7 @@ function validState(value, owner, key) {
     && (value.nextStep === undefined || (Number.isSafeInteger(value.nextStep) && value.nextStep >= 0))
     && (value.lastImageUploadAt === undefined || (Number.isSafeInteger(value.lastImageUploadAt) && value.lastImageUploadAt >= 0))
     && (value.timeline === undefined || validTimeline(value.timeline))
+    && (value.timelineAnchors === undefined || validTimelineAnchors(value.timelineAnchors))
     && (value.pendingCompaction === undefined || (HASH.test(value.pendingCompaction?.summaryHash)
       && (value.pendingCompaction.profile === undefined || value.pendingCompaction.profile === 'claude-code-2.1.285')
       && (value.pendingCompaction.retainedTimeline === undefined || validTimeline(value.pendingCompaction.retainedTimeline))))
@@ -451,5 +475,6 @@ class AgySessionStore {
   }
 }
 
-module.exports = { AgySessionStore, canonical, contentFingerprint, historyPrefix, recordResponse, restoreHistory, newState, HASH,
+module.exports = { AgySessionStore, canonical, contentFingerprint, historyPrefix, historyKeyFromFingerprint,
+  rememberTimelineEntries, recordResponse, restoreHistory, newState, HASH,
   restoreClientProjections, recordClientProjection, recordStreamProjection, recordStreamRecovery, clearStreamRecovery, recordToolStreamError };

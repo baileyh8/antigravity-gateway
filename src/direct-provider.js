@@ -391,15 +391,23 @@ function jsonFromSseLine(line) {
   try { return JSON.parse(source); } catch { return null; }
 }
 
-function usageFrom(value) {
+function usageFrom(value, { partial = false } = {}) {
   const usage = value?.usageMetadata || value?.response?.usageMetadata || value?.usage || {};
-  return {
-    input_tokens: Number(usage.promptTokenCount ?? usage.inputTokens ?? usage.input_tokens ?? 0),
-    output_tokens: Number(usage.candidatesTokenCount ?? usage.outputTokens ?? usage.output_tokens ?? 0),
-    total_tokens: Number(usage.totalTokenCount ?? usage.totalTokens ?? usage.total_tokens ?? 0),
-    thinking_tokens: Number(usage.thoughtsTokenCount ?? usage.thinkingTokens ?? 0),
-    cache_read_tokens: Number(usage.cachedContentTokenCount ?? usage.cacheReadTokens ?? 0)
+  const fields = {
+    input_tokens: usage.promptTokenCount ?? usage.inputTokens ?? usage.input_tokens,
+    output_tokens: usage.candidatesTokenCount ?? usage.outputTokens ?? usage.output_tokens,
+    total_tokens: usage.totalTokenCount ?? usage.totalTokens ?? usage.total_tokens,
+    thinking_tokens: usage.thoughtsTokenCount ?? usage.thinkingTokens,
+    cache_read_tokens: usage.cachedContentTokenCount ?? usage.cacheReadTokens ?? usage.cache_read_tokens
   };
+  // Streaming usage is a cumulative snapshot, but each snapshot may omit fields.
+  // Missing cache/thought counters must not erase an earlier reported value;
+  // an explicitly reported zero still replaces it (never sum or take max).
+  return Object.fromEntries(Object.entries(fields).flatMap(([key, raw]) => {
+    if (raw == null && partial) return [];
+    const number = Number(raw ?? 0);
+    return Number.isFinite(number) && number >= 0 ? [[key, number]] : partial ? [] : [[key, 0]];
+  }));
 }
 
 function partsFrom(value) {
@@ -448,8 +456,8 @@ async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta) {
     const call = part.functionCall || part.function_call;
     if (call?.name) appendUpstreamToolCall(state, call, part);
   }
-  const usage = usageFrom(value);
-  if (usage.total_tokens || usage.input_tokens || usage.output_tokens) state.usage = usage;
+  const usage = usageFrom(value, { partial: true });
+  if (Object.keys(usage).length) state.usage = { ...usageFrom({}), ...state.usage, ...usage };
 }
 
 function appendUpstreamToolCall(state, call, part = {}) {
