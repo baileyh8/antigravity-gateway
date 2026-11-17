@@ -36,7 +36,7 @@
     "check:native": "node --check src/agy-native-transport.js && node --check src/agy-request-profile.js && node --check src/agy-session-state.js && node --check src/agy-file-lease.js && node --check src/agy-context-state.js && node --check src/agy-image-references.js && node --check src/agy-tool-results.js && node --check src/agy-structured-output.js && node --check scripts/build-native-transport.js && node --check src/agy-157-tool-contract.js && node --check src/antigravity-model-config.js && node --check src/account-storage-permissions.js",
     "postcheck": "npm run check:native",
     "manager:check": "npm --prefix manager/server run check",
-    "manager:test": "npm --prefix manager/server test",
+    "manager:test": "npm --prefix manager/server test && npm --prefix manager/web test",
     "manager:build": "npm --prefix manager/web run build"
   },
   "engines": {

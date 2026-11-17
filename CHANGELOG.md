@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 修复后台额度分组：优先使用上游分组 ID 和名称，不再从成员模型说明中猜测分组，避免 Gemini 共享额度因包含 Argon 而显示到错误列。
+
+English: Classify dashboard quota buckets by their upstream group identity and name, rather than member-model descriptions, so shared Gemini quota remains in the Gemini column.
+
 ## 1.7.1-bailey.29 - 2026-11-17
 
 - 修复 Sonar 接收新版 Codex 框架时的 system 身份兼容问题：新增 0.169.0-alpha.11.1 取证模板的精确长度/SHA256 匹配，仅规范固定身份开头。
