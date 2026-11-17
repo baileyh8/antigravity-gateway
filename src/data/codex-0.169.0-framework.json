@@ -6,5 +6,21 @@
   "replacement": "You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions.",
   "sourceLength": 21245,
   "sourceSha256": "408a3625ee04de5c3e8aadfca916fa0d729efb7565fa304df3d1f583186b4856",
-  "normalization": "Responses instruction text trims terminal whitespace"
+  "normalization": "Responses instruction text trims terminal whitespace",
+  "additionalFrameworks": [
+    {
+      "length": 21524,
+      "sha256": "d12e6dbdfd4a4ddb26a1f6048b69a32b8b32f74e4add9791d1dff7f4cac0b032",
+      "identityOffset": 0,
+      "identity": "You are Codex, an agent based on GPT-6. You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled.",
+      "replacement": "You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions."
+    },
+    {
+      "length": 20906,
+      "sha256": "8babaf57a8bc3dc6aa718d8a44e04e6b8b3e24e700d39a5c2006bc23647d3c51",
+      "identityOffset": 139,
+      "identity": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. ",
+      "replacement": "You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions. "
+    }
+  ]
 }

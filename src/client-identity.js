@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE } = require('./agy-client-profile');
 const CODEX_169_FRAMEWORK = Object.freeze(require('./data/codex-0.169.0-framework.json'));
+const CODEX_169_MODELS = new Set(['gemini-4-hydrogen-sonar', 'gemini-4-carbon-low', 'gemini-4-carbon-medium', 'gemini-4-carbon-high']);
 
 // Evidence: tests/fixtures/agent-requests-20261107; these are template matches, not client authentication.
 const VERSIONS = Object.freeze({ claude: '2.1.322', hermes: '0.23.1', pi: '1.5.2', dsh: '0.2.2-rc.1', codex: '0.167.2' });
@@ -167,12 +168,12 @@ function codexTemplate(normalized, { clientProfile } = {}) {
   return null;
 }
 
-// Isolated same-account Sonar captures established this exact framework boundary.
+// Isolated same-account Sonar/Carbon comparisons established these framework boundaries.
 // Do not generalize to user text mentioning Codex/GPT, another model, or an
 // unverified template. Forwarded Codex requests retain the existing legacy
 // originator profile; it is a source hint, never authentication.
-function sonarCodex169Template(normalized, { clientProfile, model } = {}) {
-  if (model !== 'gemini-4-hydrogen-sonar' || normalized?.protocol !== 'responses'
+function codex169Template(normalized, { clientProfile, model } = {}) {
+  if (!CODEX_169_MODELS.has(model) || normalized?.protocol !== 'responses'
     || ![CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE].includes(clientProfile)) return null;
   const first = normalized.instructionMessages?.[0];
   if (first?.role !== 'developer' || typeof first.text !== 'string'
@@ -386,18 +387,28 @@ function transformInstruction(message, client, record) {
 }
 
 function sanitizeClientIdentity(normalized, options = {}) {
-  const codex169 = sonarCodex169Template(normalized, options);
+  const codex169 = codex169Template(normalized, options);
   if (codex169) {
-    const first = normalized.instructionMessages[0];
-    const text = codex169.replacement + first.text.slice(codex169.identity.length);
-    const instructionMessages = [{ ...first, text }, ...normalized.instructionMessages.slice(1)];
+    const edits = [];
+    const instructionMessages = normalized.instructionMessages.map((message, index) => {
+      if (message.role !== 'developer' || typeof message.text !== 'string') return message;
+      const candidates = [{ ...codex169, identityOffset: 0 }, ...(codex169.additionalFrameworks || [])];
+      const match = candidates.find(candidate => message.text.length >= candidate.length
+        && message.text.startsWith(candidate.identity, candidate.identityOffset)
+        && hash(message.text.slice(0, candidate.length)) === candidate.sha256);
+      if (!match) return message;
+      edits.push(index);
+      const offset = match.identityOffset;
+      return { ...message, text: message.text.slice(0, offset) + match.replacement
+        + message.text.slice(offset + match.identity.length) };
+    });
     return {
       normalized: { ...normalized, instructionMessages,
         system: [normalized.instructions, ...instructionMessages.map(item => item.text)].filter(Boolean).join('\n\n') },
       // Preserve the previous tool-mapping profile. This new evidence authorizes
-      // one instruction edit, not a different tool view or argument mapping.
+      // fixed identity edits, not a different tool view or argument mapping.
       metadata: { profile: inferClientProfile(normalized, options),
-        rules: ['codex-169-framework-model-identity'], frameworkVersion: codex169.version }
+        rules: ['codex-169-framework-model-identity'], frameworkVersion: codex169.version, editedInstructionBlocks: edits }
     };
   }
   const classifier = classifierBillingPrefix(normalized);

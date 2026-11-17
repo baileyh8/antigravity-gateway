@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.29 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.30 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,9 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.29
+### 当前源码版本：1.7.1-bailey.30
 
-新增 Sonar 的 Codex 0.169.0-alpha.11.1 框架兼容：仅在 Codex 来源、首个 developer 消息的完整模板指纹及指令投影均匹配时，规范固定的模型身份开头。保留顶层 `instructions`、业务 system、权限、工具和历史，不把项目规则降为 user 消息；不全局替换品牌或模型名。其他模型及未知模板沿用原行为。
+Sonar 与 Carbon 的 Codex 0.169.0-alpha.11.1 框架兼容：匹配 Codex 来源、首个 developer 的完整框架指纹和指令投影后，逐块识别已取证的新旧重复框架，只规范固定身份描述。保留顶层 `instructions`、其他业务 system、权限、工具映射和历史；未知模板保持原样。
 
 选择性对齐 [LeeFeee 上游 2.1.3](https://github.com/LeeFeee/antigravity-gateway/tree/v2.1.3) 的动态模型元数据与低预算判定请求兼容。`gemini-4-hydrogen-sonar` 保留原模型 ID，使用账号实时目录的模型 enum、默认 LOW 档和能力上限；不复用其他 Hydrogen 档位。`/v1/models` 的 `data[]` 和扩展 `models[]` 同时提供真实思考档位、上下文/输出上限和媒体能力，不再统一声明可任意选择 low/medium/high。保留本分支的上下文设置覆盖、XHigh 数字 enum 100、工具签名、缓存与账号调度。客户端配置无需修改；客户端仍需主动读取目录，或显式选择该 ID。
 
@@ -687,9 +687,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.29
+### Current source version: 1.7.1-bailey.30
 
-Add a narrowly scoped Sonar compatibility rule for the captured Codex 0.169.0-alpha.11.1 framework. Require the Codex source hint, exact first-developer template fingerprint and intact instruction projection before neutralizing only its fixed model-identity paragraph. Preserve top-level `instructions`, business system rules, permissions, tools and history; do not demote project instructions or globally replace model names. Other models and unmatched templates retain their behavior.
+Sonar and Carbon normalize fixed identity descriptions only inside fingerprint-verified Codex 0.169.0-alpha.11.1 framework blocks, including captured repeated legacy blocks. Preserve top-level instructions, other system rules, permissions, tool mapping and history. Unmatched templates remain literal. Live system-only comparisons verify this scoped compatibility change; full long-session and tool acceptance is a separate gate.
 
 Selectively align dynamic catalog metadata and bounded classifier-output compatibility with [LeeFeee 2.1.3](https://github.com/LeeFeee/antigravity-gateway/tree/v2.1.3). Sonar keeps its exact ID and uses the account's discovered enum, default LOW tier and capability limits. Both `data[]` and extended `models[]` expose actual thinking settings, context/output limits and media capabilities. Preserve local context overrides, numeric Hydrogen XHigh enum 100, signatures, cache fixes and scheduling. No client configuration patch is required; a client must still read the catalog or explicitly select the model ID.
 
