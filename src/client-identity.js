@@ -1,7 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { CODEX_167_CLIENT_PROFILE } = require('./agy-client-profile');
+const { CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE } = require('./agy-client-profile');
+const CODEX_169_FRAMEWORK = Object.freeze(require('./data/codex-0.169.0-framework.json'));
 
 // Evidence: tests/fixtures/agent-requests-20261107; these are template matches, not client authentication.
 const VERSIONS = Object.freeze({ claude: '2.1.322', hermes: '0.23.1', pi: '1.5.2', dsh: '0.2.2-rc.1', codex: '0.167.2' });
@@ -164,6 +165,23 @@ function codexTemplate(normalized, { clientProfile } = {}) {
     return 'codex-cli-fallback-template';
   }
   return null;
+}
+
+// Isolated same-account Sonar captures established this exact framework boundary.
+// Do not generalize to user text mentioning Codex/GPT, another model, or an
+// unverified template. Forwarded Codex requests retain the existing legacy
+// originator profile; it is a source hint, never authentication.
+function sonarCodex169Template(normalized, { clientProfile, model } = {}) {
+  if (model !== 'gemini-4-hydrogen-sonar' || normalized?.protocol !== 'responses'
+    || ![CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE].includes(clientProfile)) return null;
+  const first = normalized.instructionMessages?.[0];
+  if (first?.role !== 'developer' || typeof first.text !== 'string'
+    || first.text.length < CODEX_169_FRAMEWORK.length
+    || !first.text.startsWith(CODEX_169_FRAMEWORK.identity)) return null;
+  if (hash(first.text.slice(0, CODEX_169_FRAMEWORK.length)) !== CODEX_169_FRAMEWORK.sha256) return null;
+  const projection = [normalized.instructions, ...normalized.instructionMessages.map(item => item.text)]
+    .filter(Boolean).join('\n\n');
+  return normalized.system === projection ? CODEX_169_FRAMEWORK : null;
 }
 
 function anthropicSystemBlockEvidence(blocks) {
@@ -368,6 +386,20 @@ function transformInstruction(message, client, record) {
 }
 
 function sanitizeClientIdentity(normalized, options = {}) {
+  const codex169 = sonarCodex169Template(normalized, options);
+  if (codex169) {
+    const first = normalized.instructionMessages[0];
+    const text = codex169.replacement + first.text.slice(codex169.identity.length);
+    const instructionMessages = [{ ...first, text }, ...normalized.instructionMessages.slice(1)];
+    return {
+      normalized: { ...normalized, instructionMessages,
+        system: [normalized.instructions, ...instructionMessages.map(item => item.text)].filter(Boolean).join('\n\n') },
+      // Preserve the previous tool-mapping profile. This new evidence authorizes
+      // one instruction edit, not a different tool view or argument mapping.
+      metadata: { profile: inferClientProfile(normalized, options),
+        rules: ['codex-169-framework-model-identity'], frameworkVersion: codex169.version }
+    };
+  }
   const classifier = classifierBillingPrefix(normalized);
   if (classifier) return {
     normalized: { ...normalized, system: normalized.system.slice(classifier.end) },

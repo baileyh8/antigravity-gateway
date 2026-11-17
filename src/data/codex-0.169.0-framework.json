@@ -1,0 +1,10 @@
+{
+  "version": "0.169.0-alpha.11.1",
+  "length": 21244,
+  "sha256": "3bfdb5b97e2acc710b0642fe69b696b63f955097b379212c795b4adb4ae6fe77",
+  "identity": "You are Codex, an agent based on GPT-6. You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled.",
+  "replacement": "You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions.",
+  "sourceLength": 21245,
+  "sourceSha256": "408a3625ee04de5c3e8aadfca916fa0d729efb7565fa304df3d1f583186b4856",
+  "normalization": "Responses instruction text trims terminal whitespace"
+}
