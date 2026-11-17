@@ -7,7 +7,7 @@ const { DirectAntigravityProvider } = require('../src/direct-provider');
 const { AgySessionStore, newState, recordResponse, restoreHistory } = require('../src/agy-session-state');
 const { normalizeResponses, normalizeChat, normalizeAnthropic, responsesResponse, chatResponse, anthropicResponse } = require('../src/protocol');
 const marker = 'skip_thought_signature_validator';
-const modelIds = ['gemini-3.8-flash-high', ...['low', 'medium', 'high', 'xhigh'].map(x => 'gemini-4-hydrogen-' + x)];
+const modelIds = ['gemini-3.8-flash-high', 'gemini-4-hydrogen-sonar', ...['low', 'medium', 'high', 'xhigh'].map(x => 'gemini-4-hydrogen-' + x)];
 const schema = { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false };
 function fixture(protocol) {
   const payload = protocol === 'responses' ? { input: [{ role: 'user', content: 'Synthetic staged work' }], tools: [{ type: 'function', name: 'external_step', parameters: schema }] }

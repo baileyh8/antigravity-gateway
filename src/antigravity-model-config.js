@@ -70,6 +70,9 @@ const CLIENT_THINKING_FIELDS = new Set([
   'includeThoughts', 'reasoning', 'reasoning_effort', 'reasoningEffort',
   'include_reasoning', 'includeThinking', 'cachedContents', 'cachedContent', 'cached_contents', 'cached_content', 'cache_control', 'cacheControl'
 ]);
+// Selectively ported from LeeFeee 2.1.3: a 64-token classifier budget can
+// expire during fixed-tier thinking before producing the real closing tag.
+const AUTO_MODE_MIN_OUTPUT_TOKENS = 4096;
 function generationProfile(normalized = {}, model, metadata) {
   const resolved = resolveModelConfiguration(model, metadata);
   const client = normalized?.generationConfig;
@@ -89,6 +92,13 @@ function generationProfile(normalized = {}, model, metadata) {
     if (!generation.stopSequences.length) delete generation.stopSequences;
   }
   if (resolved.thinkingConfig) generation.thinkingConfig = resolved.thinkingConfig;
+  const thinking = resolved.thinkingConfig;
+  if (classifierClosingTag && (thinking?.thinkingLevel || thinking?.thinkingBudget > 0 || thinking?.thinkingBudget === -1)
+    && Number.isFinite(generation.maxOutputTokens) && generation.maxOutputTokens > 0) {
+    const budget = Math.max(0, thinking.thinkingBudget || 0);
+    const limit = resolved.profile.maxOutputTokens > 0 ? resolved.profile.maxOutputTokens : Infinity;
+    generation.maxOutputTokens = Math.min(limit, Math.max(AUTO_MODE_MIN_OUTPUT_TOKENS, generation.maxOutputTokens + budget));
+  }
   return Object.keys(generation).length ? generation : null;
 }
 

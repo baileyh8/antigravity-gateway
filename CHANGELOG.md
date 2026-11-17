@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.27 - 2026-11-17
+
+- 选择性移植 LeeFeee 2.1.3 的动态模型目录元数据。Sonar 通过账号实时目录读取模型 enum、LOW 思考档和能力上限，保留原模型 ID；工具调用及签名沿用既有通用往返链路。
+- `/v1/models` 两种目录视图同时返回固定思考设置、真实上下文/输出上限与媒体能力；未知或无档位证据的模型不再声明任意 low/medium/high。保留本分支模型参数覆盖和 Hydrogen XHigh 的数字 enum 100。
+- 移植已识别的思考型自动判定请求输出预算修复，避免 64 Token 在生成真实结束标签前耗尽；普通请求预算保持，判定预算不超过模型上限。
+- 保留独立后台、额度/并发/出口与轮换策略、.26 缓存修复及账号签名隔离。无需修改客户端配置。
+
+English: Selectively align LeeFeee 2.1.3 dynamic model metadata and bounded classifier output handling. Sonar uses live account metadata without aliasing another Hydrogen tier. Expose actual fixed reasoning/media capabilities and limits, retain numeric XHigh enum 100 and local overrides, and preserve cache, signature, manager and scheduling behavior. No client patch is required.
+
 ## 1.7.1-bailey.26 - 2026-11-17
 
 - 修复流式累计 usage 后续片段省略缓存/思考字段时，将已报告计数覆盖为零的问题；明确零值仍覆盖，不累加累计快照、不取最大值掩盖修正。
