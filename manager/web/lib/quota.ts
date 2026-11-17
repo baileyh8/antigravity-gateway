@@ -19,10 +19,16 @@ export const QUOTA_KINDS: Array<{ kind: QuotaKind; label: string }> = [
 ];
 
 export function quotaKind(group: QuotaGroup): QuotaKind {
-  const raw = `${group.displayName || ''} ${group.description || ''}`.toLowerCase();
-  if (raw.includes('argon')) return 'argon';
-  if (raw.includes('claude') || raw.includes('gpt')) return 'claude';
-  if (raw.includes('gemini')) return 'gemini';
+  // Group identity owns the bucket. Descriptions list member models, which
+  // can include Argon inside a shared Gemini bucket after a plan upgrade.
+  const id = String(group.id || '').trim().toLowerCase();
+  if (id === 'gemini' || id === 'gemini-robin') return 'gemini';
+  if (['3p', 'claude', 'gpt', 'claude-gpt', 'claude_gpt'].includes(id)) return 'claude';
+  if (id === 'argon' || id === 'gemini-argon') return 'argon';
+  const name = String(group.displayName || '').toLowerCase();
+  if (name.includes('argon')) return 'argon';
+  if (name.includes('claude') || name.includes('gpt')) return 'claude';
+  if (name.includes('gemini')) return 'gemini';
   return 'other';
 }
 
