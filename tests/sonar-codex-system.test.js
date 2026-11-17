@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const capture = require('../src/data/codex-0.169.0-framework.json');
 const { normalizeResponses } = require('../src/protocol');
 const { sanitizeClientIdentity } = require('../src/client-identity');
-const { buildDirectRequest } = require('../src/direct-provider');
+const { buildDirectRequest, buildDirectRequestAsync } = require('../src/direct-provider');
 const { closeSchemaWorkers } = require('../src/schema-contract');
 test.after(closeSchemaWorkers);
 const model = 'gemini-4-hydrogen-sonar';
@@ -89,4 +89,34 @@ test('the direct request path receives the actual model and leaves tools and gen
   assert.deepEqual(automatic.request.generationConfig, reference.request.generationConfig);
   assert.equal(automatic.request.generationConfig.thinkingConfig.thinkingLevel, 'HIGH');
   assert.match(automatic.request.systemInstruction.parts[0].text, /PROJECT_PERMISSION/);
+});
+
+test('a relayed Codex HTTP request applies the exact Sonar rule before generating upstream', async t => {
+  mockCapturedDigest(t);
+  process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'direct';
+  const { AccountPool } = require('../src/account-pool');
+  const { ProviderRouter } = require('../src/provider-router');
+  const { createServer } = require('../antigravity-gateway');
+  const metadata = { model: 'SYNTHETIC_SONAR', maxTokens: 1048576, maxOutputTokens: 65536, supportsThinking: true, thinkingLevel: 1 };
+  t.mock.method(AccountPool.prototype, 'listModels', async () => [model]);
+  t.mock.method(AccountPool.prototype, 'modelInfo', () => metadata);
+  let seen;
+  t.mock.method(ProviderRouter.prototype, 'send', async (normalized, resolved, hints) => {
+    seen = await buildDirectRequestAsync(normalized, resolved, 'project', 'session', '', null,
+      { identityClientProfile: hints.nativeClientProfile, modelInfo: metadata });
+    return { text: 'OK', toolCalls: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, finishReason: 'STOP' };
+  });
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, {
+    method: 'POST', headers: { 'content-type': 'application/json', originator: 'codex_exec', 'user-agent': 'Bun/synthetic' },
+    body: JSON.stringify(payload())
+  });
+  assert.equal(response.status, 200);
+  assert.match(seen.request.systemInstruction.parts[0].text, /^Top-level client instructions/);
+  assert.ok(seen.request.systemInstruction.parts[0].text.includes(capture.replacement));
+  assert.ok(!seen.request.systemInstruction.parts[0].text.includes(capture.identity));
+  assert.equal(seen.request.generationConfig.thinkingConfig.thinkingLevel, 'HIGH');
+  assert.ok(JSON.stringify(seen.request.contents).includes(capture.identity), 'a user quote remains literal history');
 });
