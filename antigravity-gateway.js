@@ -27,7 +27,7 @@ const { RequestLog, requestContext, runRequestLog } = require('./src/request-log
 const { ModelSettings } = require('./src/model-settings');
 const { DiagnosticLog } = require('./src/diagnostic-log');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
-const { resolveModelConfiguration } = require('./src/antigravity-model-config');
+const { resolveModelConfiguration, requestedReasoningLevel } = require('./src/antigravity-model-config');
 const { closeNativeTransport } = require('./src/agy-native-transport');
 const { imageReferencePaths } = require('./src/agy-image-references');
 const { nativeImageToolResponse } = require('./src/agy-tool-results');
@@ -476,8 +476,10 @@ function codexModelInfo(slug, priority) {
     reasoning_summary_format: 'experimental',
     default_reasoning_summary: 'none',
     default_reasoning_level: effort,
-    supported_reasoning_levels: effort ? [{ effort, description: `Fixed by model: ${slug}` }] : [],
-    ...(thinking ? { fixed_thinking_config: structuredClone(thinking) } : {}),
+    supported_reasoning_levels: resolved.supportedReasoningLevels
+      ? resolved.supportedReasoningLevels.map(effort => ({ effort, description: `Selectable reasoning level: ${effort}` }))
+      : effort ? [{ effort, description: `Fixed by model: ${slug}` }] : [],
+    ...(thinking ? { [resolved.supportedReasoningLevels ? 'default_thinking_config' : 'fixed_thinking_config']: structuredClone(thinking) } : {}),
     shell_type: 'shell_command',
     visibility: 'list',
     minimal_client_version: '0.0.0',
@@ -565,6 +567,7 @@ function codexCatalogBody(models) {
       supported_mime_types: structuredClone(model.supported_mime_types),
       default_reasoning_level: model.default_reasoning_level, supported_reasoning_levels: model.supported_reasoning_levels,
       ...(model.fixed_thinking_config ? { fixed_thinking_config: structuredClone(model.fixed_thinking_config) } : {}),
+      ...(model.default_thinking_config ? { default_thinking_config: structuredClone(model.default_thinking_config) } : {}),
       ...(model.slug === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
     })),
     models: catalog
@@ -1136,6 +1139,9 @@ async function drainTransactions(timeoutMs = Infinity) {
 
 
 async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
+  // Reject unsupported Sonar effort locally before admission, account auth or
+  // upstream retries. Other models keep their existing fixed contracts.
+  requestedReasoningLevel(normalized, model);
   const transaction = (async () => {
     try {
       return await runTurn(normalized, model, signal, options);

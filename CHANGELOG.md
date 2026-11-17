@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.28 - 2026-11-17
+
+- Sonar 开放 low、medium、high 思考档（数字 1、2、3），默认仍使用目录 LOW；通过 Chat、Responses、Anthropic 的标准 effort 字段传递，无需修改客户端代码。
+- 两类模型目录公布可选三档与默认思考配置，移除 Sonar 的固定 LOW 声明；其他模型固定档、真实能力上限保持。
+- Sonar 的 XHigh/100、MINIMAL/4 及未知档位在本地返回 400，不触发账号派发、重试或冷却；none 仍仅控制思考输出。
+- 保留后台、账号调度、出口、额度/并发、缓存、工具签名和原生传输。本次实测证明 MEDIUM/HIGH 参数可接受，不宣称推理强度或账号安全保证。
+
+English: Enable selectable low/medium/high reasoning for Sonar through standard Chat, Responses and Anthropic effort fields, keeping LOW as the default. Publish selectable capabilities and reject unsupported effort locally before dispatch. Other fixed model contracts, signatures, cache, scheduling and transport remain unchanged. Parameter acceptance does not prove reasoning-strength differences.
+
 ## 1.7.1-bailey.27 - 2026-11-17
 
 - 选择性移植 LeeFeee 2.1.3 的动态模型目录元数据。Sonar 通过账号实时目录读取模型 enum、LOW 思考档和能力上限，保留原模型 ID；工具调用及签名沿用既有通用往返链路。
