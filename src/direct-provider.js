@@ -318,7 +318,7 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
   const prepareContext = effects.prepareContext || prepareNativeContext;
   validateToolChoice(normalized.tools, normalized.toolChoice);
   const sourceTools = normalized.tools;
-  const identity = sanitizeClientIdentity(normalized, { clientProfile: native.identityClientProfile || native.clientProfile || '' });
+  const identity = sanitizeClientIdentity(normalized, { clientProfile: native.identityClientProfile || native.clientProfile || '', model });
   native.clientIdentity = identity.metadata.profile;
   native.toolAdapter = yield prepareTools(identity.normalized, { ...native, sourceTools, clientIdentity: identity.metadata.profile });
   const log = requestContext();

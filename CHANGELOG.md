@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.29 - 2026-11-17
+
+- 修复 Sonar 接收新版 Codex 框架时的 system 身份兼容问题：新增 0.169.0-alpha.11.1 取证模板的精确长度/SHA256 匹配，仅规范固定身份开头。
+- 处理同时带顶层 instructions 和 developer 指令的请求，保留全部业务指令、权限与原优先级；不修改工具 Schema、历史、用户引用或其他模型。
+- 保留原工具映射画像，避免身份兼容引入新的工具别名或参数变化。未知模板继续原样处理。
+- 前置同号原出口对照中，约 198KB/11 工具的恢复负载在精确规范后 LOW/MEDIUM/HIGH 均成功接收约 47.7K 输入 Token；这不等于所有 429 原因均已消除，不作账号安全保证。
+
+English: Normalize only the fingerprint-verified model-identity paragraph of the captured Codex 0.169.0-alpha.11.1 framework for Sonar. Preserve top-level instructions, project rules, permissions, tool mapping and conversation history. Other model routes and unmatched templates remain untouched. Prior isolated full-load comparisons succeeded at all three supported reasoning levels; this is a bounded compatibility fix, not a universal rate-limit or account-safety guarantee.
+
 ## 1.7.1-bailey.28 - 2026-11-17
 
 - Sonar 开放 low、medium、high 思考档（数字 1、2、3），默认仍使用目录 LOW；通过 Chat、Responses、Anthropic 的标准 effort 字段传递，无需修改客户端代码。
@@ -27,7 +36,7 @@ English: Selectively align LeeFeee 2.1.3 dynamic model metadata and bounded clas
 
 English: Merge only present cumulative usage fields, isolate explicit child-thread state and response ownership, and preserve exact-prefix metadata across interleaved histories and restarts using a bounded account-private index. No client patch is required. Quota reserves, concurrency, egress, rotation and signature boundaries remain intact; implicit upstream cache hits are not guaranteed.
 
-当前版本 `1.7.1-bailey.25`。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
+历史版本 `1.7.1-bailey.25` 的说明如下。当天 `.10` 到 `.21` 的逐条记录保留完整改动历史；面向使用者的版本说明见 [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases)。
 
 ## 1.7.1-bailey.25 - 2026-11-16
 
