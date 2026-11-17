@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.7.1-bailey.30 - 2026-11-18
+
+- 修复 Carbon 经 Codex/Magpie 调用时的框架身份兼容：在已验证的 Responses 来源与模板指纹下，识别重复的新旧框架，仅规范三处固定身份描述，保留其他指令、权限、工具映射和历史。Sonar 沿用相同的受限规则。
+- 不修改思考档、请求重试、账号启停、出口、额度或并发。短文本成功不等同于真实长会话与工具往返验收。
+
+English: Extend fingerprint-scoped Codex identity compatibility to Carbon and repeated framework blocks. Preserve instruction priority, permissions, tool mapping, history, reasoning settings and account routing. Live system comparisons do not establish full long-session/tool acceptance.
+
 
 - 修复后台额度分组：优先使用上游分组 ID 和名称，不再从成员模型说明中猜测分组，避免 Gemini 共享额度因包含 Argon 而显示到错误列。
 
