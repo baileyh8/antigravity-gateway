@@ -27,6 +27,7 @@ const { RequestLog, requestContext, runRequestLog } = require('./src/request-log
 const { ModelSettings } = require('./src/model-settings');
 const { DiagnosticLog } = require('./src/diagnostic-log');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
+const { resolveModelConfiguration } = require('./src/antigravity-model-config');
 const { closeNativeTransport } = require('./src/agy-native-transport');
 const { imageReferencePaths } = require('./src/agy-image-references');
 const { nativeImageToolResponse } = require('./src/agy-tool-results');
@@ -421,6 +422,17 @@ const ARGON_MODEL_METADATA = Object.freeze({
 function codexModelInfo(slug, priority) {
   const argon = slug === ARGON_MODEL;
   const upstream = usesDirectTransport() ? ACCOUNT_POOL.modelInfo(slug) : null;
+  const resolved = resolveModelConfiguration(slug, upstream);
+  const mimeTypes = resolved.profile.supportedMimeTypes && typeof resolved.profile.supportedMimeTypes === 'object'
+    && !Array.isArray(resolved.profile.supportedMimeTypes) ? structuredClone(resolved.profile.supportedMimeTypes) : {};
+  const mediaCapability = (field, prefix) => typeof resolved.profile[field] === 'boolean' ? resolved.profile[field]
+    : Object.entries(mimeTypes).some(([type, supported]) => supported === true && type.toLowerCase().startsWith(prefix + '/'));
+  const supportsImages = argon || mediaCapability('supportsImages', 'image');
+  const thinking = argon ? null : resolved.thinkingConfig;
+  // Preserve our captured numeric Hydrogen XHigh enum; upstream's generic
+  // fixed-tier catalog handles strings, while this fork also supports 100.
+  const effort = thinking?.thinkingLevel === 100 ? 'xhigh'
+    : typeof thinking?.thinkingLevel === 'string' ? thinking.thinkingLevel.toLowerCase() : null;
   // Cloud Code currently reports 1,048,576 input tokens for Gemini 3.7/3.8
   // Flash. Keep that verified fallback even when a transient discovery request
   // fails; otherwise the client would compact a healthy 1M context at 200K.
@@ -435,8 +447,14 @@ function codexModelInfo(slug, priority) {
     default_verbosity: 'low',
     apply_patch_tool_type: 'freeform',
     web_search_tool_type: 'text_and_image',
-    input_modalities: argon ? ARGON_MODEL_METADATA.input_modalities : ['text', 'image'],
-    supports_image_detail_original: true,
+    upstream_provider: 'cloudcode',
+    upstream_protocol: 'Google Antigravity API',
+    input_modalities: argon ? ARGON_MODEL_METADATA.input_modalities : supportsImages ? ['text', 'image'] : ['text'],
+    supports_images: supportsImages,
+    supports_video: argon || mediaCapability('supportsVideo', 'video'),
+    supports_audio: argon || mediaCapability('supportsAudio', 'audio'),
+    supported_mime_types: mimeTypes,
+    supports_image_detail_original: supportsImages && resolved.profile.supportsImageDetailOriginal === true,
     truncation_policy: { mode: 'tokens', limit: 10000 },
     supports_parallel_tool_calls: true,
     tool_mode: 'direct',
@@ -457,12 +475,9 @@ function codexModelInfo(slug, priority) {
     base_instructions: 'Follow the client instructions and use only client-provided tools when needed.',
     reasoning_summary_format: 'experimental',
     default_reasoning_summary: 'none',
-    default_reasoning_level: argon ? null : 'medium',
-    supported_reasoning_levels: argon ? [] : [
-      { effort: 'low', description: 'Faster responses' },
-      { effort: 'medium', description: 'Balanced reasoning' },
-      { effort: 'high', description: 'Deeper reasoning' }
-    ],
+    default_reasoning_level: effort,
+    supported_reasoning_levels: effort ? [{ effort, description: `Fixed by model: ${slug}` }] : [],
+    ...(thinking ? { fixed_thinking_config: structuredClone(thinking) } : {}),
     shell_type: 'shell_command',
     visibility: 'list',
     minimal_client_version: '0.0.0',
@@ -538,13 +553,21 @@ function displayModels(models) {
 
 function codexCatalogBody(models) {
   const ordered = displayModels(models);
+  const catalog = ordered.map((id, index) => codexModelInfo(id, index));
   return {
     object: 'list',
-    data: ordered.map((id) => ({
-      id, object: 'model', created: 0, owned_by: 'antigravity', display_name: MODEL_SETTINGS.get(id).displayName || id,
-      ...(id === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
+    data: catalog.map((model) => ({
+      id: model.slug, object: 'model', created: 0, owned_by: 'antigravity', display_name: model.display_name,
+      upstream_provider: model.upstream_provider, upstream_protocol: model.upstream_protocol,
+      context_window: model.context_window, max_output_tokens: model.max_output_tokens,
+      input_modalities: model.input_modalities, supports_images: model.supports_images,
+      supports_video: model.supports_video, supports_audio: model.supports_audio,
+      supported_mime_types: structuredClone(model.supported_mime_types),
+      default_reasoning_level: model.default_reasoning_level, supported_reasoning_levels: model.supported_reasoning_levels,
+      ...(model.fixed_thinking_config ? { fixed_thinking_config: structuredClone(model.fixed_thinking_config) } : {}),
+      ...(model.slug === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
     })),
-    models: ordered.map((id, index) => codexModelInfo(id, index))
+    models: catalog
   };
 }
 
