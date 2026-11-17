@@ -21,6 +21,24 @@ const CAPTURED_MODELS = Object.freeze({
 
 // Numeric directory values paired with actual generation captures.
 const THINKING_LEVELS = Object.freeze({ 1: 'LOW', 2: 'MEDIUM', 3: 'HIGH' });
+const SONAR_MODEL = 'gemini-4-hydrogen-sonar';
+// Verified with isolated upstream generations; the directory reports the
+// default LOW, not the complete set of accepted request levels.
+const SONAR_REASONING_LEVELS = Object.freeze(['low', 'medium', 'high']);
+
+function requestedReasoningLevel(normalized, model) {
+  if (model !== SONAR_MODEL) return null;
+  const effort = String(normalized?.reasoningEffort ?? '').trim().toLowerCase();
+  // "none" retains the existing output-summary switch, not a new upstream
+  // no-thinking capability. Omitted effort still uses the catalog default.
+  if (!effort || effort === 'none') return null;
+  const level = Object.hasOwn(THINKING_LEVELS, effort) ? THINKING_LEVELS[effort].toLowerCase() : effort;
+  if (SONAR_REASONING_LEVELS.includes(level)) return level.toUpperCase();
+  throw new ModelCapabilityError(model, {
+    code: 'unsupported_thinking_level',
+    message: 'Sonar 仅支持 low、medium、high（数字 1、2、3）；不支持 XHigh 或 MINIMAL。'
+  });
+}
 function thinkingLevel(value) {
   if (value === 100) return 100; // Hydrogen XHigh: observed numeric protobuf JSON value.
   return (Object.hasOwn(THINKING_LEVELS, value) ? THINKING_LEVELS[value] : '')
@@ -59,6 +77,7 @@ function resolveModelConfiguration(model, metadata) {
     upstreamModel: model,
     profile,
     thinkingConfig,
+    ...(model === SONAR_MODEL ? { supportedReasoningLevels: SONAR_REASONING_LEVELS } : {}),
     thinkingSource: captured ? 'captured' : thinkingConfig ? 'catalog' : 'none'
   };
 }
@@ -75,6 +94,7 @@ const CLIENT_THINKING_FIELDS = new Set([
 const AUTO_MODE_MIN_OUTPUT_TOKENS = 4096;
 function generationProfile(normalized = {}, model, metadata) {
   const resolved = resolveModelConfiguration(model, metadata);
+  const requested = requestedReasoningLevel(normalized, model);
   const client = normalized?.generationConfig;
   const generation = {
     ...(resolved.profile.maxOutputTokens > 0 ? { maxOutputTokens: resolved.profile.maxOutputTokens } : {}),
@@ -91,8 +111,8 @@ function generationProfile(normalized = {}, model, metadata) {
     generation.stopSequences = generation.stopSequences.filter(stop => stop !== classifierClosingTag);
     if (!generation.stopSequences.length) delete generation.stopSequences;
   }
-  if (resolved.thinkingConfig) generation.thinkingConfig = resolved.thinkingConfig;
-  const thinking = resolved.thinkingConfig;
+  const thinking = requested ? { includeThoughts: true, thinkingLevel: requested } : resolved.thinkingConfig;
+  if (thinking) generation.thinkingConfig = thinking;
   if (classifierClosingTag && (thinking?.thinkingLevel || thinking?.thinkingBudget > 0 || thinking?.thinkingBudget === -1)
     && Number.isFinite(generation.maxOutputTokens) && generation.maxOutputTokens > 0) {
     const budget = Math.max(0, thinking.thinkingBudget || 0);
@@ -106,10 +126,10 @@ function generationProfile(normalized = {}, model, metadata) {
 // future model containing "claude" in its name.
 const NO_THINKING_WITH_FORCED_TOOLS = new Set(['claude-sonnet-4-6', 'claude-opus-4-6-thinking']);
 class ModelCapabilityError extends Error {
-  constructor(model) {
-    super(`模型 ${model} 的固定思考配置不支持强制工具调用。请使用自动工具选择，或选择支持该组合的模型。`);
+  constructor(model, { code = 'model_capability_conflict', message } = {}) {
+    super(message || `模型 ${model} 的固定思考配置不支持强制工具调用。请使用自动工具选择，或选择支持该组合的模型。`);
     this.name = 'ModelCapabilityError';
-    this.code = 'model_capability_conflict';
+    this.code = code;
     this.status = 400;
   }
 }
@@ -120,5 +140,5 @@ function assertGenerationCompatibility(model, generationConfig, toolMode) {
   }
 }
 
-module.exports = { CAPTURED_MODELS, thinkingLevel, modelProfile, resolveModelConfiguration,
+module.exports = { CAPTURED_MODELS, thinkingLevel, modelProfile, resolveModelConfiguration, requestedReasoningLevel,
   generationProfile, assertGenerationCompatibility, ModelCapabilityError };
