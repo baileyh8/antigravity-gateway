@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.32 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.33 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.32
+### 当前源码版本：1.7.1-bailey.33
+
+修复 Claude Messages 并行工具签名与单工具限制，补齐 Claude 5.5 和 Argon 目录参数，并支持 Argon 缺签名的旧工具历史续接。
 
 Carbon 支持续接缺签名的旧工具历史。已有签名优先保留。
 
@@ -691,7 +693,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.32
+### Current source version: 1.7.1-bailey.33
+
+Preserve parallel tool signatures and single-tool constraints in Claude Messages. Retain Claude 5.5 and Argon tier metadata and handle unsigned Argon tool history.
 
 Carbon can resume tool history with a missing signature. Existing signatures take precedence.
 

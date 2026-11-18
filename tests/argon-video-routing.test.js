@@ -4,9 +4,42 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'direct';
 const { AccountPool } = require('../src/account-pool');
+const { ModelSettings } = require('../src/model-settings');
 const ARGON_MODEL = 'gemini-4-argon';
 const { normalizeChat } = require('../src/protocol');
-const { createServer, runTurn } = require('../antigravity-gateway');
+const { buildDirectRequest } = require('../src/direct-provider');
+const { codexCatalogBody, createServer, runTurn } = require('../antigravity-gateway');
+
+test('Argon tiers keep captured enums, limits and thinking levels in requests and both catalogs', t => {
+  t.mock.method(AccountPool.prototype, 'modelInfo', () => null);
+  const enumByTier = { low: 'M419', medium: 'M418', high: 'M417' };
+  const models = Object.keys(enumByTier).map(tier => `${ARGON_MODEL}-${tier}`);
+  const catalog = codexCatalogBody(models);
+  for (const [tier, modelEnum] of Object.entries(enumByTier)) {
+    const model = `${ARGON_MODEL}-${tier}`;
+    const thinking = { includeThoughts: true, thinkingLevel: tier.toUpperCase() };
+    const normalized = normalizeChat({ model, reasoning_effort: 'xhigh', messages: [{ role: 'user', content: 'Fixture.' }] });
+    const { request } = buildDirectRequest(normalized, model, 'fixture-project', 'fixture-session');
+    assert.equal(request.labels.model_enum, `MODEL_PLACEHOLDER_${modelEnum}`);
+    assert.deepEqual(request.generationConfig, { maxOutputTokens: 65536, thinkingConfig: thinking });
+    for (const entry of [catalog.data.find(row => row.id === model), catalog.models.find(row => row.slug === model)]) {
+      assert.equal(entry.context_window, 1048576);
+      assert.equal(entry.max_output_tokens, 65536);
+      assert.deepEqual(entry.fixed_thinking_config, thinking);
+    }
+  }
+});
+
+test('base Argon honors manual limits consistently across both catalogs', t => {
+  t.mock.method(ModelSettings.prototype, 'get', id => id === ARGON_MODEL ? { contextWindow: 650000, maxOutputTokens: 12000 } : {});
+  const { data, models } = codexCatalogBody([ARGON_MODEL]);
+  for (const entry of [data[0], models[0]]) {
+    assert.equal(entry.context_window, 650000);
+    assert.equal(entry.max_output_tokens, 12000);
+    assert.equal(entry.default_reasoning_level, null);
+    assert.equal(entry.video_route, 'cloudcode_default_model');
+  }
+});
 
 test('Argon video understanding uses the original Cloud Code multimodal route only for video turns', async t => {
   const cloud = [];

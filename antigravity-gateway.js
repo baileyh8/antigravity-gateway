@@ -421,6 +421,7 @@ const ARGON_MODEL_METADATA = Object.freeze({
 
 function codexModelInfo(slug, priority) {
   const argon = slug === ARGON_MODEL;
+  const tieredArgon = /^gemini-4-argon-(?:low|medium|high)$/.test(slug);
   const upstream = usesDirectTransport() ? ACCOUNT_POOL.modelInfo(slug) : null;
   const resolved = resolveModelConfiguration(slug, upstream);
   const mimeTypes = resolved.profile.supportedMimeTypes && typeof resolved.profile.supportedMimeTypes === 'object'
@@ -437,6 +438,7 @@ function codexModelInfo(slug, priority) {
   // Flash. Keep that verified fallback even when a transient discovery request
   // fails; otherwise the client would compact a healthy 1M context at 200K.
   const contextWindow = MODEL_SETTINGS.get(slug).contextWindow || (argon ? ARGON_MODEL_METADATA.context_window : upstream?.maxTokens)
+    || (tieredArgon ? resolved.profile.maxTokens : null)
     || (/^gemini-3\.[78]-flash(?:[.-]|$)/i.test(slug) ? 1048576 : 200000);
   return {
     slug,
@@ -466,7 +468,8 @@ function codexModelInfo(slug, priority) {
     auto_review_model_override: null,
     context_window: contextWindow,
     max_context_window: contextWindow,
-    max_output_tokens: argon ? ARGON_MODEL_METADATA.max_output_tokens : upstream?.maxOutputTokens || null,
+    max_output_tokens: argon ? ARGON_MODEL_METADATA.max_output_tokens
+      : (tieredArgon ? resolved.profile.maxOutputTokens : upstream?.maxOutputTokens) || null,
     ...(argon ? ARGON_MODEL_METADATA : {}),
     ...(MODEL_SETTINGS.get(slug).contextWindow ? { context_window: MODEL_SETTINGS.get(slug).contextWindow, max_context_window: MODEL_SETTINGS.get(slug).contextWindow } : {}),
     ...(MODEL_SETTINGS.get(slug).maxOutputTokens ? { max_output_tokens: MODEL_SETTINGS.get(slug).maxOutputTokens } : {}),
@@ -560,6 +563,7 @@ function codexCatalogBody(models) {
     object: 'list',
     data: catalog.map((model) => ({
       id: model.slug, object: 'model', created: 0, owned_by: 'antigravity', display_name: model.display_name,
+      ...(model.slug === ARGON_MODEL ? ARGON_MODEL_METADATA : {}),
       upstream_provider: model.upstream_provider, upstream_protocol: model.upstream_protocol,
       context_window: model.context_window, max_output_tokens: model.max_output_tokens,
       input_modalities: model.input_modalities, supports_images: model.supports_images,
@@ -567,8 +571,7 @@ function codexCatalogBody(models) {
       supported_mime_types: structuredClone(model.supported_mime_types),
       default_reasoning_level: model.default_reasoning_level, supported_reasoning_levels: model.supported_reasoning_levels,
       ...(model.fixed_thinking_config ? { fixed_thinking_config: structuredClone(model.fixed_thinking_config) } : {}),
-      ...(model.default_thinking_config ? { default_thinking_config: structuredClone(model.default_thinking_config) } : {}),
-      ...(model.slug === ARGON_MODEL ? ARGON_MODEL_METADATA : {})
+      ...(model.default_thinking_config ? { default_thinking_config: structuredClone(model.default_thinking_config) } : {})
     })),
     models: catalog
   };

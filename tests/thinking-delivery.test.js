@@ -71,6 +71,34 @@ test('shared response formats keep public thoughts distinct from answer text and
   assert.equal(r.output[0].summary[0].text, result.thinking);
 });
 
+test('Anthropic JSON and SSE keep each parallel tool signature with its own call', () => {
+  const model = 'claude-sonnet-5-5-medium';
+  const signatures = ['signature-a', undefined, 'signature-c'];
+  const toolCalls = signatures.map((thoughtSignature, index) => ({
+    id: `call_${index}`, name: 'read_note', arguments: { index }, thoughtSignature
+  }));
+  const body = anthropicResponse(model, { ...result, toolCalls });
+  const { res, events } = harness();
+  emitAnthropicStream(res, body);
+  const streamed = [];
+  for (const event of events()) {
+    if (event.type === 'content_block_start') streamed[event.index] = { ...event.content_block };
+    if (event.type !== 'content_block_delta') continue;
+    const block = streamed[event.index], delta = event.delta;
+    if (delta.type === 'signature_delta') block.signature = delta.signature;
+    if (delta.type === 'thinking_delta') block.thinking += delta.thinking;
+    if (delta.type === 'text_delta') block.text += delta.text;
+    if (delta.type === 'input_json_delta') block.input = JSON.parse(delta.partial_json);
+  }
+  assert.deepEqual(streamed, body.content);
+  for (const content of [body.content, streamed]) {
+    const history = normalizeAnthropic({ model, messages: [{ role: 'assistant', content }] });
+    const calls = history.messages[0].parts.filter(part => part.type === 'tool_call');
+    assert.deepEqual(calls.map(call => [call.id, call.arguments, call.thoughtSignature]),
+      toolCalls.map(call => [call.id, call.arguments, call.thoughtSignature]));
+  }
+});
+
 test('Anthropic and Chat streaming preserve summary and answer exactly once, including late final suffixes', () => {
   for (const protocol of ['anthropic', 'chat']) {
     const { res, events } = harness();
