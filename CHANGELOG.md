@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1-bailey.33 - 2026-11-18
+
+- 修复 Messages 流式与非流式并行工具调用的签名串位，接入 `disable_parallel_tool_use`。保留 Claude Opus / Sonnet 5.5 三档在目录暂缺时的实测模型枚举和请求元数据。
+
+English: Keep Anthropic Messages tool signatures associated with their calls, honor `disable_parallel_tool_use`, and retain captured Claude 5.5 model metadata when the live catalog lacks those fields.
+
+- 将 Argon 和 Low、Medium、High 三档纳入旧工具历史签名兼容，保留已有签名。三档保留已验证的模型枚举与目录上限，基础 Argon 在两个模型目录视图里统一应用手动上限。
+
+English: Extend missing tool-history signature compatibility to base Argon and its three tiers. Preserve captured tier metadata and use the same configured base Argon limits in both catalog views.
+
 ## 1.7.1-bailey.32 - 2026-11-18
 
 - 修复 Carbon 续接缺少 `thought_signature` 的旧工具历史时返回 400 的问题。历史恢复后，优先使用已有签名，仅对每组缺签名的首个模型工具调用使用现有兼容标记。

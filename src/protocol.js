@@ -503,6 +503,11 @@ function* structuredSchemaFromSteps(format, compiler) {
 }
 
 function* normalizeAnthropicSteps(payload, compiler = compileSchema) {
+  const toolChoice = payload.tool_choice;
+  if (toolChoice != null && Object.hasOwn(toolChoice, 'disable_parallel_tool_use')
+    && typeof toolChoice.disable_parallel_tool_use !== 'boolean') {
+    throw new GatewayError('tool_choice.disable_parallel_tool_use 必须为布尔值。', { code: 'invalid_tool_choice', status: 400 });
+  }
   // Keep the original source text here. Identity cleanup happens at the
   // upstream boundary using verified templates, not global string matching.
   const systemParts = [textFromContent(payload.system, 'anthropic')];
@@ -537,7 +542,8 @@ function* normalizeAnthropicSteps(payload, compiler = compileSchema) {
     ...(clientSystemProvenance ? { clientSystemProvenance } : {}),
     messages,
     tools: yield* requestToolsSteps(payload, 'anthropic', compiler),
-    toolChoice: payload.tool_choice,
+    toolChoice,
+    ...(toolChoice?.disable_parallel_tool_use === true ? { parallelToolCalls: false } : {}),
     generationConfig: generationConfigFrom(payload),
     ...reasoningOptionsFrom(payload, "anthropic"),
     stream: Boolean(payload.stream),
@@ -890,14 +896,14 @@ function anthropicResponse(model, result) {
   const termination = upstreamTermination(result);
   const content = [];
   const text = deliveryText(result);
-  // Keep the provider signature carrier before any visible assistant output.
-  // Claude Code can then preserve it as part of the assistant tool turn.
-  for (const call of result.toolCalls) {
-    if (call.thoughtSignature) content.push({ type: 'thinking', thinking: '', signature: call.thoughtSignature });
-  }
+  const firstSignature = result.toolCalls[0]?.thoughtSignature;
+  if (firstSignature) content.push({ type: 'thinking', thinking: '', signature: firstSignature });
   if (result.thinking) content.push({ type: 'thinking', thinking: result.thinking });
   if (text) content.push({ type: 'text', text });
-  for (const call of result.toolCalls) {
+  // Each later signature carrier must precede its own tool_use. Putting all
+  // carriers first would attach only the last signature to the first call.
+  for (const [index, call] of result.toolCalls.entries()) {
+    if (index > 0 && call.thoughtSignature) content.push({ type: 'thinking', thinking: '', signature: call.thoughtSignature });
     content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.arguments });
   }
   const response = {

@@ -9,7 +9,8 @@ const { normalizeResponses, normalizeChat, normalizeAnthropic, responsesResponse
 const marker = 'skip_thought_signature_validator';
 const modelIds = ['gemini-3.8-flash-high', 'gemini-4-hydrogen-sonar',
   ...['low', 'medium', 'high', 'xhigh'].map(tier => `gemini-4-hydrogen-${tier}`),
-  ...['low', 'medium', 'high'].map(tier => `gemini-4-carbon-${tier}`)];
+  ...['low', 'medium', 'high'].map(tier => `gemini-4-carbon-${tier}`),
+  'gemini-4-argon', ...['low', 'medium', 'high'].map(tier => `gemini-4-argon-${tier}`)];
 const schema = { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false };
 function fixture(protocol) {
   const payload = protocol === 'responses' ? { input: [{ role: 'user', content: 'Synthetic staged work' }], tools: [{ type: 'function', name: 'external_step', parameters: schema }] }

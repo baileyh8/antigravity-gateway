@@ -61,6 +61,20 @@ test('every captured model sends its actual 1.5.7 reasoning fields and output ca
   assert.deepEqual(generationProfile({ generationConfig: { maxOutputTokens: 512, thinkingBudget: 1, cachedContents: 'do-not-forward' } }, 'unobserved-name', {}).thinkingConfig, undefined);
 });
 
+test('Claude 5.5 captures retain the known model enum without a live catalog', () => {
+  const input = { messages: [{ role: 'user', text: 'fixture' }], reasoningEffort: 'low' };
+  const models = Object.entries(wire.models).filter(([model]) => /^claude-(?:opus|sonnet)-5-5-/.test(model));
+  assert.equal(models.length, 6);
+  for (const [model, captured] of models) {
+    const { request } = buildDirectRequest(input, model, 'p', '');
+    assert.equal(request.labels.model_enum, captured.modelEnum, model);
+    assert.deepEqual(request.generationConfig, captured.generationConfig, model);
+    for (const [label, value] of Object.entries(captured.historyLabels)) assert.equal(request.labels[label], value);
+    const live = buildDirectRequest(input, model, 'p', '', '', null, { modelInfo: { model: 'MODEL_LIVE_FIXTURE' } });
+    assert.equal(live.request.labels.model_enum, 'MODEL_LIVE_FIXTURE');
+  }
+});
+
 test('three public protocols complete an issued MCP tool, restart, restore signature and correlate its receipt', async t => {
   for (const protocol of ['anthropic', 'chat', 'responses']) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-157-contract-'));

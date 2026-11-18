@@ -2,32 +2,68 @@
   "claude-opus-5-5-high": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "HIGH"
+    "thinkingLevel": "HIGH",
+    "model": "MODEL_PLACEHOLDER_M402",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "claude-opus-5-5-low": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "LOW"
+    "thinkingLevel": "LOW",
+    "model": "MODEL_PLACEHOLDER_M400",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "claude-opus-5-5-medium": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "MEDIUM"
+    "thinkingLevel": "MEDIUM",
+    "model": "MODEL_PLACEHOLDER_M401",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "claude-sonnet-5-5-high": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "HIGH"
+    "thinkingLevel": "HIGH",
+    "model": "MODEL_PLACEHOLDER_M405",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "claude-sonnet-5-5-low": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "LOW"
+    "thinkingLevel": "LOW",
+    "model": "MODEL_PLACEHOLDER_M403",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "claude-sonnet-5-5-medium": {
     "maxOutputTokens": 128000,
     "supportsThinking": true,
-    "thinkingLevel": "MEDIUM"
+    "thinkingLevel": "MEDIUM",
+    "model": "MODEL_PLACEHOLDER_M404",
+    "capturedLabels": {
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    }
   },
   "gemini-2.5-flash-lite": {
     "maxOutputTokens": 65535,
@@ -62,17 +98,23 @@
   "gemini-4-argon-high": {
     "maxOutputTokens": 65536,
     "supportsThinking": true,
-    "thinkingLevel": "HIGH"
+    "thinkingLevel": "HIGH",
+    "model": "MODEL_PLACEHOLDER_M417",
+    "maxTokens": 1048576
   },
   "gemini-4-argon-low": {
     "maxOutputTokens": 65536,
     "supportsThinking": true,
-    "thinkingLevel": "LOW"
+    "thinkingLevel": "LOW",
+    "model": "MODEL_PLACEHOLDER_M419",
+    "maxTokens": 1048576
   },
   "gemini-4-argon-medium": {
     "maxOutputTokens": 65536,
     "supportsThinking": true,
-    "thinkingLevel": "MEDIUM"
+    "thinkingLevel": "MEDIUM",
+    "model": "MODEL_PLACEHOLDER_M418",
+    "maxTokens": 1048576
   },
   "gemini-4-hydrogen-high": {
     "maxOutputTokens": 262144,

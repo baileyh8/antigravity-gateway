@@ -34,6 +34,27 @@ test('the three protocols preserve reasoning effort without leaking it into Clou
   }
 });
 
+test('Anthropic disable_parallel_tool_use enforces a single call without dropping calls', () => {
+  const payload = {
+    model: 'claude-opus-5-5-medium',
+    tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+    tools: [{ name: 'read_note', input_schema: { type: 'object' } }]
+  };
+  const result = { toolCalls: [1, 2].map(n => ({ id: `call_${n}`, name: 'read_note', arguments: {} })) };
+  const normalized = normalizeAnthropic(payload);
+  assert.equal(normalized.parallelToolCalls, false);
+  const { buildDirectRequest } = require('../src/direct-provider');
+  const { request } = buildDirectRequest(normalized, payload.model, 'fixture-project', 'fixture-session');
+  assert.match(request.systemInstruction.parts[0].text, /at most one client tool call/);
+  assert.equal(request.toolConfig, undefined, 'auto selection remains auto');
+  assert.throws(() => finalizeModelResult(normalized, result), { code: 'invalid_tool_choice' });
+  assert.equal(finalizeModelResult(normalized, { toolCalls: result.toolCalls.slice(0, 1) }).toolCalls.length, 1);
+  const parallel = normalizeAnthropic({ ...payload, tool_choice: { type: 'auto', disable_parallel_tool_use: false } });
+  assert.equal(finalizeModelResult(parallel, result).toolCalls.length, 2);
+  assert.throws(() => normalizeAnthropic({ ...payload, tool_choice: { type: 'auto', disable_parallel_tool_use: 'true' } }),
+    { code: 'invalid_tool_choice' });
+});
+
 test('normalization retains unverified identity text for evidence-based provider sanitization', () => {
   const normalized = normalizeAnthropic({
     system: [
