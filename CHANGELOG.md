@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.38 - 2026-11-18
+
+- 兼容新版 Codex Code Mode `exec` 的 Lark grammar 中两处已验证的空行，修复网关构建请求时的 `unsupported_tool_grammar`。其他 grammar 继续按原规则校验，工具输入、调用 ID、签名与回执继续原样传递。
+
+English: Accept the two verified blank lines in the newer Codex Code Mode `exec` Lark grammar. Other grammars still follow the existing validation rules. Tool input, call IDs, signatures, and receipts are preserved.
+
 ## 1.7.1-bailey.37 - 2026-11-18
 
 - 兼容 Codex Desktop 通过 Responses 顶层 `instructions` 发送的已验证目录框架，处理 Carbon Medium 脱敏对照复现的上游 429。保留其余指令、用户消息、工具和模型参数。

@@ -45,6 +45,7 @@ PRAGMA_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/
 NEWLINE: /\r?\n/
 SOURCE: /[\s\S]+/
 `;
+const CODEX_EXEC_GRAMMAR_WITH_EMPTY_LINES = '\n' + CODEX_EXEC_GRAMMAR.replace('plain_source: SOURCE\n', 'plain_source: SOURCE\n\n');
 
 class ToolContractError extends Error {
   constructor(message, { code = 'invalid_tool_arguments', status = 502, details } = {}) {
@@ -170,7 +171,11 @@ function customValidator(tool, options) {
   const name = tool.clientName ?? tool.name;
   if (format.type === 'grammar' && format.syntax === 'lark') {
     if (name === 'apply_patch' && format.definition === APPLY_PATCH_GRAMMAR) return validPatch;
-    if (name === 'exec' && (format.definition === CODEX_EXEC_GRAMMAR || format.definition === CODEX_EXEC_GRAMMAR.slice(0, -1))) {
+    if (name === 'exec' && (
+      format.definition === CODEX_EXEC_GRAMMAR
+      || format.definition === CODEX_EXEC_GRAMMAR.slice(0, -1)
+      || format.definition === CODEX_EXEC_GRAMMAR_WITH_EMPTY_LINES
+    )) {
       // The plain-source alternative accepts any non-empty source. Do not
       // parse pragmas, trim the input or try to execute the client's code.
       return value => typeof value === 'string' && value.length > 0;
