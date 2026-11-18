@@ -25,6 +25,56 @@ function runRequestLog(entry, callback) {
   return context.run(entry, callback);
 }
 
+const UPSTREAM_429_REASONS = new Set([
+  'RESOURCE_EXHAUSTED', 'QUOTA_EXHAUSTED', 'RATE_LIMIT_EXCEEDED',
+  'CAPACITY_EXHAUSTED', 'MODEL_CAPACITY_EXHAUSTED', 'CONCURRENT_REQUESTS_EXCEEDED'
+]);
+const UPSTREAM_429_DETAIL_TYPES = new Map([
+  ['type.googleapis.com/google.rpc.ErrorInfo', 'ErrorInfo'],
+  ['type.googleapis.com/google.rpc.RetryInfo', 'RetryInfo'],
+  ['type.googleapis.com/google.rpc.QuotaFailure', 'QuotaFailure']
+]);
+
+function safeRetryAfter(raw) {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (/^\d{1,9}(?:\.\d{1,6})?$/.test(value)) return value;
+  if (!/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toUTCString() === value ? value : null;
+}
+
+function recordUpstream429(response, body) {
+  const entry = requestContext();
+  if (!entry) return;
+  entry.upstream429Count = (entry.upstream429Count || 0) + 1;
+  if (entry.firstUpstream429) return;
+  let parsed = body;
+  if (typeof body === 'string') {
+    try { parsed = body.length <= 65_536 ? JSON.parse(body) : null; }
+    catch { parsed = null; }
+  }
+  const error = parsed?.error || parsed?.response?.error;
+  const details = [];
+  for (const detail of Array.isArray(error?.details) ? error.details.slice(0, 8) : []) {
+    const type = UPSTREAM_429_DETAIL_TYPES.get(detail?.['@type']);
+    if (!type) continue;
+    const safe = { type };
+    if (type === 'ErrorInfo' && UPSTREAM_429_REASONS.has(detail.reason)) safe.reason = detail.reason;
+    if (type === 'RetryInfo' && typeof detail.retryDelay === 'string' && /^\d{1,9}(?:\.\d{1,9})?s$/.test(detail.retryDelay)) {
+      safe.retryDelay = detail.retryDelay;
+    }
+    details.push(safe);
+  }
+  entry.firstUpstream429 = {
+    httpStatus: response?.status === 429 ? 429 : response?.status === 200 ? 200 : null,
+    retryAfter: safeRetryAfter(response?.headers?.get('retry-after')),
+    rpcStatus: error?.status === 'RESOURCE_EXHAUSTED' ? error.status : null,
+    rpcCode: error?.code === 8 || error?.code === 429 ? error.code : null,
+    details
+  };
+}
+
 class RequestLog {
   constructor({ configDir, now = () => Date.now(), retentionDays = 30, maxBytes = 500 * 1024 * 1024 } = {}) {
     this.directory = path.join(configDir, 'logs', 'requests');
@@ -88,7 +138,8 @@ class RequestLog {
       ua: entry.ua || '',
       tools: Number(entry.toolCount) || 0,
       mapped: Number(entry.mappedCount) || 0,
-      bytes: Number(entry.bytes) || 0
+      bytes: Number(entry.bytes) || 0,
+      ...(entry.firstUpstream429 ? { upstream429: entry.firstUpstream429, upstream429Count: entry.upstream429Count } : {})
     });
     if (this.pendingBytes + Buffer.byteLength(line) > 256 * 1024) { this.dropped = (this.dropped || 0) + 1; return; }
     const bucket = this.pending.get(day) || [];
@@ -258,7 +309,7 @@ class RequestLog {
   }
 }
 
-module.exports = { RequestLog, requestContext, runRequestLog };
+module.exports = { RequestLog, requestContext, runRequestLog, recordUpstream429 };
 
 if (!isMainThread && workerData) {
   const log = Object.create(RequestLog.prototype);

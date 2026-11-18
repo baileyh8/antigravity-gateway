@@ -28,7 +28,7 @@ const { nativeSchema } = require('./agy-request-profile');
 const { cleanToolSchema } = require('./legacy-tool-schema');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
 const { GatewayError, upstreamTermination, validateToolChoice, readThoughtSignature, toolNarrationInstruction } = require('./protocol');
-const { requestContext } = require('./request-log');
+const { requestContext, recordUpstream429 } = require('./request-log');
 const { hasToolResultHistory } = require('./tool-history');
 
 const DEFAULT_BASE_URL = 'https://cloudcode-pa.googleapis.com';
@@ -432,8 +432,12 @@ function imageFromResponse(value, requestedModel = IMAGE_MODEL) {
   };
 }
 
-async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta) {
+async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta, response) {
   if (!value || typeof value !== 'object') return;
+  const rpcError = value.error || value.response?.error;
+  if (rpcError && (rpcError.status === 'RESOURCE_EXHAUSTED' || rpcError.code === 429 || rpcError.code === 8)) {
+    recordUpstream429(response, value);
+  }
   if (value.error) throw new DirectProviderError('Antigravity 直连上游返回错误。', {
     code: 'direct_upstream_error', status: Number(value.error.code) || 502, details: redact(value.error.message || compact(value.error))
   });
@@ -1141,7 +1145,9 @@ class DirectAntigravityProvider {
           onUpstreamAccepted?.();
           break requestRounds;
         }
-        const text = await readBody(candidate);
+        let text;
+        try { text = await readBody(candidate); }
+        finally { if (candidate.status === 429) recordUpstream429(candidate, text); }
         const detail = upstreamErrorMessage(text);
         lastFailure = { response: candidate, status: candidate.status, detail, diagnostic: redact(text) };
         const decision = nativeRetry ? nativeRetryDecision(candidate.status, text) : null;
@@ -1211,12 +1217,12 @@ class DirectAntigravityProvider {
           const lines = data.split('\n');
           const values = lines.map(line => line === '[DONE]' ? null : jsonFromSseLine(line));
           if (!nativeEventBoundary && lines.every((line, i) => line === '[DONE]' || values[i])) {
-            for (const value of values) if (value) await consumeUpstreamValue(value, state, onDelta, onThinkingDelta);
+            for (const value of values) if (value) await consumeUpstreamValue(value, state, onDelta, onThinkingDelta, response);
             return;
           }
           throw new GatewayError('上游 SSE 事件不是有效 JSON。', { code: 'invalid_upstream_response', status: 502 });
         }
-        await consumeUpstreamValue(parsed, state, onDelta, onThinkingDelta);
+        await consumeUpstreamValue(parsed, state, onDelta, onThinkingDelta, response);
       };
       const consumeLine = async line => {
         // Captured agy does not dispatch a JSON data line until the SSE event's
@@ -1245,7 +1251,7 @@ class DirectAntigravityProvider {
         reader.releaseLock();
       }
     } else {
-      await this._parseJson(await readBody(response), state, onDelta, onThinkingDelta);
+      await this._parseJson(await readBody(response), state, onDelta, onThinkingDelta, response);
     }
     } catch (error) {
       signal?.throwIfAborted();
@@ -1466,10 +1472,10 @@ class DirectAntigravityProvider {
     }
   }
 
-  async _parseJson(text, state, onDelta, onThinkingDelta) {
+  async _parseJson(text, state, onDelta, onThinkingDelta, response) {
     let body;
     try { body = JSON.parse(text || '{}'); } catch (error) { throw new DirectProviderError('Antigravity 直连响应不是 JSON。', { code: 'direct_response_invalid', status: 502, details: redact(text), cause: error }); }
-    await consumeUpstreamValue(body, state, onDelta, onThinkingDelta);
+    await consumeUpstreamValue(body, state, onDelta, onThinkingDelta, response);
     return state;
   }
 }
