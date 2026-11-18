@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.32 - 2026-11-18
+
+- 修复 Carbon 续接缺少 `thought_signature` 的旧工具历史时返回 400 的问题。历史恢复后，优先使用已有签名，仅对每组缺签名的首个模型工具调用使用现有兼容标记。
+
+English: Apply the existing missing-signature handling to Carbon tool history after native history restoration. Preserve existing signatures and add the compatibility marker only to the first call in a tool-call group when its signature is missing.
+
 ## 1.7.1-bailey.31 - 2026-11-18
 
 - 兼容 Codex `exec` 自定义工具的 Lark 声明。保留原始输入、工具命名空间和调用 ID，支持带签名的工具回执续传。

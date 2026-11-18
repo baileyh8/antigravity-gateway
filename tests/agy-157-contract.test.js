@@ -187,9 +187,9 @@ test('Codex exec grammar preserves raw source, call ID, signature and tool recei
       return new Response(JSON.stringify({ candidates: [{ content: { role: 'model', parts } }] }));
     }
   });
-  const send = async body => {
+  const send = async (body, sessionId = 'codex-exec-fixture') => {
     const normalized = await normalizeResponsesAsync(body);
-    const result = await provider.send(normalized, model, { sessionId: 'codex-exec-fixture' });
+    const result = await provider.send(normalized, model, { sessionId });
     return finalizeModelResultAsync(normalized, result);
   };
   const first = await send(payload);
@@ -209,10 +209,18 @@ test('Codex exec grammar preserves raw source, call ID, signature and tool recei
   assert.equal(receipt.functionResponse.id, issued.functionCall.id);
   assert.equal(receipt.functionResponse.name, issued.functionCall.name);
   assert.match(JSON.stringify(receipt), /FIXTURE_RECEIPT/);
+  const unsignedHistory = structuredClone(continuation);
+  delete unsignedHistory.input.find(item => item.type === 'custom_tool_call').extra_content;
+  assert.equal((await send(unsignedHistory, 'codex-exec-imported-history')).text, 'DONE');
+  const imported = seen[2].contents.flatMap(content => content.parts).find(part => part.functionCall);
+  assert.equal(imported.functionCall.id, issued.functionCall.id);
+  assert.equal(imported.functionCall.name, issued.functionCall.name);
+  assert.equal(imported.functionCall.args.input, raw);
+  assert.equal(imported.thoughtSignature, 'skip_thought_signature_validator');
   const otherGrammar = { ...format, definition: 'start: "different"' };
   await assert.rejects(send({ ...payload, tools: [{ type: 'custom', name: 'exec', format: otherGrammar }] }),
     error => error.code === 'unsupported_tool_grammar' && error.status === 400);
-  assert.equal(seen.length, 2, 'unsupported grammar must fail before sending upstream');
+  assert.equal(seen.length, 3, 'unsupported grammar must fail before sending upstream');
 });
 
 test('native file wire schemas avoid boolean enums and enforce destructive-operation guards locally', () => {
