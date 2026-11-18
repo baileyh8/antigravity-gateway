@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.39 - 2026-11-18
+
+- 账号池因模型冷却暂不可用时，按最早可用账号的实际剩余冷却时间返回 `Retry-After`。Responses 转发网关可用 `X-AGY-Defer-Stream-Start: 1` 等待上游响应头，以保留首个 429 的 HTTP 状态和退避时间。
+
+English: Return `Retry-After` based on the earliest eligible account's remaining cooldown. Responses relays can set `X-AGY-Defer-Stream-Start: 1` to preserve the first upstream refusal as HTTP 429 with the retry interval.
+
 ## 1.7.1-bailey.38 - 2026-11-18
 
 - 兼容新版 Codex Code Mode `exec` 的 Lark grammar 中两处已验证的空行，修复网关构建请求时的 `unsupported_tool_grammar`。其他 grammar 继续按原规则校验，工具输入、调用 ID、签名与回执继续原样传递。

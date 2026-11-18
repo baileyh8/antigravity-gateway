@@ -52,6 +52,23 @@ function fixture(t, definitions, behavior = {}) {
   return { pool, accounts, snapshots, refreshes, reads: () => reads };
 }
 
+test('429s expose the earliest usable account cooldown without promising a retry for unavailable models', async t => {
+  const { DirectProviderError } = require('../src/direct-provider');
+  const { pool, accounts } = fixture(t, [{}, {}], {
+    send: async () => { throw new DirectProviderError('Fixture upstream limit', {status: 429, code: 'direct_upstream_error'}); }
+  });
+  const first = pool.entries.get(accounts[0].id);
+  const second = pool.entries.get(accounts[1].id);
+  await assert.rejects(pool.send({}, 'gemini-test'), {code: 'direct_upstream_error', retryAfterMs: 60_000});
+  first.cooldownUntil = NOW + 90_000;
+  second.modelCooldowns.set('gemini-test', NOW + 20_000);
+  await assert.rejects(pool.send({}, 'gemini-test'), {code: 'account_pool_unavailable', retryAfterMs: 20_000});
+  second.account.enabled = false;
+  await assert.rejects(pool.send({}, 'gemini-test'), {code: 'account_pool_unavailable', retryAfterMs: 90_000});
+  first.supportedModels = new Set(['gemini-other']);
+  assert.equal(pool.noAccountError('gemini-test').retryAfterMs, undefined);
+});
+
 test('Gemini weekly pressure uses fractional values, logarithmic bands, and a one-minute floor', () => {
   assert.deepEqual(geminiWeeklyPressure({ groups: [group('gemini', 0.2, 2, 4)] }, NOW), { kind: 'pressure', band: -4 });
   assert.deepEqual(geminiWeeklyPressure({ groups: [group('gemini', 0.6, 12, 1)] }, NOW), { kind: 'pressure', band: -5 });

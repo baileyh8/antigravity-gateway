@@ -52,7 +52,7 @@ const NATIVE_HTTP_ERROR_STATUSES = new Set([400, 429, 500, 502, 503, 504]);
 const NATIVE_CHECKPOINT_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 class DirectProviderError extends Error {
-  constructor(message, { code = 'direct_provider_error', status = 502, details, cause } = {}) {
+  constructor(message, { code = 'direct_provider_error', status = 502, details, cause, retryAfterMs } = {}) {
     const contextExceeded = code === 'direct_upstream_error'
       && /context_(?:length|window)_exceeded|input token count exceeds the maximum|maximum context length is \d+ tokens|prompt is too long/i
         .test(`${message} ${details || ''}`);
@@ -61,6 +61,7 @@ class DirectProviderError extends Error {
     this.code = contextExceeded ? 'context_length_exceeded' : code;
     this.status = contextExceeded ? 400 : status;
     this.details = details;
+    if (retryAfterMs > 0) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -1008,7 +1009,7 @@ class DirectAntigravityProvider {
       (state, checkpoint) => this.sendInSession(normalized, model, options, state, checkpoint));
   }
 
-  async sendInSession(normalized, model, { signal, sessionId, auxiliaryScope = '', nativeCompaction = '', nativeClientProfile = '', repairInstruction = '', onDelta, onThinkingDelta, onUpstreamAttempt, clientProjection } = {}, nativeState, checkpoint) {
+  async sendInSession(normalized, model, { signal, sessionId, auxiliaryScope = '', nativeCompaction = '', nativeClientProfile = '', repairInstruction = '', onDelta, onThinkingDelta, onUpstreamAttempt, onUpstreamAccepted, clientProjection } = {}, nativeState, checkpoint) {
     let token = await this.access(signal);
     let project = await this.project(signal, token);
     const compactionProfile = nativeCompaction === CLAUDE_COMPACTION_PROFILE ? nativeCompaction : '';
@@ -1137,6 +1138,7 @@ class DirectAntigravityProvider {
         }
         if (candidate.ok) {
           response = candidate;
+          onUpstreamAccepted?.();
           break requestRounds;
         }
         const text = await readBody(candidate);
