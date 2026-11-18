@@ -94,7 +94,7 @@ test('the direct request path receives the actual model and leaves tools and gen
   assert.match(automatic.request.systemInstruction.parts[0].text, /PROJECT_PERMISSION/);
 });
 
-test('a relayed Codex HTTP request applies the exact Sonar rule before generating upstream', async t => {
+test('relayed Codex HTTP requests normalize verified framework identities before generating upstream', async t => {
   mockCapturedDigest(t);
   process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'direct';
   const { AccountPool } = require('../src/account-pool');
@@ -112,9 +112,9 @@ test('a relayed Codex HTTP request applies the exact Sonar rule before generatin
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-  for (const routeModel of [model, 'gemini-4-carbon-medium']) {
+  for (const routeModel of [model, 'gemini-4-carbon-medium', 'gemini-4-hydrogen-xhigh']) {
     const requestBody = payload();requestBody.model = routeModel;
-    if (routeModel.includes('carbon')) requestBody.input.splice(1, 0,
+    if (routeModel !== model) requestBody.input.splice(1, 0,
       ...extraTemplates.map(content => ({ role: 'developer', content })));
     const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, {
       method: 'POST', headers: { 'content-type': 'application/json', originator: 'Codex Desktop', 'user-agent': 'Codex Desktop/0.169.0-alpha.11.1' },
@@ -125,9 +125,9 @@ test('a relayed Codex HTTP request applies the exact Sonar rule before generatin
     assert.match(system, /^Top-level client instructions/);
     assert.ok(system.includes(capture.replacement));
     assert.ok(!system.includes(capture.identity));
-    if (routeModel.includes('carbon')) assert.ok(!system.includes(capture.additionalFrameworks[1].identity));
+    if (routeModel !== model) assert.ok(!system.includes(capture.additionalFrameworks[1].identity));
     assert.equal(seen.request.generationConfig.thinkingConfig.thinkingLevel,
-      routeModel.includes('carbon') ? 'MEDIUM' : 'HIGH');
+      routeModel.includes('carbon') ? 'MEDIUM' : routeModel.endsWith('-xhigh') ? 100 : 'HIGH');
     assert.ok(JSON.stringify(seen.request.contents).includes(capture.identity), 'a user quote remains literal history');
   }
 });

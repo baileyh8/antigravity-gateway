@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.34 - 2026-11-18
+
+- 在 Hydrogen XHigh 的 Responses 链路上启用已验证的 Codex 框架描述兼容。仅处理匹配既有指纹的固定身份段落，保留数值 `thinkingLevel: 100` 和完整工具历史。
+
+English: Extend the verified Codex framework compatibility to Hydrogen XHigh Responses requests while retaining numeric thinking level 100 and tool history.
+
 ## 1.7.1-bailey.33 - 2026-11-18
 
 - 修复 Messages 流式与非流式并行工具调用的签名串位，接入 `disable_parallel_tool_use`。保留 Claude Opus / Sonnet 5.5 三档在目录暂缺时的实测模型枚举和请求元数据。
