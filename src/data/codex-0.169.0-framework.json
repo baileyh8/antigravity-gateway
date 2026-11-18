@@ -22,5 +22,11 @@
       "identity": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. ",
       "replacement": "You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions. "
     }
-  ]
+  ],
+  "catalogInstructions": {
+    "length": 20751,
+    "sha256": "ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807",
+    "identity": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. ",
+    "replacement": "You are a coding assistant helping the user in a shared workspace. "
+  }
 }

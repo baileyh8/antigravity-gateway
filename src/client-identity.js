@@ -174,13 +174,20 @@ function codex169Template(normalized, { clientProfile } = {}) {
   if (normalized?.protocol !== 'responses'
     || ![CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE].includes(clientProfile)) return null;
   const first = normalized.instructionMessages?.[0];
-  if (first?.role !== 'developer' || typeof first.text !== 'string'
-    || first.text.length < CODEX_169_FRAMEWORK.length
-    || !first.text.startsWith(CODEX_169_FRAMEWORK.identity)) return null;
-  if (hash(first.text.slice(0, CODEX_169_FRAMEWORK.length)) !== CODEX_169_FRAMEWORK.sha256) return null;
-  const projection = [normalized.instructions, ...normalized.instructionMessages.map(item => item.text)]
+  const framework = CODEX_169_FRAMEWORK;
+  const firstDeveloper = first?.role === 'developer' && typeof first.text === 'string'
+    && first.text.length >= framework.length && first.text.startsWith(framework.identity)
+    && hash(first.text.slice(0, framework.length)) === framework.sha256;
+  // This catalog fallback arrives in Responses instructions, outside the
+  // developer blocks. Match the complete stock text to keep caller rules out.
+  const instructions = normalized.instructions;
+  const catalog = framework.catalogInstructions;
+  const topLevel = typeof instructions === 'string' && instructions.length === catalog.length
+    && instructions.startsWith(catalog.identity) && hash(instructions) === catalog.sha256;
+  if (!firstDeveloper && !topLevel) return null;
+  const projection = [instructions, ...(normalized.instructionMessages || []).map(item => item.text)]
     .filter(Boolean).join('\n\n');
-  return normalized.system === projection ? CODEX_169_FRAMEWORK : null;
+  return normalized.system === projection ? { firstDeveloper, topLevel } : null;
 }
 
 function anthropicSystemBlockEvidence(blocks) {
@@ -388,9 +395,13 @@ function sanitizeClientIdentity(normalized, options = {}) {
   const codex169 = codex169Template(normalized, options);
   if (codex169) {
     const edits = [];
-    const instructionMessages = normalized.instructionMessages.map((message, index) => {
-      if (message.role !== 'developer' || typeof message.text !== 'string') return message;
-      const candidates = [{ ...codex169, identityOffset: 0 }, ...(codex169.additionalFrameworks || [])];
+    const framework = CODEX_169_FRAMEWORK;
+    const catalog = framework.catalogInstructions;
+    const instructions = codex169.topLevel
+      ? catalog.replacement + normalized.instructions.slice(catalog.identity.length) : normalized.instructions;
+    const instructionMessages = (normalized.instructionMessages || []).map((message, index) => {
+      if (!codex169.firstDeveloper || message.role !== 'developer' || typeof message.text !== 'string') return message;
+      const candidates = [{ ...framework, identityOffset: 0 }, ...framework.additionalFrameworks];
       const match = candidates.find(candidate => message.text.length >= candidate.length
         && message.text.startsWith(candidate.identity, candidate.identityOffset)
         && hash(message.text.slice(0, candidate.length)) === candidate.sha256);
@@ -401,12 +412,13 @@ function sanitizeClientIdentity(normalized, options = {}) {
         + message.text.slice(offset + match.identity.length) };
     });
     return {
-      normalized: { ...normalized, instructionMessages,
-        system: [normalized.instructions, ...instructionMessages.map(item => item.text)].filter(Boolean).join('\n\n') },
+      normalized: { ...normalized, instructions, instructionMessages,
+        system: [instructions, ...instructionMessages.map(item => item.text)].filter(Boolean).join('\n\n') },
       // Preserve the previous tool-mapping profile. This new evidence authorizes
       // fixed identity edits, not a different tool view or argument mapping.
       metadata: { profile: inferClientProfile(normalized, options),
-        rules: ['codex-169-framework-model-identity'], frameworkVersion: codex169.version, editedInstructionBlocks: edits }
+        rules: ['codex-169-framework-model-identity'], frameworkVersion: framework.version, editedInstructionBlocks: edits,
+        ...(codex169.topLevel ? { editedTopLevelInstructions: true } : {}) }
     };
   }
   const classifier = classifierBillingPrefix(normalized);

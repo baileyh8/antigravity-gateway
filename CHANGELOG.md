@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.37 - 2026-11-18
+
+- 兼容 Codex Desktop 通过 Responses 顶层 `instructions` 发送的已验证目录框架，处理 Carbon Medium 脱敏对照复现的上游 429。保留其余指令、用户消息、工具和模型参数。
+
+English: Recognize the verified Codex Desktop catalog framework in top-level Responses instructions. This resolves the upstream 429 reproduced in the Carbon Medium control while preserving other instructions, tools, and model parameters.
+
 ## 1.7.1-bailey.36 - 2026-11-18
 
 - 生图和参考图编辑支持通过 `X-AGY-Image-Response-Format: b64_json` 指定默认以图片数据交付。请求体显式指定的 `response_format` 优先。

@@ -14,6 +14,8 @@ const options = { model, clientProfile: 'codex-exec-0.159.2' };
 // Do not publish the captured policy text. Synthetic vectors exercise matching
 // boundaries; live acceptance separately verifies the actual captured digest.
 const template = (capture.identity + '\n\n' + 'Synthetic framework policy. '.repeat(capture.length)).slice(0, capture.length);
+const catalog = capture.catalogInstructions;
+const catalogTemplate = (catalog.identity + 'Synthetic stock catalog instructions. '.repeat(catalog.length)).slice(0, catalog.length - 1) + '\n';
 const extraTemplates = capture.additionalFrameworks.map(item =>
   (('Synthetic prefix. '.repeat(item.identityOffset)).slice(0, item.identityOffset)
     + item.identity + 'Synthetic variant policy. '.repeat(item.length)).slice(0, item.length));
@@ -22,7 +24,8 @@ function mockCapturedDigest(t) {
   t.mock.method(crypto, 'createHash', (...args) => {
     const hash = createHash(...args), update = hash.update.bind(hash), digest = hash.digest.bind(hash);
     let fixture = null;
-    hash.update = (value, ...rest) => { fixture = value === template ? capture.sha256 : capture.additionalFrameworks[extraTemplates.indexOf(value)]?.sha256; update(value, ...rest); return hash; };
+    hash.update = (value, ...rest) => { fixture = value === template ? capture.sha256
+      : value === catalogTemplate ? catalog.sha256 : capture.additionalFrameworks[extraTemplates.indexOf(value)]?.sha256; update(value, ...rest); return hash; };
     hash.digest = encoding => fixture && encoding === 'hex' ? fixture : digest(encoding);
     return hash;
   });
@@ -54,6 +57,38 @@ test('Sonar normalizes only the verified framework identity and preserves all cl
   assert.deepEqual(metadata.rules, ['codex-169-framework-model-identity']);
   assert.equal(metadata.frameworkVersion, capture.version);
   assert.equal(metadata.profile, null, 'an instruction edit must not select a new tool-mapping profile');
+});
+
+test('the verified catalog fallback is recognized in top-level instructions only', async t => {
+  mockCapturedDigest(t);
+  const model = 'gemini-4-carbon-medium';
+  const payloadWithCatalog = { ...payload(), model, instructions: catalogTemplate,
+    input: [{ role: 'developer', content: 'Keep the project and permission instructions.' },
+      { role: 'user', content: 'Keep this quote: ' + catalog.identity }] };
+  const normalized = normalizeResponses(payloadWithCatalog);
+  const hints = { ...options, model };
+  const { normalized: compatible, metadata } = sanitizeClientIdentity(normalized, hints);
+  const expected = catalog.replacement + catalogTemplate.slice(catalog.identity.length);
+  assert.equal(compatible.instructions, expected);
+  assert.deepEqual(compatible.instructionMessages, normalized.instructionMessages);
+  assert.deepEqual(compatible.messages, normalized.messages);
+  assert.deepEqual(compatible.tools, normalized.tools);
+  assert.equal(metadata.editedTopLevelInstructions, true);
+  assert.deepEqual(metadata.editedInstructionBlocks, []);
+  const native = { identityClientProfile: options.clientProfile,
+    modelInfo: { maxOutputTokens: 262144, supportsThinking: true, thinkingLevel: 2 } };
+  const wire = await buildDirectRequestAsync(normalized, model, 'project', 'session', '', null, native);
+  assert.ok(wire.request.systemInstruction.parts[0].text.startsWith(expected));
+  assert.deepEqual(wire.request.generationConfig.thinkingConfig, { includeThoughts: true, thinkingLevel: 'MEDIUM' });
+  for (const candidate of [
+    normalizeResponses({ ...payloadWithCatalog, instructions: catalogTemplate + '\nProject-specific policy' }),
+    normalizeResponses({ ...payloadWithCatalog, instructions: catalogTemplate.slice(0, -1) + 'X' }),
+    normalizeResponses({ ...payloadWithCatalog, instructions: '', input: [{ role: 'developer', content: catalogTemplate }] }),
+    { ...normalized, system: 'A different projection' }
+  ]) {
+    assert.deepEqual(sanitizeClientIdentity(candidate, hints).normalized, candidate);
+  }
+  assert.deepEqual(sanitizeClientIdentity(normalized,{ ...hints, clientProfile: 'unknown-client' }).normalized, normalized);
 });
 
 test('unverified templates, mismatched provenance and other protocols remain untouched', t => {
