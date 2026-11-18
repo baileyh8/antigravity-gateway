@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.30 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.31 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.30
+### 当前源码版本：1.7.1-bailey.31
+
+支持 Codex `functions.exec` 自定义工具的 Lark 声明。网关保留工具命名空间、调用 ID、输入原文和续传签名，工具仍由客户端执行。
 
 Sonar 与 Carbon 的 Codex 0.169.0-alpha.11.1 框架兼容：匹配 Codex 来源、首个 developer 的完整框架指纹和指令投影后，逐块识别已取证的新旧重复框架，只规范固定身份描述。保留顶层 `instructions`、其他业务 system、权限、工具映射和历史；未知模板保持原样。
 
@@ -687,7 +689,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.30
+### Current source version: 1.7.1-bailey.31
+
+Supports the Codex `functions.exec` custom tool grammar. The gateway preserves the namespace, call ID, raw input and continuation signature. The client executes the tool.
 
 Sonar and Carbon normalize fixed identity descriptions only inside fingerprint-verified Codex 0.169.0-alpha.11.1 framework blocks, including captured repeated legacy blocks. Preserve top-level instructions, other system rules, permissions, tool mapping and history. Unmatched templates remain literal. Live system-only comparisons verify this scoped compatibility change; full long-session and tool acceptance is a separate gate.
 
