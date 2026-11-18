@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.40 - 2026-11-19
+
+- 参考 LeeFeee 上游 2.2.1，保留首入口明确的 `503 UNAVAILABLE / MODEL_CAPACITY_EXHAUSTED`，防止备用入口的通用 429 覆盖容量不足证据。明确配额、认证和请求错误仍按实际结果处理。
+- 为实际生成请求记录各上游入口的失败状态、合法 `Retry-After` 和已知结构化原因，并记录消息、工具与签名数量。诊断不记录提示词、凭证、工具正文或签名原文。
+- 包含 .39 的模型冷却 `Retry-After` 与 Responses 延迟启动支持。相关转发网关需要传递冷却信息才能完成退避。
+- 验证了 886 项自动测试及基座部署健康。Carbon、Hydrogen 的新会话与旧会话切换实测尚未全部通过，本版本不承诺解决所有通用 429。
+
+English: Preserve explicit upstream model-capacity failures across a fallback generic 429, following LeeFeee 2.2.1. Add bounded, content-free per-endpoint failure and conversion diagnostics. Include .39 cooldown Retry-After and deferred Responses streaming support. All 886 automated tests passed. Carbon/Hydrogen fresh-session and model-switch live acceptance remains incomplete.
+
 ## 1.7.1-bailey.39 - 2026-11-18
 
 - 账号池因模型冷却暂不可用时，按最早可用账号的实际剩余冷却时间返回 `Retry-After`。Responses 转发网关可用 `X-AGY-Defer-Stream-Start: 1` 等待上游响应头，以保留首个 429 的 HTTP 状态和退避时间。
