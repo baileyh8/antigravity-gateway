@@ -36,6 +36,16 @@ const PROFILES = {
 
 const APPLY_PATCH_GRAMMAR = 'start: begin_patch hunk+ end_patch\nbegin_patch: "*** Begin Patch" LF\nend_patch: "*** End Patch" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: "*** Add File: " filename LF add_line+\ndelete_hunk: "*** Delete File: " filename LF\nupdate_hunk: "*** Update File: " filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: "+" /(.*)/ LF -> line\n\nchange_move: "*** Move to: " filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: ("@@" | "@@ " /(.+)/) LF\nchange_line: ("+" | "-" | " ") /(.*)/ LF\neof_line: "*** End of File" LF\n\n%import common.LF\n';
 
+// Codex's exec contract carries a complete source string, optionally prefixed
+// by an execution pragma. The client interprets both after the round trip.
+const CODEX_EXEC_GRAMMAR = String.raw`start: pragma_source | plain_source
+pragma_source: PRAGMA_LINE NEWLINE SOURCE
+plain_source: SOURCE
+PRAGMA_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/
+NEWLINE: /\r?\n/
+SOURCE: /[\s\S]+/
+`;
+
 class ToolContractError extends Error {
   constructor(message, { code = 'invalid_tool_arguments', status = 502, details } = {}) {
     super(message); this.name = 'ToolContractError'; this.code = code; this.status = status;
@@ -157,7 +167,15 @@ function customValidator(tool, options) {
   if (supplied) return supplied;
   const format = tool.format;
   if (!format || format.type === 'text') return value => typeof value === 'string';
-  if ((tool.clientName ?? tool.name) === 'apply_patch' && format.type === 'grammar' && format.syntax === 'lark' && format.definition === APPLY_PATCH_GRAMMAR) return validPatch;
+  const name = tool.clientName ?? tool.name;
+  if (format.type === 'grammar' && format.syntax === 'lark') {
+    if (name === 'apply_patch' && format.definition === APPLY_PATCH_GRAMMAR) return validPatch;
+    if (name === 'exec' && (format.definition === CODEX_EXEC_GRAMMAR || format.definition === CODEX_EXEC_GRAMMAR.slice(0, -1))) {
+      // The plain-source alternative accepts any non-empty source. Do not
+      // parse pragmas, trim the input or try to execute the client's code.
+      return value => typeof value === 'string' && value.length > 0;
+    }
+  }
   fail('此自定义工具 grammar 尚无已验证的本地校验器。', { code: 'unsupported_tool_grammar', status: 400, details: { name: tool.name, syntax: format.syntax || null } });
 }
 
