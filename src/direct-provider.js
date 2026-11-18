@@ -211,7 +211,7 @@ function normalizedMessageParts(message) {
 }
 
 function ensureToolSignatures(contents, model) {
-  if (!/^gemini-(?:3(?:[.-]|$)|4-hydrogen(?:[.-]|$))/i.test(String(model || ''))) return contents;
+  if (!/^gemini-(?:3(?:[.-]|$)|4-(?:hydrogen|carbon)(?:[.-]|$))/i.test(String(model || ''))) return contents;
   for (const content of contents) {
     const firstCall = content.parts?.find(p => p.functionCall);
     if (firstCall) firstCall.thoughtSignature = readThoughtSignature(firstCall) || THOUGHT_SIGNATURE_SENTINEL;

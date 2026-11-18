@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.31 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.32 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.31
+### 当前源码版本：1.7.1-bailey.32
+
+Carbon 支持续接缺签名的旧工具历史。已有签名优先保留。
 
 支持 Codex `functions.exec` 自定义工具的 Lark 声明。网关保留工具命名空间、调用 ID、输入原文和续传签名，工具仍由客户端执行。
 
@@ -689,7 +691,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.31
+### Current source version: 1.7.1-bailey.32
+
+Carbon can resume tool history with a missing signature. Existing signatures take precedence.
 
 Supports the Codex `functions.exec` custom tool grammar. The gateway preserves the namespace, call ID, raw input and continuation signature. The client executes the tool.
 
