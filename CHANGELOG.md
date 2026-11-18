@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.7.1-bailey.37 - 2026-11-18
+
+- 兼容 Codex Desktop 通过 Responses 顶层 `instructions` 发送的已验证目录框架，处理 Carbon Medium 脱敏对照复现的上游 429。保留其余指令、用户消息、工具和模型参数。
+
+English: Recognize the verified Codex Desktop catalog framework in top-level Responses instructions. This resolves the upstream 429 reproduced in the Carbon Medium control while preserving other instructions, tools, and model parameters.
+
+## 1.7.1-bailey.36 - 2026-11-18
+
+- 生图和参考图编辑支持通过 `X-AGY-Image-Response-Format: b64_json` 指定默认以图片数据交付。请求体显式指定的 `response_format` 优先。
+
+English: Allow image relays to request inline image data by default with `X-AGY-Image-Response-Format: b64_json`. An explicit `response_format` in the body takes precedence.
+
+## 1.7.1-bailey.35 - 2026-11-18
+
+- Codex Responses 的已验证框架描述兼容覆盖所有 Cloud Code 模型，包括 Argon 和动态发现的模型。只有请求来源、框架指纹和指令投影匹配时才处理固定段落，保留原工具契约、签名、思考档和账号调度。
+
+English: Apply the verified Codex Responses framework handling across Cloud Code models, including Argon and dynamically discovered models. Preserve tool contracts, signatures, thinking settings, and scheduling.
+
 ## 1.7.1-bailey.34 - 2026-11-18
 
 - 在 Hydrogen XHigh 的 Responses 链路上启用已验证的 Codex 框架描述兼容。仅处理匹配既有指纹的固定身份段落，保留数值 `thinkingLevel: 100` 和完整工具历史。

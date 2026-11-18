@@ -1518,8 +1518,9 @@ async function generateImages(payload, req, signal, references = []) {
   return images;
 }
 
-function imagesResponse(images, payload) {
-  const format = payload.response_format || 'url';
+function imagesResponse(images, payload, headers = {}) {
+  const preferInline = headers['x-agy-image-response-format'] === 'b64_json';
+  const format = payload.response_format || (preferInline ? 'b64_json' : 'url');
   return {
     created: Math.floor(Date.now() / 1000),
     data: images.map((image) => ({
@@ -1534,7 +1535,7 @@ function imagesResponse(images, payload) {
 async function handleImageGeneration(payload, req, res, signal) {
   USAGE_STORE.recordClientRequest();
   const images = await generateImages(payload, req, signal);
-  sendJson(res, 200, imagesResponse(images, payload));
+  sendJson(res, 200, imagesResponse(images, payload, req.headers));
 }
 
 async function handleImageEdit(req, res, signal) {
@@ -1552,7 +1553,7 @@ async function handleImageEdit(req, res, signal) {
   }));
   const payload = { ...fields, n: Number(fields.n) || 1 };
   const images = await generateImages(payload, req, signal, references);
-  sendJson(res, 200, imagesResponse(images, payload));
+  sendJson(res, 200, imagesResponse(images, payload, req.headers));
 }
 
 async function handleFileUpload(req, res) {

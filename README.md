@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.34 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.35 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,9 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.34
+### 当前源码版本：1.7.1-bailey.35
 
-Hydrogen XHigh 在 Responses 链路兼容已验证的 Codex 框架身份段落，保留思考档位和工具历史。
+所有 Cloud Code 模型共用 Responses 链路的 Codex 框架兼容。符合已验证的来源和框架指纹时，仅处理固定身份段落，保留思考档位、工具和历史。
 
 修复 Claude Messages 并行工具签名与单工具限制，补齐 Claude 5.5 和 Argon 目录参数，并支持 Argon 缺签名的旧工具历史续接。
 
@@ -431,6 +431,8 @@ curl http://127.0.0.1:9897/v1/images/edits \
   -F 'response_format=url'
 ```
 
+转发服务若无法透传请求体中的 `response_format`，可在 Images 请求中发送 `X-AGY-Image-Response-Format: b64_json`，直接收到图片数据。请求体显式指定的格式优先。
+
 远程服务器或不能直接传本地路径的客户端，可以先上传文件：
 
 ```bash
@@ -695,9 +697,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.34
+### Current source version: 1.7.1-bailey.35
 
-Hydrogen XHigh supports the verified Codex framework handling in Responses while preserving the thinking level and tool history.
+All Cloud Code models share the Codex Responses framework handling. The verified request source and framework digest scope the fixed identity edits while preserving thinking settings, tools and history.
 
 Preserve parallel tool signatures and single-tool constraints in Claude Messages. Retain Claude 5.5 and Argon tier metadata and handle unsigned Argon tool history.
 
@@ -995,6 +997,8 @@ curl http://127.0.0.1:9897/v1/files \
   -F 'file=@recording.mp4;type=video/mp4' \
   -F 'purpose=assistants'
 ```
+
+Image relays that cannot forward `response_format` in the body may send `X-AGY-Image-Response-Format: b64_json` to receive inline image data. An explicit format in the request body takes precedence.
 
 Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Continuations within the 20-success budget (five at ≤20% remaining) use an O(1) local affinity lookup without recalculating quota ranks; turn exhaustion, expiry or failure triggers selection using the requested group’s remaining usable quota, with configured weights applied among equal readings. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
 
