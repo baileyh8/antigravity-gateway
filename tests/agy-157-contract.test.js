@@ -151,6 +151,70 @@ test('Responses custom tools return their original freeform kind and literal pat
 });
 
 
+test('Codex exec grammar preserves raw source, call ID, signature and tool receipt', async t => {
+  const { finalizeModelResultAsync, normalizeResponsesAsync, responsesResponse } = require('../src/protocol');
+  const model = 'gemini-4-carbon-medium';
+  const definition = [
+    'start: pragma_source | plain_source',
+    'pragma_source: PRAGMA_LINE NEWLINE SOURCE',
+    'plain_source: SOURCE',
+    String.raw`PRAGMA_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/`,
+    String.raw`NEWLINE: /\r?\n/`,
+    String.raw`SOURCE: /[\s\S]+/`
+  ].join('\n');
+  const format = { type: 'grammar', syntax: 'lark', definition };
+  const raw = '  // @exec: {"yield_time_ms": 1000}\r\ntext("测试");\n';
+  const payload = {
+    model,
+    input: [{ role: 'user', content: 'Use the fixture tool.' }],
+    tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec', format }] }]
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-exec-tool-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const seen = [];
+  const provider = new DirectAntigravityProvider({
+    sessionStore: new AgySessionStore({ directory: root }), accessToken: 'fixture',
+    projectId: 'fixture', localAuth: null, maxRetries: 0,
+    fetchImpl: async (_url, options) => {
+      const { request } = JSON.parse(options.body);
+      seen.push(request);
+      const [declaration] = request.tools.flatMap(tool => tool.functionDeclarations);
+      assert.match(declaration.name, /^mcp_gateway_/);
+      assert.equal(declaration.parameters.properties.input.type, 'STRING');
+      const parts = seen.length === 1
+        ? [{ functionCall: { id: 'exec-fixture', name: declaration.name, args: { input: raw, toolSummary: 'Fixture call' } }, thoughtSignature: 'fixture-signature' }]
+        : [{ text: 'DONE' }];
+      return new Response(JSON.stringify({ candidates: [{ content: { role: 'model', parts } }] }));
+    }
+  });
+  const send = async body => {
+    const normalized = await normalizeResponsesAsync(body);
+    const result = await provider.send(normalized, model, { sessionId: 'codex-exec-fixture' });
+    return finalizeModelResultAsync(normalized, result);
+  };
+  const first = await send(payload);
+  const call = responsesResponse(model, first, 'resp_fixture').output.find(item => item.type === 'custom_tool_call');
+  assert.equal(call.name, 'exec');
+  assert.equal(call.namespace, 'functions');
+  assert.equal(call.call_id, 'exec-fixture');
+  assert.equal(call.input, raw);
+  const continuation = { ...payload, input: [...payload.input, call,
+    { type: 'custom_tool_call_output', call_id: call.call_id, output: 'FIXTURE_RECEIPT' }] };
+  assert.equal((await send(continuation)).text, 'DONE');
+  const parts = seen[1].contents.flatMap(content => content.parts);
+  const issued = parts.find(part => part.functionCall);
+  const receipt = parts.find(part => part.functionResponse);
+  assert.equal(issued.thoughtSignature, 'fixture-signature');
+  assert.equal(issued.functionCall.args.input, raw);
+  assert.equal(receipt.functionResponse.id, issued.functionCall.id);
+  assert.equal(receipt.functionResponse.name, issued.functionCall.name);
+  assert.match(JSON.stringify(receipt), /FIXTURE_RECEIPT/);
+  const otherGrammar = { ...format, definition: 'start: "different"' };
+  await assert.rejects(send({ ...payload, tools: [{ type: 'custom', name: 'exec', format: otherGrammar }] }),
+    error => error.code === 'unsupported_tool_grammar' && error.status === 400);
+  assert.equal(seen.length, 2, 'unsupported grammar must fail before sending upstream');
+});
+
 test('native file wire schemas avoid boolean enums and enforce destructive-operation guards locally', () => {
  const write=normalized('chat','write_file',{path:'/tmp/a',content:'new text'});
  write.tools[0].description='Create or completely overwrite a file.';

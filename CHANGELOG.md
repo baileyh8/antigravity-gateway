@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.31 - 2026-11-18
+
+- 兼容 Codex `exec` 自定义工具的 Lark 声明。保留原始输入、工具命名空间和调用 ID，支持带签名的工具回执续传。
+
+English: Support the Codex `exec` custom tool grammar while preserving raw input, the tool namespace, the call ID and signed tool history.
+
 ## 1.7.1-bailey.30 - 2026-11-18
 
 - 修复 Carbon 经 Codex/Magpie 调用时的框架身份兼容：在已验证的 Responses 来源与模板指纹下，识别重复的新旧框架，仅规范三处固定身份描述，保留其他指令、权限、工具映射和历史。Sonar 沿用相同的受限规则。
