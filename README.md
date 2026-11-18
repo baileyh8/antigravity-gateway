@@ -431,6 +431,8 @@ curl http://127.0.0.1:9897/v1/images/edits \
   -F 'response_format=url'
 ```
 
+转发服务若无法透传请求体中的 `response_format`，可在 Images 请求中发送 `X-AGY-Image-Response-Format: b64_json`，直接收到图片数据。请求体显式指定的格式优先。
+
 远程服务器或不能直接传本地路径的客户端，可以先上传文件：
 
 ```bash
@@ -995,6 +997,8 @@ curl http://127.0.0.1:9897/v1/files \
   -F 'file=@recording.mp4;type=video/mp4' \
   -F 'purpose=assistants'
 ```
+
+Image relays that cannot forward `response_format` in the body may send `X-AGY-Image-Response-Format: b64_json` to receive inline image data. An explicit format in the request body takes precedence.
 
 Use the returned `file_...` in Anthropic, Chat Completions, or Responses media blocks. Base64/Data URLs, HTTP(S) URLs, gateway-local absolute paths, and previously generated gateway URLs are also accepted. Files are kept under `~/.antigravity-gateway/media/`. The gateway separates client identity, conversation state, parent-child relationships, request tracing, and account affinity. Explicit `x-client-id`/`x-agent-id`, `x-session-id`/`x-conversation-id`, `x-parent-session-id`, and `x-routing-affinity-id` headers are supported alongside existing Claude, Codex, OpenAI, Anthropic, and Responses identifiers. Child agents keep independent upstream sessions while inheriting parent account affinity; raw identifiers stay local and only irreversible hashes are used as upstream session metadata. Soft affinity is persisted locally for a fixed five-hour window, configurable through `ANTIGRAVITY_AFFINITY_TTL_SECONDS`, and successful requests do not extend that window. Continuations within the 20-success budget (five at ≤20% remaining) use an O(1) local affinity lookup without recalculating quota ranks; turn exhaustion, expiry or failure triggers selection using the requested group’s remaining usable quota, with configured weights applied among equal readings. Account-level authentication, access-denial, and Google verification challenges mark that account unhealthy and stop further routing or quota probes until its credentials change or the user runs the dashboard's token-free authentication recheck; transient network failures retain transport retries and only cause a short cooldown.
 
