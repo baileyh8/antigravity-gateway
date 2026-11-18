@@ -56,11 +56,10 @@ test('Sonar normalizes only the verified framework identity and preserves all cl
   assert.equal(metadata.profile, null, 'an instruction edit must not select a new tool-mapping profile');
 });
 
-test('unverified templates, mismatched provenance and other model routes remain untouched', t => {
+test('unverified templates, mismatched provenance and other protocols remain untouched', t => {
   mockCapturedDigest(t);
   const baseline = normalizeResponses(payload());
   const vectors = [
-    [baseline, { ...options, model: 'gemini-4-hydrogen-high' }],
     [baseline, { ...options, clientProfile: '' }],
     [baseline, { ...options, clientProfile: 'unknown-client' }],
     [{ ...baseline, protocol: 'chat' }, options],
@@ -94,7 +93,7 @@ test('the direct request path receives the actual model and leaves tools and gen
   assert.match(automatic.request.systemInstruction.parts[0].text, /PROJECT_PERMISSION/);
 });
 
-test('relayed Codex HTTP requests normalize verified framework identities before generating upstream', async t => {
+test('relayed Codex HTTP requests apply the same framework rule across current and discovered models', async t => {
   mockCapturedDigest(t);
   process.env.ANTIGRAVITY_GATEWAY_TRANSPORT = 'direct';
   const { AccountPool } = require('../src/account-pool');
@@ -112,10 +111,22 @@ test('relayed Codex HTTP requests normalize verified framework identities before
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-  for (const routeModel of [model, 'gemini-4-carbon-medium', 'gemini-4-hydrogen-xhigh']) {
-    const requestBody = payload();requestBody.model = routeModel;
-    if (routeModel !== model) requestBody.input.splice(1, 0,
-      ...extraTemplates.map(content => ({ role: 'developer', content })));
+  const cases = [
+    [model, { thinkingLevel: 'HIGH' }],
+    ['gemini-4-carbon-medium', { thinkingLevel: 'MEDIUM' }],
+    ['gemini-4-hydrogen-xhigh', { thinkingLevel: 100 }],
+    ['gemini-4-argon-high', { thinkingLevel: 'HIGH' }],
+    ['gemini-pro-orchestrator-argon', { thinkingLevel: 'MEDIUM' }],
+    ['claude-sonnet-4-6', { thinkingBudget: 1024 }],
+    ['gpt-oss-120b-medium', { thinkingBudget: 8192 }],
+    ['newly-discovered-model', { thinkingLevel: 'MEDIUM' }]
+  ];
+  for (const [routeModel, thinking] of cases) {
+    const requestBody = { ...payload(), model: routeModel };
+    requestBody.input.splice(1, 0, ...extraTemplates.map(content => ({ role: 'developer', content })));
+    requestBody.input.push({ type: 'function_call', name: 'read_note', call_id: 'fixture', arguments: '{"key":"literal"}',
+      extra_content: { google: { thought_signature: 'fixture-signature' } } },
+    { type: 'function_call_output', call_id: 'fixture', output: 'FIXTURE_RECEIPT' });
     const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, {
       method: 'POST', headers: { 'content-type': 'application/json', originator: 'Codex Desktop', 'user-agent': 'Codex Desktop/0.169.0-alpha.11.1' },
       body: JSON.stringify(requestBody)
@@ -123,12 +134,19 @@ test('relayed Codex HTTP requests normalize verified framework identities before
     assert.equal(response.status, 200);
     const system = seen.request.systemInstruction.parts[0].text;
     assert.match(system, /^Top-level client instructions/);
-    assert.ok(system.includes(capture.replacement));
-    assert.ok(!system.includes(capture.identity));
-    if (routeModel !== model) assert.ok(!system.includes(capture.additionalFrameworks[1].identity));
-    assert.equal(seen.request.generationConfig.thinkingConfig.thinkingLevel,
-      routeModel.includes('carbon') ? 'MEDIUM' : routeModel.endsWith('-xhigh') ? 100 : 'HIGH');
+    assert.ok(system.includes(capture.replacement), routeModel);
+    assert.ok(!system.includes(capture.identity), routeModel);
+    assert.ok(!system.includes(capture.additionalFrameworks[1].identity), routeModel);
+    assert.equal(seen.model, routeModel);
+    assert.deepEqual(seen.request.generationConfig.thinkingConfig, { includeThoughts: true, ...thinking }, routeModel);
     assert.ok(JSON.stringify(seen.request.contents).includes(capture.identity), 'a user quote remains literal history');
+    const parts = seen.request.contents.flatMap(content => content.parts);
+    const call = parts.find(part => part.functionCall);
+    const receipt = parts.find(part => part.functionResponse);
+    assert.equal(call.thoughtSignature, 'fixture-signature');
+    assert.equal(call.functionCall.args.key, 'literal');
+    assert.equal(receipt.functionResponse.name, call.functionCall.name);
+    assert.equal(receipt.functionResponse.id, call.functionCall.id);
   }
 });
 

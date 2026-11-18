@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.34 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.35 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,9 +44,9 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.34
+### 当前源码版本：1.7.1-bailey.35
 
-Hydrogen XHigh 在 Responses 链路兼容已验证的 Codex 框架身份段落，保留思考档位和工具历史。
+所有 Cloud Code 模型共用 Responses 链路的 Codex 框架兼容。符合已验证的来源和框架指纹时，仅处理固定身份段落，保留思考档位、工具和历史。
 
 修复 Claude Messages 并行工具签名与单工具限制，补齐 Claude 5.5 和 Argon 目录参数，并支持 Argon 缺签名的旧工具历史续接。
 
@@ -695,9 +695,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.34
+### Current source version: 1.7.1-bailey.35
 
-Hydrogen XHigh supports the verified Codex framework handling in Responses while preserving the thinking level and tool history.
+All Cloud Code models share the Codex Responses framework handling. The verified request source and framework digest scope the fixed identity edits while preserving thinking settings, tools and history.
 
 Preserve parallel tool signatures and single-tool constraints in Claude Messages. Retain Claude 5.5 and Argon tier metadata and handle unsigned Argon tool history.
 
