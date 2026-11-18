@@ -9,6 +9,7 @@ const { createResponsesTextEmitter, emitResponsesStream, emitAnthropicStream } =
 const { createServer } = require('../antigravity-gateway');
 const { AccountPool } = require('../src/account-pool');
 const { AccountStore } = require('../src/account-store');
+const { RequestLog, runRequestLog } = require('../src/request-log');
 const { GatewayError } = require('../src/protocol');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -28,6 +29,50 @@ function sink() {
   return { headersSent: false, writeHead() { this.headersSent = true; }, write(s) { chunks.push(s); }, end() {},
     events: () => chunks.join('').split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6))) };
 }
+
+test('first upstream 429 retains only safe fields despite retries and a successful final response', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-upstream-429-'));
+  const log = new RequestLog({ configDir: directory });
+  t.after(async () => { await log.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const entry = { at: Date.now(), requestId: 'synthetic', status: 200 };
+  let attempts = 0;
+  const upstreamError = {
+    code: 429, status: 'RESOURCE_EXHAUSTED', message: 'private prompt',
+    details: [
+      { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'MODEL_CAPACITY_EXHAUSTED', metadata: { project: 'private project' } },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '1.250s' },
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ subject: 'private credential' }] },
+      { '@type': 'private unknown type', reason: 'private token' }
+    ]
+  };
+  const p = new DirectAntigravityProvider({ localAuth: null, accessToken: 'synthetic', projectId: 'synthetic',
+    baseUrl: 'https://synthetic.invalid', maxRetries: 2, retryBaseMs: 1,
+    sessionStore: new AgySessionStore({ directory: '' }),
+    fetchImpl: async () => {
+      attempts++;
+      if (attempts === 1) return Response.json({ error: upstreamError }, { status: 429, headers: { 'Retry-After': '0.002' } });
+      if (attempts === 2) return Response.json({ error: { code: 429 } }, { status: 429, headers: { 'Retry-After': 'private header' } });
+      return Response.json(upstream('STOP'));
+    }
+  });
+  await runRequestLog(entry, () => p.send(normalizeResponses({ input: 'private test prompt' }), 'gemini-4-hydrogen-high'));
+  log.record(entry);
+  await log.flush();
+  const row = log.query().items[0];
+  assert.equal(row.status, 200);
+  assert.equal(row.upstream429Count, 2);
+  assert.deepEqual(row.upstream429, {
+    httpStatus: 429, retryAfter: '0.002', rpcStatus: 'RESOURCE_EXHAUSTED', rpcCode: 429,
+    details: [{ type: 'ErrorInfo', reason: 'MODEL_CAPACITY_EXHAUSTED' }, { type: 'RetryInfo', retryDelay: '1.250s' }, { type: 'QuotaFailure' }]
+  });
+  assert.doesNotMatch(JSON.stringify(row), /private/);
+  const streamEntry = {};
+  const streamError = { error: { ...upstreamError, details: [] } };
+  await assert.rejects(runRequestLog(streamEntry, () => provider(`data: ${JSON.stringify(streamError)}\n\n`, 'text/event-stream')
+    .send(normalizeResponses({ input: 'private stream prompt' }), 'gemini-4-hydrogen-high')), { status: 429 });
+  assert.equal(streamEntry.firstUpstream429.httpStatus, 200);
+  assert.equal(streamEntry.firstUpstream429.retryAfter, null);
+});
 
 for (const format of ['json', 'sse']) for (const model of ['gemini-3.8-flash-high', 'gemini-3.8-flash-low']) {
   test(`${model} ${format}: MAX_TOKENS survives provider, both serializers and both Responses SSE paths`, async () => {

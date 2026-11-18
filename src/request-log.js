@@ -25,6 +25,113 @@ function runRequestLog(entry, callback) {
   return context.run(entry, callback);
 }
 
+const UPSTREAM_429_REASONS = new Set([
+  'RESOURCE_EXHAUSTED', 'QUOTA_EXHAUSTED', 'RATE_LIMIT_EXCEEDED',
+  'CAPACITY_EXHAUSTED', 'MODEL_CAPACITY_EXHAUSTED', 'CONCURRENT_REQUESTS_EXCEEDED'
+]);
+const UPSTREAM_429_DETAIL_TYPES = new Map([
+  ['type.googleapis.com/google.rpc.ErrorInfo', 'ErrorInfo'],
+  ['type.googleapis.com/google.rpc.RetryInfo', 'RetryInfo'],
+  ['type.googleapis.com/google.rpc.QuotaFailure', 'QuotaFailure']
+]);
+
+function safeRetryAfter(raw) {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (/^\d{1,9}(?:\.\d{1,6})?$/.test(value)) return value;
+  if (!/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toUTCString() === value ? value : null;
+}
+
+function recordUpstream429(response, body) {
+  const entry = requestContext();
+  if (!entry) return;
+  entry.upstream429Count = (entry.upstream429Count || 0) + 1;
+  if (entry.firstUpstream429) return;
+  let parsed = body;
+  if (typeof body === 'string') {
+    try { parsed = body.length <= 65_536 ? JSON.parse(body) : null; }
+    catch { parsed = null; }
+  }
+  const error = parsed?.error || parsed?.response?.error;
+  const details = [];
+  for (const detail of Array.isArray(error?.details) ? error.details.slice(0, 8) : []) {
+    const type = UPSTREAM_429_DETAIL_TYPES.get(detail?.['@type']);
+    if (!type) continue;
+    const safe = { type };
+    if (type === 'ErrorInfo' && UPSTREAM_429_REASONS.has(detail.reason)) safe.reason = detail.reason;
+    if (type === 'RetryInfo' && typeof detail.retryDelay === 'string' && /^\d{1,9}(?:\.\d{1,9})?s$/.test(detail.retryDelay)) {
+      safe.retryDelay = detail.retryDelay;
+    }
+    details.push(safe);
+  }
+  entry.firstUpstream429 = {
+    httpStatus: response?.status === 429 ? 429 : response?.status === 200 ? 200 : null,
+    retryAfter: safeRetryAfter(response?.headers?.get('retry-after')),
+    rpcStatus: error?.status === 'RESOURCE_EXHAUSTED' ? error.status : null,
+    rpcCode: error?.code === 8 || error?.code === 429 ? error.code : null,
+    details
+  };
+}
+
+function recordUpstreamFailure(response, body, upstreamIndex) {
+  const entry = requestContext();
+  if (!entry) return;
+  entry.upstreamFailures ||= [];
+  if (entry.upstreamFailures.length >= 16) return;
+  let error;
+  try { error = typeof body === 'string' && body.length <= 65536 ? JSON.parse(body)?.error : null; }
+  catch { error = null; }
+  entry.upstreamFailures.push({
+    httpStatus: response.status,
+    upstreamIndex,
+    retryAfter: safeRetryAfter(response.headers?.get('retry-after')),
+    rpcStatus: ['UNAVAILABLE', 'RESOURCE_EXHAUSTED', 'PERMISSION_DENIED', 'INVALID_ARGUMENT', 'UNAUTHENTICATED'].includes(error?.status) ? error.status : null,
+    reasons: [...new Set((Array.isArray(error?.details) ? error.details : [])
+      .filter(d => d?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && UPSTREAM_429_REASONS.has(d.reason))
+      .map(d => d.reason))]
+  });
+}
+
+// Persist counts and bounded protocol values only. Never serialize message text,
+// tool names, schemas, signatures, project identifiers or arbitrary metadata.
+function recordConversionSummary(normalized, request) {
+  const entry = requestContext();
+  if (!entry) return;
+  const roles = { user: 0, assistant: 0, other: 0 };
+  for (const message of normalized.messages || []) {
+    roles[Object.hasOwn(roles, message.role) ? message.role : 'other']++;
+  }
+  const wire = { messages: 0, parts: 0, calls: 0, signedCalls: 0, results: 0, media: 0 };
+  for (const content of request.contents || []) {
+    wire.messages++;
+    for (const part of content.parts || []) {
+      wire.parts++;
+      if (part.functionCall) {
+        wire.calls++;
+        if (part.thoughtSignature) wire.signedCalls++;
+      }
+      if (part.functionResponse) wire.results++;
+      if (part.inlineData || part.fileData) wire.media++;
+    }
+  }
+  const mode = request.toolConfig?.functionCallingConfig?.mode;
+  const thinking = request.generationConfig?.thinkingConfig;
+  entry.conversion = {
+    roles,
+    instructionBlocks: normalized.instructionMessages?.length || 0,
+    hasTopLevelInstructions: Boolean(normalized.instructions),
+    hasWireSystemInstruction: Boolean(request.systemInstruction),
+    clientTools: normalized.tools?.length || 0,
+    wireDeclarations: (request.tools || []).reduce((n, item) => n + (item.functionDeclarations?.length || 0), 0),
+    toolMode: ['AUTO', 'ANY', 'NONE'].includes(mode) ? mode : null,
+    thinkingLevel: ['LOW', 'MEDIUM', 'HIGH', 'MINIMAL'].includes(thinking?.thinkingLevel) ? thinking.thinkingLevel : null,
+    thinkingBudget: Number.isSafeInteger(thinking?.thinkingBudget) ? thinking.thinkingBudget : null,
+    wire
+  };
+}
+
 class RequestLog {
   constructor({ configDir, now = () => Date.now(), retentionDays = 30, maxBytes = 500 * 1024 * 1024 } = {}) {
     this.directory = path.join(configDir, 'logs', 'requests');
@@ -88,7 +195,10 @@ class RequestLog {
       ua: entry.ua || '',
       tools: Number(entry.toolCount) || 0,
       mapped: Number(entry.mappedCount) || 0,
-      bytes: Number(entry.bytes) || 0
+      bytes: Number(entry.bytes) || 0,
+      ...(entry.upstreamFailures?.length ? { upstreamFailures: entry.upstreamFailures } : {}),
+      ...(entry.conversion ? { conversion: entry.conversion } : {}),
+      ...(entry.firstUpstream429 ? { upstream429: entry.firstUpstream429, upstream429Count: entry.upstream429Count } : {})
     });
     if (this.pendingBytes + Buffer.byteLength(line) > 256 * 1024) { this.dropped = (this.dropped || 0) + 1; return; }
     const bucket = this.pending.get(day) || [];
@@ -258,7 +368,7 @@ class RequestLog {
   }
 }
 
-module.exports = { RequestLog, requestContext, runRequestLog };
+module.exports = { RequestLog, requestContext, runRequestLog, recordUpstream429, recordUpstreamFailure, recordConversionSummary };
 
 if (!isMainThread && workerData) {
   const log = Object.create(RequestLog.prototype);

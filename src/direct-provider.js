@@ -28,7 +28,8 @@ const { nativeSchema } = require('./agy-request-profile');
 const { cleanToolSchema } = require('./legacy-tool-schema');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
 const { GatewayError, upstreamTermination, validateToolChoice, readThoughtSignature, toolNarrationInstruction } = require('./protocol');
-const { requestContext } = require('./request-log');
+const { isModelCapacityFailure, selectGenerationFailure } = require('./agy-upstream-error');
+const { requestContext, recordUpstream429, recordUpstreamFailure, recordConversionSummary } = require('./request-log');
 const { hasToolResultHistory } = require('./tool-history');
 
 const DEFAULT_BASE_URL = 'https://cloudcode-pa.googleapis.com';
@@ -52,7 +53,7 @@ const NATIVE_HTTP_ERROR_STATUSES = new Set([400, 429, 500, 502, 503, 504]);
 const NATIVE_CHECKPOINT_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 class DirectProviderError extends Error {
-  constructor(message, { code = 'direct_provider_error', status = 502, details, cause } = {}) {
+  constructor(message, { code = 'direct_provider_error', status = 502, details, cause, retryAfterMs } = {}) {
     const contextExceeded = code === 'direct_upstream_error'
       && /context_(?:length|window)_exceeded|input token count exceeds the maximum|maximum context length is \d+ tokens|prompt is too long/i
         .test(`${message} ${details || ''}`);
@@ -61,6 +62,7 @@ class DirectProviderError extends Error {
     this.code = contextExceeded ? 'context_length_exceeded' : code;
     this.status = contextExceeded ? 400 : status;
     this.details = details;
+    if (retryAfterMs > 0) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -372,6 +374,7 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
     restoreStreamRecovery: native.restoreStreamRecovery, toolAdapter: native.toolAdapter });
   request.contents = ensureToolSignatures(native.context.contents, model);
   native.context.contents = request.contents;
+  recordConversionSummary(normalized, request);
   return agentEnvelope({ ...request, model, project: projectId, state, metadata: native.modelInfo, now: native.now,
     step: native.context.step, requestType: native.checkpoint ? 'checkpoint' : 'agent' });
 }
@@ -431,8 +434,12 @@ function imageFromResponse(value, requestedModel = IMAGE_MODEL) {
   };
 }
 
-async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta) {
+async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta, response) {
   if (!value || typeof value !== 'object') return;
+  const rpcError = value.error || value.response?.error;
+  if (rpcError && (rpcError.status === 'RESOURCE_EXHAUSTED' || rpcError.code === 429 || rpcError.code === 8)) {
+    recordUpstream429(response, value);
+  }
   if (value.error) throw new DirectProviderError('Antigravity 直连上游返回错误。', {
     code: 'direct_upstream_error', status: Number(value.error.code) || 502, details: redact(value.error.message || compact(value.error))
   });
@@ -1008,7 +1015,7 @@ class DirectAntigravityProvider {
       (state, checkpoint) => this.sendInSession(normalized, model, options, state, checkpoint));
   }
 
-  async sendInSession(normalized, model, { signal, sessionId, auxiliaryScope = '', nativeCompaction = '', nativeClientProfile = '', repairInstruction = '', onDelta, onThinkingDelta, onUpstreamAttempt, clientProjection } = {}, nativeState, checkpoint) {
+  async sendInSession(normalized, model, { signal, sessionId, auxiliaryScope = '', nativeCompaction = '', nativeClientProfile = '', repairInstruction = '', onDelta, onThinkingDelta, onUpstreamAttempt, onUpstreamAccepted, clientProjection } = {}, nativeState, checkpoint) {
     let token = await this.access(signal);
     let project = await this.project(signal, token);
     const compactionProfile = nativeCompaction === CLAUDE_COMPACTION_PROFILE ? nativeCompaction : '';
@@ -1111,6 +1118,7 @@ class DirectAntigravityProvider {
     };
     let response;
     let lastFailure;
+    let capacityFailure;
     const bases = this.baseUrls();
     let nativeRetry = this.retryPolicy === 'agy' && model === CAPTURED_MODEL;
     const retryLimit = () => nativeRetry ? (native.checkpoint ? 4 : 8) : this.maxRetries;
@@ -1118,6 +1126,7 @@ class DirectAntigravityProvider {
     while (true) {
     response = undefined;
     lastFailure = undefined;
+    capacityFailure = undefined;
     requestRounds:
     for (let retry = 0; retry <= retryLimit(); retry += 1) {
       for (const base of bases) {
@@ -1137,11 +1146,16 @@ class DirectAntigravityProvider {
         }
         if (candidate.ok) {
           response = candidate;
+          onUpstreamAccepted?.();
           break requestRounds;
         }
-        const text = await readBody(candidate);
+        let text;
+        try { text = await readBody(candidate); }
+        finally { if (candidate.status === 429) recordUpstream429(candidate, text); }
         const detail = upstreamErrorMessage(text);
         lastFailure = { response: candidate, status: candidate.status, detail, diagnostic: redact(text) };
+        if (isModelCapacityFailure(candidate.status, text)) capacityFailure = lastFailure;
+        recordUpstreamFailure(candidate, text, bases.indexOf(base) + 1);
         const decision = nativeRetry ? nativeRetryDecision(candidate.status, text) : null;
         if (!decision) nativeRetry = false;
         // Captured alternating 503 / response-read failures share one native
@@ -1184,6 +1198,7 @@ class DirectAntigravityProvider {
       }
     }
     if (!response) {
+      lastFailure = selectGenerationFailure(lastFailure, capacityFailure);
       if (lastFailure?.error) throw lastFailure.error;
       const detail = lastFailure?.detail || '';
       throw new DirectProviderError(detail ? `Antigravity 上游请求失败：${detail}` : 'Antigravity 上游请求失败。', {
@@ -1209,12 +1224,12 @@ class DirectAntigravityProvider {
           const lines = data.split('\n');
           const values = lines.map(line => line === '[DONE]' ? null : jsonFromSseLine(line));
           if (!nativeEventBoundary && lines.every((line, i) => line === '[DONE]' || values[i])) {
-            for (const value of values) if (value) await consumeUpstreamValue(value, state, onDelta, onThinkingDelta);
+            for (const value of values) if (value) await consumeUpstreamValue(value, state, onDelta, onThinkingDelta, response);
             return;
           }
           throw new GatewayError('上游 SSE 事件不是有效 JSON。', { code: 'invalid_upstream_response', status: 502 });
         }
-        await consumeUpstreamValue(parsed, state, onDelta, onThinkingDelta);
+        await consumeUpstreamValue(parsed, state, onDelta, onThinkingDelta, response);
       };
       const consumeLine = async line => {
         // Captured agy does not dispatch a JSON data line until the SSE event's
@@ -1243,7 +1258,7 @@ class DirectAntigravityProvider {
         reader.releaseLock();
       }
     } else {
-      await this._parseJson(await readBody(response), state, onDelta, onThinkingDelta);
+      await this._parseJson(await readBody(response), state, onDelta, onThinkingDelta, response);
     }
     } catch (error) {
       signal?.throwIfAborted();
@@ -1464,10 +1479,10 @@ class DirectAntigravityProvider {
     }
   }
 
-  async _parseJson(text, state, onDelta, onThinkingDelta) {
+  async _parseJson(text, state, onDelta, onThinkingDelta, response) {
     let body;
     try { body = JSON.parse(text || '{}'); } catch (error) { throw new DirectProviderError('Antigravity 直连响应不是 JSON。', { code: 'direct_response_invalid', status: 502, details: redact(text), cause: error }); }
-    await consumeUpstreamValue(body, state, onDelta, onThinkingDelta);
+    await consumeUpstreamValue(body, state, onDelta, onThinkingDelta, response);
     return state;
   }
 }

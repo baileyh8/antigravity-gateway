@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { clientError } = require('./src/client-error');
+const { clientError, cooldownSeconds } = require('./src/client-error');
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -909,7 +909,7 @@ async function argonVideoFallbackModel() {
   return fallback;
 }
 
-async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, onAdmitted, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
+async function runTurn(normalized, model, signal, { sessionId, routingKey, requestId, clientId, clientLabel, auxiliaryScope, nativeCompaction, nativeClientProfile, onDelta, onThinkingDelta, onAdmitted, onUpstreamAccepted, reuseConversation = false, mediaScope = '', publicBaseUrl = '' } = {}) {
   const releaseRequest = usesDirectTransport() ? () => {} : await requestSlots.acquire(signal);
   let releaseMedia;
   try {
@@ -947,7 +947,7 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         gatewayLog(`[Antigravity Gateway] 路由账号=${email || accountId} source=${source} model=${upstreamModel} attempt=${attempt} ${trace}`);
       };
       let raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, {
-        signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta, onAccountSelected, reuseConversation, ...taskScope,
+        signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta, onAccountSelected, onUpstreamAccepted, reuseConversation, ...taskScope,
         ...(providerType === 'cloudcode' && nativeCompaction ? { nativeCompaction } : {}),
         ...(nativeClientProfile ? { nativeClientProfile } : {}),
         onThinkingDelta: normalized.includeThinking ? onThinkingDelta : undefined
@@ -1677,7 +1677,17 @@ async function handleResponses(payload, req, res, signal) {
   res[RESPONSES_FAILURE] = responseEmitter.fail;
   let result;
   const sessionId = identity.sessionId;
-  try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
+  // A relay can hold the client stream itself while we wait for upstream
+  // headers. Keep the response uncommitted so a refusal can carry Retry-After.
+  const waitForUpstream = usesDirectTransport() && req.headers['x-agy-defer-stream-start'] === '1';
+  try {
+    result = await runTurnWithModelDiagnostic(normalized, model, signal, {
+      ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req),
+      onAdmitted: waitForUpstream ? undefined : onAdmitted,
+      onUpstreamAccepted: waitForUpstream ? onAdmitted : undefined,
+      onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined
+    });
+  } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
   const body = responsesResponse(normalized.model || model, result, responseId);
   const stored = SESSION_MANAGER.bindResponse(responseId, req, {
@@ -1902,7 +1912,9 @@ async function requestHandler(req, res) {
     const diagnostic = process.env.ANTIGRAVITY_GATEWAY_DEBUG === '1' && error.details ? ` (${error.details})` : '';
     gatewayError(`[Antigravity Gateway Error] ${error.message}${diagnostic}`);
     if (!res.headersSent) {
-      if (error instanceof AdmissionError && error.status === 429) res.setHeader('Retry-After', '1');
+      const retryAfter = cooldownSeconds(error);
+      if (retryAfter) res.setHeader('Retry-After', String(retryAfter));
+      else if (error instanceof AdmissionError && error.status === 429) res.setHeader('Retry-After', '1');
       if (['memory_budget_exceeded', 'request_too_large'].includes(error.code)) {
         res.setHeader('Connection', 'close');
         res.once('finish', () => req.destroy());

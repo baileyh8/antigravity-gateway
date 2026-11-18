@@ -290,8 +290,20 @@ class AccountPool {
     return new DirectProviderError(model
       ? `当前没有可用于模型 ${model} 的 Antigravity 账号。`
       : '当前账号池没有可用的 Antigravity 账号。', {
-      code: 'account_pool_unavailable', status: 429
+      code: 'account_pool_unavailable', status: 429, retryAfterMs: this.cooldownRemaining(model, now)
     });
+  }
+
+  cooldownRemaining(model, now = this.now()) {
+    if (!model) return 0;
+    let first = Infinity;
+    for (const entry of this.entries.values()) {
+      if (!this.isModelCandidate(entry, model, now)) continue;
+      const until = Math.max(entry.cooldownUntil, entry.modelCooldowns.get(model) || 0);
+      if (until <= now) return 0;
+      first = Math.min(first, until);
+    }
+    return Number.isFinite(first) ? first - now : 0;
   }
 
   cleanupSessions({ persist = true } = {}) {
@@ -525,14 +537,18 @@ class AccountPool {
   }
 
   isEntryEligible(entry, model, excluded = new Set(), now = this.now()) {
+    return this.isModelCandidate(entry, model, now)
+      && !excluded.has(entry.account.id)
+      && entry.cooldownUntil <= now
+      && (entry.modelCooldowns.get(model) || 0) <= now;
+  }
+
+  isModelCandidate(entry, model, now) {
     const knownSupporters = this.modelSupporters.get(model);
     return Boolean(entry
       && entry.account
       && entry.account.enabled !== false
       && this.isAccountHealthy(entry)
-      && !excluded.has(entry.account.id)
-      && entry.cooldownUntil <= now
-      && (entry.modelCooldowns.get(model) || 0) <= now
       && (!knownSupporters?.size || knownSupporters.has(entry.account.id))
       && (!(entry.supportedModels instanceof Set) || entry.supportedModels.has(model))
       && !this.quotaProtected(entry, model, now)
@@ -792,7 +808,7 @@ class AccountPool {
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
       } finally { finishAffinity(false); lease.release(); }
     }
-    throw lastError || this.noAccountError(model);
+    throw this.requestPoolError(model, lastError);
   }
 
   async generateImage(request, options = {}) {
@@ -878,7 +894,13 @@ class AccountPool {
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
       } finally { finishAffinity(false); lease.release(); }
     }
-    throw lastError || this.noAccountError(model);
+    throw this.requestPoolError(model, lastError);
+  }
+
+  requestPoolError(model, error) {
+    if (!error) return this.noAccountError(model);
+    if (error.status === 429) error.retryAfterMs = this.cooldownRemaining(model);
+    return error;
   }
 
   async listModels(signal, options = {}) {
