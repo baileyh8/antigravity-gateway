@@ -75,6 +75,63 @@ function recordUpstream429(response, body) {
   };
 }
 
+function recordUpstreamFailure(response, body, upstreamIndex) {
+  const entry = requestContext();
+  if (!entry) return;
+  entry.upstreamFailures ||= [];
+  if (entry.upstreamFailures.length >= 16) return;
+  let error;
+  try { error = typeof body === 'string' && body.length <= 65536 ? JSON.parse(body)?.error : null; }
+  catch { error = null; }
+  entry.upstreamFailures.push({
+    httpStatus: response.status,
+    upstreamIndex,
+    retryAfter: safeRetryAfter(response.headers?.get('retry-after')),
+    rpcStatus: ['UNAVAILABLE', 'RESOURCE_EXHAUSTED', 'PERMISSION_DENIED', 'INVALID_ARGUMENT', 'UNAUTHENTICATED'].includes(error?.status) ? error.status : null,
+    reasons: [...new Set((Array.isArray(error?.details) ? error.details : [])
+      .filter(d => d?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && UPSTREAM_429_REASONS.has(d.reason))
+      .map(d => d.reason))]
+  });
+}
+
+// Persist counts and bounded protocol values only. Never serialize message text,
+// tool names, schemas, signatures, project identifiers or arbitrary metadata.
+function recordConversionSummary(normalized, request) {
+  const entry = requestContext();
+  if (!entry) return;
+  const roles = { user: 0, assistant: 0, other: 0 };
+  for (const message of normalized.messages || []) {
+    roles[Object.hasOwn(roles, message.role) ? message.role : 'other']++;
+  }
+  const wire = { messages: 0, parts: 0, calls: 0, signedCalls: 0, results: 0, media: 0 };
+  for (const content of request.contents || []) {
+    wire.messages++;
+    for (const part of content.parts || []) {
+      wire.parts++;
+      if (part.functionCall) {
+        wire.calls++;
+        if (part.thoughtSignature) wire.signedCalls++;
+      }
+      if (part.functionResponse) wire.results++;
+      if (part.inlineData || part.fileData) wire.media++;
+    }
+  }
+  const mode = request.toolConfig?.functionCallingConfig?.mode;
+  const thinking = request.generationConfig?.thinkingConfig;
+  entry.conversion = {
+    roles,
+    instructionBlocks: normalized.instructionMessages?.length || 0,
+    hasTopLevelInstructions: Boolean(normalized.instructions),
+    hasWireSystemInstruction: Boolean(request.systemInstruction),
+    clientTools: normalized.tools?.length || 0,
+    wireDeclarations: (request.tools || []).reduce((n, item) => n + (item.functionDeclarations?.length || 0), 0),
+    toolMode: ['AUTO', 'ANY', 'NONE'].includes(mode) ? mode : null,
+    thinkingLevel: ['LOW', 'MEDIUM', 'HIGH', 'MINIMAL'].includes(thinking?.thinkingLevel) ? thinking.thinkingLevel : null,
+    thinkingBudget: Number.isSafeInteger(thinking?.thinkingBudget) ? thinking.thinkingBudget : null,
+    wire
+  };
+}
+
 class RequestLog {
   constructor({ configDir, now = () => Date.now(), retentionDays = 30, maxBytes = 500 * 1024 * 1024 } = {}) {
     this.directory = path.join(configDir, 'logs', 'requests');
@@ -139,6 +196,8 @@ class RequestLog {
       tools: Number(entry.toolCount) || 0,
       mapped: Number(entry.mappedCount) || 0,
       bytes: Number(entry.bytes) || 0,
+      ...(entry.upstreamFailures?.length ? { upstreamFailures: entry.upstreamFailures } : {}),
+      ...(entry.conversion ? { conversion: entry.conversion } : {}),
       ...(entry.firstUpstream429 ? { upstream429: entry.firstUpstream429, upstream429Count: entry.upstream429Count } : {})
     });
     if (this.pendingBytes + Buffer.byteLength(line) > 256 * 1024) { this.dropped = (this.dropped || 0) + 1; return; }
@@ -309,7 +368,7 @@ class RequestLog {
   }
 }
 
-module.exports = { RequestLog, requestContext, runRequestLog, recordUpstream429 };
+module.exports = { RequestLog, requestContext, runRequestLog, recordUpstream429, recordUpstreamFailure, recordConversionSummary };
 
 if (!isMainThread && workerData) {
   const log = Object.create(RequestLog.prototype);

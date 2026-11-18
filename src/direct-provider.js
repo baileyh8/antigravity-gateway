@@ -28,7 +28,8 @@ const { nativeSchema } = require('./agy-request-profile');
 const { cleanToolSchema } = require('./legacy-tool-schema');
 const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
 const { GatewayError, upstreamTermination, validateToolChoice, readThoughtSignature, toolNarrationInstruction } = require('./protocol');
-const { requestContext, recordUpstream429 } = require('./request-log');
+const { isModelCapacityFailure, selectGenerationFailure } = require('./agy-upstream-error');
+const { requestContext, recordUpstream429, recordUpstreamFailure, recordConversionSummary } = require('./request-log');
 const { hasToolResultHistory } = require('./tool-history');
 
 const DEFAULT_BASE_URL = 'https://cloudcode-pa.googleapis.com';
@@ -373,6 +374,7 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
     restoreStreamRecovery: native.restoreStreamRecovery, toolAdapter: native.toolAdapter });
   request.contents = ensureToolSignatures(native.context.contents, model);
   native.context.contents = request.contents;
+  recordConversionSummary(normalized, request);
   return agentEnvelope({ ...request, model, project: projectId, state, metadata: native.modelInfo, now: native.now,
     step: native.context.step, requestType: native.checkpoint ? 'checkpoint' : 'agent' });
 }
@@ -1116,6 +1118,7 @@ class DirectAntigravityProvider {
     };
     let response;
     let lastFailure;
+    let capacityFailure;
     const bases = this.baseUrls();
     let nativeRetry = this.retryPolicy === 'agy' && model === CAPTURED_MODEL;
     const retryLimit = () => nativeRetry ? (native.checkpoint ? 4 : 8) : this.maxRetries;
@@ -1123,6 +1126,7 @@ class DirectAntigravityProvider {
     while (true) {
     response = undefined;
     lastFailure = undefined;
+    capacityFailure = undefined;
     requestRounds:
     for (let retry = 0; retry <= retryLimit(); retry += 1) {
       for (const base of bases) {
@@ -1150,6 +1154,8 @@ class DirectAntigravityProvider {
         finally { if (candidate.status === 429) recordUpstream429(candidate, text); }
         const detail = upstreamErrorMessage(text);
         lastFailure = { response: candidate, status: candidate.status, detail, diagnostic: redact(text) };
+        if (isModelCapacityFailure(candidate.status, text)) capacityFailure = lastFailure;
+        recordUpstreamFailure(candidate, text, bases.indexOf(base) + 1);
         const decision = nativeRetry ? nativeRetryDecision(candidate.status, text) : null;
         if (!decision) nativeRetry = false;
         // Captured alternating 503 / response-read failures share one native
@@ -1192,6 +1198,7 @@ class DirectAntigravityProvider {
       }
     }
     if (!response) {
+      lastFailure = selectGenerationFailure(lastFailure, capacityFailure);
       if (lastFailure?.error) throw lastFailure.error;
       const detail = lastFailure?.detail || '';
       throw new DirectProviderError(detail ? `Antigravity 上游请求失败：${detail}` : 'Antigravity 上游请求失败。', {

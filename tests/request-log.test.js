@@ -25,3 +25,39 @@ test('request log writes, filters and clears by time', async (t) => {
   assert.equal(log.query({ days: 1 }).total, 1);
   await log.stop();
 });
+
+test('conversion diagnostics retain counts without private payload values', async (t) => {
+  const { runRequestLog, recordConversionSummary } = require('../src/request-log');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-conversion-log-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const log = new RequestLog({ configDir: directory });
+  t.after(() => log.stop());
+  const entry = { at: Date.now(), requestId: 'conversion-proof', status: 429 };
+  const privateValue = 'PRIVATE_CONVERSION_MARKER';
+  runRequestLog(entry, () => recordConversionSummary({
+    messages: [{ role: 'assistant', text: privateValue }, { role: 'user', text: privateValue }],
+    instructionMessages: [{ role: 'developer', text: privateValue }],
+    instructions: privateValue, tools: [{ name: privateValue }]
+  }, {
+    systemInstruction: { parts: [{ text: privateValue }] },
+    contents: [{ role: 'model', parts: [{ functionCall: { name: privateValue }, thoughtSignature: privateValue }] },
+      { role: 'user', parts: [{ functionResponse: { response: privateValue } }] }],
+    tools: [{ functionDeclarations: [{ name: privateValue, description: privateValue }] }],
+    generationConfig: { thinkingConfig: { thinkingLevel: privateValue, thinkingBudget: 1024 } },
+    toolConfig: { functionCallingConfig: { mode: 'AUTO' } }
+  }));
+  log.record(entry);
+  await log.flush();
+  const rows = fs.readdirSync(log.directory).filter(name => name.endsWith('.jsonl'));
+  const raw = fs.readFileSync(path.join(log.directory, rows[0]), 'utf8');
+  assert.ok(!raw.includes(privateValue));
+  const { conversion } = JSON.parse(raw);
+  assert.deepEqual(conversion.roles, { user: 1, assistant: 1, other: 0 });
+  assert.equal(conversion.instructionBlocks, 1);
+  assert.equal(conversion.wireDeclarations, 1);
+  assert.equal(conversion.wire.calls, 1);
+  assert.equal(conversion.wire.signedCalls, 1);
+  assert.equal(conversion.wire.results, 1);
+  assert.equal(conversion.thinkingLevel, null);
+  assert.equal(conversion.thinkingBudget, 1024);
+});

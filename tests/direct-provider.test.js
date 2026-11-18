@@ -711,3 +711,24 @@ test('direct provider prefers local agy state over explicit fallback env credent
   assert.equal(seenAuthorization, 'Bearer local-token');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('generation retains explicit capacity failure across fallback generic 429', async () => {
+  const { runRequestLog } = require('../src/request-log');
+  const capacity = require('./fixtures/agy-capacity-error-20261118.json');
+  const entry = {};
+  let calls = 0;
+  const provider = new DirectAntigravityProvider({
+    localAuth: null, accessToken: 'synthetic', projectId: 'synthetic-project', maxRetries: 0,
+    fetchImpl: async () => {
+      calls++;
+      const status = calls === 1 ? 503 : 429;
+      const body = calls === 1 ? capacity : { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Resource exhausted' } };
+      return new Response(JSON.stringify(body), { status });
+    }
+  });
+  await assert.rejects(runRequestLog(entry, () => provider.send(normalized(), 'gemini-test-high', { sessionId: 'capacity-proof' })),
+    error => error.status === 503 && JSON.parse(error.details).error.status === 'UNAVAILABLE');
+  assert.equal(calls, 2);
+  assert.deepEqual(entry.upstreamFailures.map(r => [r.upstreamIndex, r.httpStatus]), [[1, 503], [2, 429]]);
+  assert.deepEqual(entry.upstreamFailures[0].reasons, ['MODEL_CAPACITY_EXHAUSTED']);
+});
