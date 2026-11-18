@@ -165,7 +165,7 @@ test('Responses custom tools return their original freeform kind and literal pat
 });
 
 
-test('Codex exec grammar preserves raw source, call ID, signature and tool receipt', async t => {
+test('Codex exec grammar with the two captured blank lines preserves raw source, call ID, signature and tool receipt', async t => {
   const { finalizeModelResultAsync, normalizeResponsesAsync, responsesResponse } = require('../src/protocol');
   const model = 'gemini-4-carbon-medium';
   const definition = [
@@ -176,7 +176,8 @@ test('Codex exec grammar preserves raw source, call ID, signature and tool recei
     String.raw`NEWLINE: /\r?\n/`,
     String.raw`SOURCE: /[\s\S]+/`
   ].join('\n');
-  const format = { type: 'grammar', syntax: 'lark', definition };
+  const newDefinition = '\n' + definition.replace('plain_source: SOURCE\n', 'plain_source: SOURCE\n\n') + '\n';
+  const format = { type: 'grammar', syntax: 'lark', definition: newDefinition };
   const raw = '  // @exec: {"yield_time_ms": 1000}\r\ntext("测试");\n';
   const payload = {
     model,
@@ -231,9 +232,23 @@ test('Codex exec grammar preserves raw source, call ID, signature and tool recei
   assert.equal(imported.functionCall.name, issued.functionCall.name);
   assert.equal(imported.functionCall.args.input, raw);
   assert.equal(imported.thoughtSignature, 'skip_thought_signature_validator');
-  const otherGrammar = { ...format, definition: 'start: "different"' };
-  await assert.rejects(send({ ...payload, tools: [{ type: 'custom', name: 'exec', format: otherGrammar }] }),
-    error => error.code === 'unsupported_tool_grammar' && error.status === 400);
+  const { prepareAntigravityTools } = require('../src/antigravity-tool-contract');
+  for (const previousDefinition of [definition, definition + '\n']) {
+    const normalized = await normalizeResponsesAsync({
+      ...payload, tools: [{ type: 'custom', name: 'exec', format: { ...format, definition: previousDefinition } }]
+    });
+    assert.equal(prepareAntigravityTools(normalized).records.length, 1);
+  }
+  for (const [name, otherDefinition] of [
+    ['exec', 'start: "different"'],
+    ['exec', newDefinition.replace('SOURCE: /', 'OTHER: /')],
+    ['exec', '\n' + newDefinition],
+    ['other', newDefinition],
+    ['apply_patch', newDefinition]
+  ]) {
+    await assert.rejects(send({ ...payload, tools: [{ type: 'custom', name, format: { ...format, definition: otherDefinition } }] }),
+      error => error.code === 'unsupported_tool_grammar' && error.status === 400);
+  }
   assert.equal(seen.length, 3, 'unsupported grammar must fail before sending upstream');
 });
 
