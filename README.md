@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.41 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.42 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,11 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.41
+### 当前源码版本：1.7.1-bailey.42
+
+明确的 `MODEL_CAPACITY_EXHAUSTED` 503 不再触发换入口或换账号；按模型进入冷却，后续请求使用既有的共享有界队列等待，超时仍保留容量 503 和剩余 `Retry-After`。不将容量不足记为账号失效或额度耗尽，不降低模型档位。
+
+直连 Responses 默认等上游接受后再开启 SSE，保留首次拒绝的 HTTP 状态和冷却提示；旧客户端可显式设置 `X-AGY-Defer-Stream-Start: 0` 恢复提前开流。这修复了错误链放大，不承诺消除真实上游容量不足。
 
 补齐 Codex Desktop 0.169.1 的目录模板位于 `developer` 消息、以及旧 GPT 会话保留 stock 框架时的精确兼容。仅在来源、完整框架摘要和指令投影符合已验证样本时处理固定模型身份句，其余权限规则、工具与历史保持。
 
@@ -701,7 +705,9 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.41
+### Current source version: 1.7.1-bailey.42
+
+Stop endpoint and account retries on explicit `MODEL_CAPACITY_EXHAUSTED` failures. Apply model-local cooldown through the existing bounded shared wait budget, preserving HTTP 503 and remaining retry timing when waiting expires. Account health, quota, model tier and concurrency limits remain unchanged. Direct Responses defers SSE until upstream acceptance by default; `X-AGY-Defer-Stream-Start: 0` restores early streaming. This prevents failure amplification and does not promise upstream capacity.
 
 Recognize the verified Codex Desktop 0.169.1 catalog in developer messages and the stock GPT framework retained during model switches. Exact source, digest and instruction-projection checks scope edits to fixed model-identity clauses; permissions, tools and history are preserved.
 

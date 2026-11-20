@@ -1,8 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { isUnspecifiedResourceExhaustion } = require('./agy-upstream-error');
-const { executionSlots } = require('./admission-control');
+const { isUnspecifiedResourceExhaustion, isModelCapacityFailure } = require('./agy-upstream-error');
+const { executionSlots, waitBudget } = require('./admission-control');
 const fs = require('node:fs');
 const path = require('node:path');
 const { DirectAntigravityProvider, DirectProviderError } = require('./direct-provider');
@@ -28,6 +28,7 @@ function errorCategory(error) {
   const status = Number(error?.status) || 0;
   const source = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.cause?.code || ''} ${error?.cause?.message || ''}`;
   if (error?.code === 'request_timeout' || error?.code === 'request_aborted' || /abort(?:ed|error)|请求已取消|网关请求超时/i.test(source)) return 'request';
+  if (isModelCapacityFailure(status, error?.details)) return 'capacity';
   if (status === 429 || /resource.*exhausted|quota|rate.?limit/i.test(source)) return 'quota';
   if (/fetch failed|network|timeout|timed out|econnreset|econnrefused|enotfound|eai_again|socket|tls|dns/i.test(source)) return 'transient';
   if (status === 401 || status === 403 || (status >= 400 && status < 500 && /direct_refresh_failed/i.test(source)) || /invalid_grant|refresh token|auth.*missing|登录态|unauthenticated|permission.?denied|forbidden|verify\s*your\s*account|account.*verif|security.*challenge|account.*(?:disabled|suspended)/i.test(source)) return 'account';
@@ -83,7 +84,7 @@ function accountFingerprint(account = {}) {
 }
 
 class AccountPool {
-  constructor({ store, fallbackProvider, usageStore, agyPath = '', fetchImpl = nativeCloudCodeFetch, providerFactory, fsImpl = fs, stateFile = '', now = () => Date.now(), proxyManager, diagnosticReporter, directoryGuard = null } = {}) {
+  constructor({ store, fallbackProvider, usageStore, agyPath = '', fetchImpl = nativeCloudCodeFetch, providerFactory, fsImpl = fs, stateFile = '', now = () => Date.now(), proxyManager, diagnosticReporter, directoryGuard = null, capacityWaitBudget = waitBudget } = {}) {
     this.store = store;
     this.fallbackProvider = fallbackProvider;
     this.usageStore = usageStore;
@@ -91,6 +92,8 @@ class AccountPool {
     this.fetchImpl = fetchImpl;
     this.fs = fsImpl;
     this.now = now;
+    this.capacityWaitBudget = capacityWaitBudget;
+    this.modelCapacity = new Map();
     this.diagnosticReporter = typeof diagnosticReporter === 'function' ? diagnosticReporter : null;
     this.directoryGuard = directoryGuard;
     this.lastUnavailableDiagnosticAt = -Infinity;
@@ -716,7 +719,48 @@ class AccountPool {
     };
   }
 
+  capacityError(model) {
+    const state = this.modelCapacity.get(model);
+    if (!state) return null;
+    if (state.until <= this.now()) { this.modelCapacity.delete(model); return null; }
+    return new DirectProviderError('上游对应模型暂时没有可用容量，请稍后重试。', {
+      code: 'direct_upstream_error', status: 503, details: state.details,
+      retryAfterMs: state.until - this.now()
+    });
+  }
+
+  rememberCapacity(model, error) {
+    // Keep only bounded model-level protocol state, never account health or input.
+    for (const [key, state] of this.modelCapacity) if (state.until <= this.now()) this.modelCapacity.delete(key);
+    if (!this.modelCapacity.has(model) && this.modelCapacity.size >= 256) this.modelCapacity.delete(this.modelCapacity.keys().next().value);
+    const hint = Number(error.retryAfterMs);
+    const delay = Number.isFinite(hint) && hint > 0 ? Math.max(1000, hint) : 60_000;
+    const details = JSON.stringify({ error: { code: 503, status: 'UNAVAILABLE', details: [
+      { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'MODEL_CAPACITY_EXHAUSTED' }
+    ] } });
+    const until = Math.max(this.modelCapacity.get(model)?.until || 0, this.now() + delay);
+    this.modelCapacity.set(model, { until, details });
+    error.retryAfterMs = until - this.now();
+  }
+
+  async waitForModelCapacity(model, signal) {
+    while (this.capacityError(model)) {
+      await new Promise((resolve, reject) => {
+        let timer;
+        const fail = error => {
+          clearTimeout(timer);
+          reject(['queue_timeout', 'gateway_busy'].includes(error.code) ? this.capacityError(model) || error : error);
+        };
+        let leave;
+        try { leave = this.capacityWaitBudget.enter(signal, fail); }
+        catch (error) { fail(error); return; }
+        timer = setTimeout(() => { leave(); resolve(); }, Math.min(2_147_483_647, this.capacityError(model)?.retryAfterMs || 1));
+      });
+    }
+  }
+
   async send(normalized, model, options = {}) {
+    await this.waitForModelCapacity(model, options.signal);
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
       const localEntry = { account: { id: 'local-agy-session' }, healthState: 'available' };
@@ -745,6 +789,9 @@ class AccountPool {
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
         this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
         return result;
+      } catch (error) {
+        if (errorCategory(error) === 'capacity') this.rememberCapacity(model, error);
+        throw error;
       } finally { releaseFallback(); }
     }
 
@@ -763,6 +810,8 @@ class AccountPool {
       }, { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
       const entry = lease?.entry;
       if (!entry) break;
+      const capacity = this.capacityError(model);
+      if (capacity) { finishAffinity(false); lease.release(); throw capacity; }
       attempted.add(entry.account.id);
       let responseSeen = false;
       try {
@@ -796,6 +845,10 @@ class AccountPool {
         if (!this.isCurrentEntry(entry)) throw error;
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
+        if (errorCategory(error) === 'capacity') {
+          this.rememberCapacity(model, error);
+          throw error;
+        }
         entry.lastFailureAt = new Date(this.now()).toISOString();
         entry.lastError = String(error.message || error);
         const category = errorCategory(error);

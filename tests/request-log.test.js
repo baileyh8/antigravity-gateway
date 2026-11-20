@@ -43,7 +43,7 @@ test('conversion diagnostics retain counts without private payload values', asyn
     contents: [{ role: 'model', parts: [{ functionCall: { name: privateValue }, thoughtSignature: privateValue }] },
       { role: 'user', parts: [{ functionResponse: { response: privateValue } }] }],
     tools: [{ functionDeclarations: [{ name: privateValue, description: privateValue }] }],
-    generationConfig: { thinkingConfig: { thinkingLevel: privateValue, thinkingBudget: 1024 } },
+    generationConfig: { maxOutputTokens: 65536, thinkingConfig: { thinkingLevel: privateValue, thinkingBudget: 1024 } },
     toolConfig: { functionCallingConfig: { mode: 'AUTO' } }
   }));
   log.record(entry);
@@ -60,4 +60,6 @@ test('conversion diagnostics retain counts without private payload values', asyn
   assert.equal(conversion.wire.results, 1);
   assert.equal(conversion.thinkingLevel, null);
   assert.equal(conversion.thinkingBudget, 1024);
+  assert.equal(conversion.maxOutputTokens, 65536);
+  assert.equal(conversion.wireSystemChars, privateValue.length);
 });

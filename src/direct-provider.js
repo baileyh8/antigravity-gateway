@@ -1186,7 +1186,8 @@ class DirectAntigravityProvider {
         // An unspecified exhaustion is not evidence that another endpoint or
         // account can serve this payload. Return it once and let the caller
         // observe the cooldown instead of amplifying a single rejected request.
-        if (isUnspecifiedResourceExhaustion(candidate.status, text)
+        if (isModelCapacityFailure(candidate.status, text)
+          || isUnspecifiedResourceExhaustion(candidate.status, text)
           || (candidate.status === 429 && Math.max(retryAfterMs(candidate, 0, 0), retryInfoMs(429, text)) > 30_000)) {
           break requestRounds;
         }
@@ -1219,7 +1220,10 @@ class DirectAntigravityProvider {
       const detail = lastFailure?.detail || '';
       throw new DirectProviderError(detail ? `Antigravity 上游请求失败：${detail}` : 'Antigravity 上游请求失败。', {
         code: 'direct_upstream_error', status: lastFailure?.status || 502, details: lastFailure?.diagnostic || detail,
-        retryAfterMs: lastFailure?.status === 429 ? Math.max(retryAfterMs(lastFailure.response, 0, 0), retryInfoMs(429, lastFailure.diagnostic)) : undefined
+        retryAfterMs: lastFailure?.status === 429 || isModelCapacityFailure(lastFailure?.status, lastFailure?.diagnostic)
+          ? Math.max(retryAfterMs(lastFailure.response, 0, 0), retryInfoMs(lastFailure.status, lastFailure.diagnostic))
+            || (lastFailure.status === 503 ? 60_000 : 0)
+          : undefined
       });
     }
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
