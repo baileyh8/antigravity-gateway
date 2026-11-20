@@ -16,7 +16,7 @@ test('captured agent backoff uses downward .4 jitter, lower bound 4s and nominal
   assert.equal(nativeRetryDelayMs(3, { checkpoint: true, minimumMs: 9000 }), 9000);
 });
 
-test('only captured statuses and typed 429 RetryInfo select native retry behavior', () => {
+test('captured retry statuses and typed 429/503 RetryInfo preserve retry timing', () => {
   for (const status of [429, 500, 502, 503, 504]) assert.deepEqual(nativeRetryDecision(status, '{}'), { retryable: true, minimumMs: 0 });
   for (const status of [400, 401, 403, 408, 501]) assert.equal(nativeRetryDecision(status, '{}'), null);
   assert.deepEqual(nativeRetryDecision(429, body(9)), { retryable: true, minimumMs: 9000 });
@@ -83,4 +83,9 @@ test('native retry observes cancellation before dispatch or sleep', async t => {
   const f = fixture(t), controller = new AbortController();
   await assert.rejects(f.send(f.provider(async () => { controller.abort(); return new Response('failure', { status: 502 }); }), false, model, controller.signal), { name: 'AbortError' });
   assert.equal(f.requests.length, 1); assert.equal(f.delays.length, 0);
+});
+
+test('typed capacity RetryInfo preserves long server delays', () => {
+  assert.equal(retryInfoMs(503, body(180)), 180000);
+  assert.deepEqual(nativeRetryDecision(503, body(180)), { retryable: false, minimumMs: 180000 });
 });

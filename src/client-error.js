@@ -3,7 +3,7 @@
 const { isModelCapacityFailure } = require('./agy-upstream-error');
 
 function cooldownSeconds(error) {
-  return error.status === 429 && Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0
+  return (error.status === 429 || isModelCapacityFailure(error.status, error.details)) && Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0
     ? Math.ceil(error.retryAfterMs / 1000) : 0;
 }
 
@@ -14,10 +14,10 @@ function clientError(error) {
   const code = error.code || 'gateway_error';
   const message = error.message || 'Gateway error';
   const seconds = cooldownSeconds(error);
-  const timing = seconds ? { status: 429, resets_in_seconds: seconds } : {};
+  const timing = seconds ? { status: error.status, resets_in_seconds: seconds } : {};
   if (code === 'direct_upstream_error' && isModelCapacityFailure(error.status, error.details)) {
     return { type: 'overloaded_error', code: 'model_capacity_exhausted', message,
-      gateway_code: code, upstream_status: 'UNAVAILABLE', upstream_reason: 'MODEL_CAPACITY_EXHAUSTED' };
+      gateway_code: code, upstream_status: 'UNAVAILABLE', upstream_reason: 'MODEL_CAPACITY_EXHAUSTED', ...timing };
   }
   if (error.status === 429 && code === 'direct_upstream_error') {
     let upstream;
@@ -27,7 +27,7 @@ function clientError(error) {
         gateway_code: code, upstream_status: 'RESOURCE_EXHAUSTED', ...timing };
     }
   }
-  return { type: seconds ? 'rate_limit_error' : code, code, message, ...timing };
+  return { type: seconds && error.status === 429 ? 'rate_limit_error' : code, code, message, ...timing };
 }
 
 module.exports = { clientError, cooldownSeconds };

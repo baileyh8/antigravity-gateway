@@ -1679,7 +1679,7 @@ async function handleResponses(payload, req, res, signal) {
   const sessionId = identity.sessionId;
   // A relay can hold the client stream itself while we wait for upstream
   // headers. Keep the response uncommitted so a refusal can carry Retry-After.
-  const waitForUpstream = usesDirectTransport() && req.headers['x-agy-defer-stream-start'] === '1';
+  const waitForUpstream = usesDirectTransport() && req.headers['x-agy-defer-stream-start'] !== '0';
   try {
     result = await runTurnWithModelDiagnostic(normalized, model, signal, {
       ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req),

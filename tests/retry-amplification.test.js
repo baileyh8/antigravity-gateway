@@ -53,3 +53,51 @@ test('account pool and direct provider stop unspecified exhaustion across endpoi
   assert.equal(posts, 1);
   assert.equal(selected.length, 1);
 });
+
+test('typed capacity stops all endpoint/account retries and preserves healthy account state', async () => {
+  const { WaitBudget } = require('../src/admission-control');
+  const model = 'gemini-4-argon-high';
+  const store = new AccountStore({ configDir: directory });
+  let posts = 0;
+  const budget = new WaitBudget({ limit: 1, timeoutMs: 15 });
+  const pool = new AccountPool({ store, fallbackProvider: {}, capacityWaitBudget: budget, providerFactory: () => {
+    const provider = new DirectAntigravityProvider({ localAuth: null, accessToken: 'synthetic', projectId: 'fixture',
+      maxRetries: 2, retryBaseMs: 1, fetchImpl: async () => {
+        posts++;
+        return Response.json(require('./fixtures/agy-capacity-error-20261118.json'), { status: 503, headers: { 'retry-after': '125' } });
+      } });
+    provider.listModels = async () => [model];
+    return provider;
+  }});
+  const request = normalizeResponses({ model, input: 'Synthetic capacity fixture' });
+  await assert.rejects(pool.send(request, model), e => e.status === 503 && e.retryAfterMs === 125000);
+  assert.equal(posts, 1);
+  for (const entry of pool.entries.values()) {
+    assert.equal(entry.cooldownUntil || 0, 0);
+    assert.equal(entry.modelCooldowns.size, 0);
+    assert.equal(entry.lastError || '', '');
+  }
+  await assert.rejects(pool.send(request, model), e => e.status === 503 && e.retryAfterMs > 124000);
+  assert.equal(posts, 1, 'cooldown does not send another generation');
+  assert.equal(budget.size, 0);
+});
+
+test('model capacity waiting is bounded, abortable, model-local and expires', async () => {
+  const { WaitBudget } = require('../src/admission-control');
+  const budget = new WaitBudget({ limit: 1, timeoutMs: 100 });
+  const pool = new AccountPool({ store: new AccountStore({ configDir: directory }), fallbackProvider: {}, capacityWaitBudget: budget });
+  const fixture = JSON.stringify(require('./fixtures/agy-capacity-error-20261118.json'));
+  pool.rememberCapacity('argon', { details: fixture, retryAfterMs: 1000 });
+  const controller = new AbortController();
+  const waiting = pool.waitForModelCapacity('argon', controller.signal);
+  assert.equal(budget.size, 1);
+  await pool.waitForModelCapacity('sonar');
+  await assert.rejects(pool.waitForModelCapacity('argon'), e => e.status === 503);
+  controller.abort();
+  await assert.rejects(waiting, e => e.code === 'request_aborted');
+  assert.equal(budget.size, 0);
+  pool.modelCapacity.get('argon').until = Date.now() + 10;
+  await pool.waitForModelCapacity('argon');
+  assert.equal(pool.modelCapacity.size, 0);
+  assert.equal(budget.size, 0);
+});

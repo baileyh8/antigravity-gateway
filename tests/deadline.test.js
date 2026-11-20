@@ -39,7 +39,8 @@ test('Responses deadlines terminate admitted empty, partial and tool streams and
   const records = [];
   t.mock.method(RequestLog.prototype, 'record', entry => records.push({ ...entry }));
   let partial = false;
-  t.mock.method(DirectAntigravityProvider.prototype, 'send', async (_input, _model, { signal, onDelta }) => {
+  t.mock.method(DirectAntigravityProvider.prototype, 'send', async (_input, _model, { signal, onDelta, onUpstreamAccepted }) => {
+    onUpstreamAccepted?.();
     if (partial) await onDelta?.('Partial answer');
     return new Promise((resolve, reject) => {
       if (signal.aborted) return reject(signal.reason);

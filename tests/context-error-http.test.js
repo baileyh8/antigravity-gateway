@@ -51,7 +51,15 @@ test('HTTP errors and Responses stream failures expose a recognizable context ov
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'gemini-3.8-flash-high', input: 'synthetic context', stream: true, tools })
     });
-    assert.equal(response.status, 200, 'SSE was admitted before the upstream rejection');
+    assert.equal(response.status, 400, 'direct Responses defers SSE until upstream acceptance');
+    assert.equal((await response.json()).error.code, 'context_length_exceeded');
+  }
+  for (const tools of [[], [{ type: 'function', name: 'inspect', parameters: { type: 'object' } }]]) {
+    const response = await fetch(`${base}/v1/responses`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-agy-defer-stream-start': '0' },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-high', input: 'synthetic context', stream: true, tools })
+    });
+    assert.equal(response.status, 200, 'explicit legacy early SSE opt-out remains available');
     const events = (await response.text()).split('\n').filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
       .map(line => JSON.parse(line.slice(6)));
     const failed = events.find(event => event.type === 'response.failed');
@@ -62,5 +70,5 @@ test('HTTP errors and Responses stream failures expose a recognizable context ov
     assert.deepEqual(events.map(event => event.sequence_number), events.map((_, index) => index));
     assert.equal(events.some(event => event.type === 'response.completed'), false);
   }
-  assert.equal(sends, 5, 'no automatic replay of a permanent input error');
+  assert.equal(sends, 7, 'no automatic replay of a permanent input error');
 });

@@ -123,6 +123,8 @@ function recordConversionSummary(normalized, request) {
     instructionBlocks: normalized.instructionMessages?.length || 0,
     hasTopLevelInstructions: Boolean(normalized.instructions),
     hasWireSystemInstruction: Boolean(request.systemInstruction),
+    wireSystemChars: (request.systemInstruction?.parts || []).reduce((n, part) => n + (typeof part.text === 'string' ? part.text.length : 0), 0),
+    maxOutputTokens: Number.isSafeInteger(request.generationConfig?.maxOutputTokens) ? request.generationConfig.maxOutputTokens : null,
     clientTools: normalized.tools?.length || 0,
     wireDeclarations: (request.tools || []).reduce((n, item) => n + (item.functionDeclarations?.length || 0), 0),
     toolMode: ['AUTO', 'ANY', 'NONE'].includes(mode) ? mode : null,

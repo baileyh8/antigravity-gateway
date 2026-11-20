@@ -712,7 +712,7 @@ test('direct provider prefers local agy state over explicit fallback env credent
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('generation retains explicit capacity failure across fallback generic 429', async () => {
+test('generation stops at explicit capacity failure without fallback amplification', async () => {
   const { runRequestLog } = require('../src/request-log');
   const capacity = require('./fixtures/agy-capacity-error-20261118.json');
   const entry = {};
@@ -728,8 +728,8 @@ test('generation retains explicit capacity failure across fallback generic 429',
   });
   await assert.rejects(runRequestLog(entry, () => provider.send(normalized(), 'gemini-test-high', { sessionId: 'capacity-proof' })),
     error => error.status === 503 && JSON.parse(error.details).error.status === 'UNAVAILABLE');
-  assert.equal(calls, 2);
-  assert.deepEqual(entry.upstreamFailures.map(r => [r.upstreamIndex, r.httpStatus]), [[1, 503], [2, 429]]);
+  assert.equal(calls, 1);
+  assert.deepEqual(entry.upstreamFailures.map(r => [r.upstreamIndex, r.httpStatus]), [[1, 503]]);
   assert.deepEqual(entry.upstreamFailures[0].reasons, ['MODEL_CAPACITY_EXHAUSTED']);
 });
 

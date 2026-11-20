@@ -9,7 +9,7 @@ const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 const CAPTURED_MODEL = 'gemini-3.8-flash-high';
 
 function retryInfoMs(status, body) {
-  if (status !== 429) return 0;
+  if (status !== 429 && status !== 503) return 0;
   let parsed;
   try { parsed = JSON.parse(body); } catch { return 0; }
   const details = parsed?.error?.details;

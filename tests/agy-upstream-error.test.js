@@ -30,10 +30,10 @@ test('explicit quota, auth, request and transport errors are not replaced by cap
   assert.equal(isModelCapacityFailure(503, '{}'), false);
 });
 
-test('captured capacity response is a transient upstream error, not quota depletion', () => {
+test('captured capacity response is model-scoped, not account or quota depletion', () => {
   const error = { status: 503, code: 'direct_upstream_error',
     message: capturedCapacity.error.message, details: capacity.diagnostic };
-  assert.equal(errorCategory(error), 'transient');
+  assert.equal(errorCategory(error), 'capacity');
   assert.deepEqual(clientError(error), {
     type: 'overloaded_error', code: 'model_capacity_exhausted', message: capturedCapacity.error.message,
     gateway_code: 'direct_upstream_error', upstream_status: 'UNAVAILABLE', upstream_reason: 'MODEL_CAPACITY_EXHAUSTED'
