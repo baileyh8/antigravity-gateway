@@ -26,9 +26,9 @@ const { prepareAntigravityTools, prepareAntigravityToolsAsync } = require('./ant
 const { prepareLegacyToolContract, prepareLegacyToolContractAsync } = require('./legacy-tool-contract');
 const { nativeSchema } = require('./agy-request-profile');
 const { cleanToolSchema } = require('./legacy-tool-schema');
-const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs } = require('./agy-retry-policy');
+const { CAPTURED_MODEL, nativeRetryDecision, nativeRetryDelayMs, retryInfoMs } = require('./agy-retry-policy');
 const { GatewayError, upstreamTermination, validateToolChoice, readThoughtSignature, toolNarrationInstruction } = require('./protocol');
-const { isModelCapacityFailure, selectGenerationFailure } = require('./agy-upstream-error');
+const { isModelCapacityFailure, isUnspecifiedResourceExhaustion, selectGenerationFailure } = require('./agy-upstream-error');
 const { requestContext, recordUpstream429, recordUpstreamFailure, recordConversionSummary } = require('./request-log');
 const { hasToolResultHistory } = require('./tool-history');
 
@@ -180,6 +180,7 @@ function retryAfterMs(response, attempt, baseMs) {
     const at = Date.parse(raw);
     if (Number.isFinite(at)) headerMs = Math.max(0, at - Date.now());
   }
+  if (baseMs === 0) return headerMs;
   const exponential = baseMs * (2 ** attempt);
   const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(baseMs / 3)));
   return Math.min(30_000, Math.max(headerMs, exponential + jitter));
@@ -757,11 +758,54 @@ class DirectAntigravityProvider {
     throw accountError || lastError || new DirectProviderError('Antigravity 账号检测失败。', { code: 'direct_auth_probe_failed', status: 502 });
   }
 
+  recordDiscoveredModels(body, requestStartedAt = Date.now()) {
+    if (!body.models || typeof body.models !== 'object') throw new DirectProviderError('Antigravity 模型目录缺少 models。', { code: 'direct_model_catalog_invalid', status: 502 });
+    if (requestStartedAt < (this.modelCatalogRequestStartedAt || 0)) return [...this.discoveredModels];
+    this.modelCatalogRequestStartedAt = requestStartedAt;
+    const entries = Array.isArray(body.models)
+      ? body.models.map(value => [extractModelId(value), value])
+      : Object.entries(body.models).map(([id, value]) => [extractModelId(id) || extractModelId(value), value]);
+    // Discovery also contains unavailable upgrade offers. A catalog entry
+    // explicitly marked disabled is not an account's usable model, even
+    // when it has limits, capabilities and a valid-looking public ID.
+    const disabledModels = new Set(entries.filter(([, value]) => value?.disabled === true).map(([id]) => id));
+    const models = entries.map(([id]) => id).filter(id => id && !disabledModels.has(id));
+    this.discoveredModels = [...new Set(models)];
+    this.imageGenerationModels = Array.isArray(body.imageGenerationModelIds)
+      ? [...new Set(body.imageGenerationModelIds.map(extractModelId).filter(id => id && !disabledModels.has(id)))] : [];
+    this.webSearchModels = Array.isArray(body.webSearchModelIds)
+      ? [...new Set(body.webSearchModelIds.map(extractModelId).filter(id => id && !disabledModels.has(id)))] : [];
+    this.modelsDiscoveredAt = Date.now();
+    this.discoveredModelInfo = new Map(entries.filter(([id]) => id).map(([id, value]) => {
+      const metadata = value && typeof value === 'object' ? value : {};
+      return [id, {
+        displayName: firstString(metadata.displayName, metadata.display_name) || id,
+        maxTokens: Math.max(0, Number(metadata.maxTokens ?? metadata.max_tokens ?? 0) || 0),
+        maxOutputTokens: Math.max(0, Number(metadata.maxOutputTokens ?? metadata.max_output_tokens ?? 0) || 0),
+        ...(typeof (metadata.supportsImages ?? metadata.supports_images) === 'boolean'
+          ? { supportsImages: metadata.supportsImages ?? metadata.supports_images } : {}),
+        ...(typeof (metadata.supportsThinking ?? metadata.supports_thinking) === 'boolean'
+          ? { supportsThinking: metadata.supportsThinking ?? metadata.supports_thinking } : {}),
+        ...(typeof metadata.supportsVideo === 'boolean' ? { supportsVideo: metadata.supportsVideo } : {}),
+        ...(typeof metadata.supportsAudio === 'boolean' ? { supportsAudio: metadata.supportsAudio } : {}),
+        ...(metadata.supportedMimeTypes && typeof metadata.supportedMimeTypes === 'object'
+          && !Array.isArray(metadata.supportedMimeTypes)
+          ? { supportedMimeTypes: structuredClone(metadata.supportedMimeTypes) } : {}),
+        ...(typeof metadata.model === 'string' ? { model: metadata.model } : {}),
+        ...(Number.isFinite(metadata.thinkingBudget) ? { thinkingBudget: metadata.thinkingBudget } : {}),
+        ...(Number.isFinite(metadata.thinkingLevel) || typeof metadata.thinkingLevel === 'string' ? { thinkingLevel: metadata.thinkingLevel } : {}),
+        ...(typeof metadata.apiProvider === 'string' ? { apiProvider: metadata.apiProvider } : {})
+      }];
+    }));
+    return [...this.discoveredModels];
+  }
+
   async discoverModels(signal) {
     const token = await this.access(signal);
     let lastError, accountError;
     for (const base of this.baseUrls()) {
       try {
+        const requestStartedAt = Date.now();
         const response = await this.fetchImpl(`${base}${MODELS_PATH}`, {
           method: 'POST',
           headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': this.userAgent },
@@ -775,43 +819,7 @@ class DirectAntigravityProvider {
         let body;
         try { body = JSON.parse(text); }
         catch (cause) { throw new DirectProviderError('Antigravity 模型目录响应不是 JSON。', { code: 'direct_model_catalog_invalid', status: 502, cause }); }
-        if (!body.models || typeof body.models !== 'object') throw new DirectProviderError('Antigravity 模型目录缺少 models。', { code: 'direct_model_catalog_invalid', status: 502 });
-        const entries = Array.isArray(body.models)
-          ? body.models.map(value => [extractModelId(value), value])
-          : Object.entries(body.models).map(([id, value]) => [extractModelId(id) || extractModelId(value), value]);
-        // Discovery also contains unavailable upgrade offers. A catalog entry
-        // explicitly marked disabled is not an account's usable model, even
-        // when it has limits, capabilities and a valid-looking public ID.
-        const disabledModels = new Set(entries.filter(([, value]) => value?.disabled === true).map(([id]) => id));
-        const models = entries.map(([id]) => id).filter(id => id && !disabledModels.has(id));
-        this.discoveredModels = [...new Set(models)];
-        this.imageGenerationModels = Array.isArray(body.imageGenerationModelIds)
-          ? [...new Set(body.imageGenerationModelIds.map(extractModelId).filter(id => id && !disabledModels.has(id)))] : [];
-        this.webSearchModels = Array.isArray(body.webSearchModelIds)
-          ? [...new Set(body.webSearchModelIds.map(extractModelId).filter(id => id && !disabledModels.has(id)))] : [];
-        this.modelsDiscoveredAt = Date.now();
-        this.discoveredModelInfo = new Map(entries.filter(([id]) => id).map(([id, value]) => {
-          const metadata = value && typeof value === 'object' ? value : {};
-          return [id, {
-            displayName: firstString(metadata.displayName, metadata.display_name) || id,
-            maxTokens: Math.max(0, Number(metadata.maxTokens ?? metadata.max_tokens ?? 0) || 0),
-            maxOutputTokens: Math.max(0, Number(metadata.maxOutputTokens ?? metadata.max_output_tokens ?? 0) || 0),
-            ...(typeof (metadata.supportsImages ?? metadata.supports_images) === 'boolean'
-              ? { supportsImages: metadata.supportsImages ?? metadata.supports_images } : {}),
-            ...(typeof (metadata.supportsThinking ?? metadata.supports_thinking) === 'boolean'
-              ? { supportsThinking: metadata.supportsThinking ?? metadata.supports_thinking } : {}),
-            ...(typeof metadata.supportsVideo === 'boolean' ? { supportsVideo: metadata.supportsVideo } : {}),
-            ...(typeof metadata.supportsAudio === 'boolean' ? { supportsAudio: metadata.supportsAudio } : {}),
-            ...(metadata.supportedMimeTypes && typeof metadata.supportedMimeTypes === 'object'
-              && !Array.isArray(metadata.supportedMimeTypes)
-              ? { supportedMimeTypes: structuredClone(metadata.supportedMimeTypes) } : {}),
-            ...(typeof metadata.model === 'string' ? { model: metadata.model } : {}),
-            ...(Number.isFinite(metadata.thinkingBudget) ? { thinkingBudget: metadata.thinkingBudget } : {}),
-            ...(Number.isFinite(metadata.thinkingLevel) || typeof metadata.thinkingLevel === 'string' ? { thinkingLevel: metadata.thinkingLevel } : {}),
-            ...(typeof metadata.apiProvider === 'string' ? { apiProvider: metadata.apiProvider } : {})
-          }];
-        }));
-        return [...this.discoveredModels];
+        return this.recordDiscoveredModels(body, requestStartedAt);
       } catch (error) {
         signal?.throwIfAborted();
         lastError = error;
@@ -1175,11 +1183,19 @@ class DirectAntigravityProvider {
         } else if (native.checkpoint && NATIVE_CHECKPOINT_RETRY_STATUSES.has(candidate.status)) {
           retryStepPending = true;
         }
+        // An unspecified exhaustion is not evidence that another endpoint or
+        // account can serve this payload. Return it once and let the caller
+        // observe the cooldown instead of amplifying a single rejected request.
+        if (isUnspecifiedResourceExhaustion(candidate.status, text)
+          || (candidate.status === 429 && Math.max(retryAfterMs(candidate, 0, 0), retryInfoMs(429, text)) > 30_000)) {
+          break requestRounds;
+        }
         lastFailure.nativeMinimumMs = decision?.minimumMs || 0;
         const retryable = decision ? decision.retryable : candidate.status === 429 || candidate.status >= 500;
         if (!retryable) {
           throw new DirectProviderError(detail ? `Antigravity 上游请求失败：${detail}` : 'Antigravity 上游请求失败。', {
-            code: 'direct_upstream_error', status: candidate.status, details: decision ? redact(text) : detail
+            code: 'direct_upstream_error', status: candidate.status, details: decision || candidate.status === 429 ? redact(text) : detail,
+            retryAfterMs: candidate.status === 429 ? Math.max(retryAfterMs(candidate, 0, 0), retryInfoMs(429, text)) : undefined
           });
         }
         // Captured native HTTP failures retry the same endpoint. Do not add an
@@ -1202,7 +1218,8 @@ class DirectAntigravityProvider {
       if (lastFailure?.error) throw lastFailure.error;
       const detail = lastFailure?.detail || '';
       throw new DirectProviderError(detail ? `Antigravity 上游请求失败：${detail}` : 'Antigravity 上游请求失败。', {
-        code: 'direct_upstream_error', status: lastFailure?.status || 502, details: lastFailure?.diagnostic || detail
+        code: 'direct_upstream_error', status: lastFailure?.status || 502, details: lastFailure?.diagnostic || detail,
+        retryAfterMs: lastFailure?.status === 429 ? Math.max(retryAfterMs(lastFailure.response, 0, 0), retryInfoMs(429, lastFailure.diagnostic)) : undefined
       });
     }
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();

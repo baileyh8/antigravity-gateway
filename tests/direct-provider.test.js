@@ -732,3 +732,49 @@ test('generation retains explicit capacity failure across fallback generic 429',
   assert.deepEqual(entry.upstreamFailures.map(r => [r.upstreamIndex, r.httpStatus]), [[1, 503], [2, 429]]);
   assert.deepEqual(entry.upstreamFailures[0].reasons, ['MODEL_CAPACITY_EXHAUSTED']);
 });
+
+test('older model discovery cannot restore access removed by a newer catalog', () => {
+  const provider = new DirectAntigravityProvider({ localAuth: null, accessToken: 'synthetic', projectId: 'fixture' });
+  const argon = 'gemini-4-argon-high', sonar = 'gemini-4-hydrogen-sonar';
+  provider.recordDiscoveredModels({ models: { [sonar]: { thinkingLevel: 1 } } }, 20);
+  assert.deepEqual(provider.recordDiscoveredModels({ models: { [argon]: { thinkingLevel: 3 } } }, 10), [sonar]);
+  assert.deepEqual(provider.modelCatalog(), [sonar]);
+  assert.equal(provider.modelInfo(sonar).thinkingLevel, 1);
+  provider.recordDiscoveredModels({ models: { [argon]: { disabled: true, thinkingLevel: 3 }, [sonar]: {} } }, 30);
+  assert.deepEqual(provider.modelCatalog(), [sonar]);
+});
+
+
+test('unspecified generation exhaustion stops endpoint and native retry amplification', async () => {
+  for (const retryPolicy of ['', 'agy']) {
+    let calls = 0;
+    const body = { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Resource exhausted' } };
+    const provider = new DirectAntigravityProvider({
+      localAuth: null, accessToken: 'synthetic', projectId: 'fixture', maxRetries: 3, retryPolicy,
+      fetchImpl: async () => {
+        calls++;
+        return new Response(JSON.stringify(body), { status: 429, headers: { 'retry-after': '125' } });
+      }
+    });
+    await assert.rejects(provider.send(normalized(), 'gemini-3.8-flash-high', { sessionId: `exhaustion-${retryPolicy}` }),
+      error => error.status === 429 && error.retryAfterMs === 125000 && JSON.parse(error.details).error.status === 'RESOURCE_EXHAUSTED');
+    assert.equal(calls, 1);
+  }
+});
+
+
+test('long structured upstream cooldown is returned without waiting or truncating', async () => {
+  let calls = 0;
+  const provider = new DirectAntigravityProvider({
+    localAuth: null, accessToken: 'synthetic', projectId: 'fixture', maxRetries: 2,
+    fetchImpl: async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '145s' }] } }),
+      { status: 429, headers: { 'retry-after': '125' } });
+    }
+  });
+  await assert.rejects(provider.send(normalized(), 'gemini-4-hydrogen-low', { sessionId: 'long-cooldown' }),
+    error => error.status === 429 && error.retryAfterMs === 145000 && JSON.parse(error.details).error.details.length === 1);
+  assert.equal(calls, 1);
+});

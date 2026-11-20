@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.41 - 2026-11-20
+
+- 修复 Codex Desktop 0.169.1 将目录模板放在首个 `developer` 消息时漏过兼容处理的问题；补齐旧 GPT 会话保留的已验证 stock 框架，避免切换模型时继续漏匹配。仅调整精确摘要匹配的固定模型身份句，保留客户端权限、安全规则、工具契约和历史。
+- 上游返回无明确细节的 `RESOURCE_EXHAUSTED` 429 时停止立即切入口、重试和换账号，避免单请求被放大成多次调用。保留合法 `Retry-After` / `RetryInfo`，长冷却直接反馈调用方。
+- 实时模型目录排除明确禁用的条目，较旧的目录或额度刷新结果不再覆盖较新的模型权限与元数据。
+- 账号配额预留、并发、调度参数和 Hydrogen 工具签名兼容保持原有策略。
+
+English: Recognize verified Codex Desktop developer catalogs and retained GPT stock frameworks during model switches. Preserve all other instructions, permissions, tool contracts and history. Stop immediate endpoint/account amplification for unspecified resource-exhaustion refusals, preserve cooldown hints, and keep stale discovery results from restoring superseded model access.
+
 ## 1.7.1-bailey.40 - 2026-11-19
 
 - 参考 LeeFeee 上游 2.2.1，保留首入口明确的 `503 UNAVAILABLE / MODEL_CAPACITY_EXHAUSTED`，防止备用入口的通用 429 覆盖容量不足证据。明确配额、认证和请求错误仍按实际结果处理。

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { isUnspecifiedResourceExhaustion } = require('./agy-upstream-error');
 const { executionSlots } = require('./admission-control');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -800,12 +801,17 @@ class AccountPool {
         const category = errorCategory(error);
         if (category === 'request') throw error;
         if (category === 'quota') {
-          entry.modelCooldowns.set(model, this.now() + retryDelay(error.details || error.message));
+          entry.modelCooldowns.set(model, this.now() + Math.max(retryDelay(error.details || error.message), Number(error.retryAfterMs) || 0));
           this.refreshAccountQuota(entry);
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'model_request' });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
+        if (isUnspecifiedResourceExhaustion(error.status, error.details)) {
+          error.retryAfterMs = Math.max(Number(error.retryAfterMs) || 0,
+            (entry.modelCooldowns.get(model) || this.now()) - this.now());
+          throw error;
+        }
       } finally { finishAffinity(false); lease.release(); }
     }
     throw this.requestPoolError(model, lastError);
@@ -886,7 +892,7 @@ class AccountPool {
         const category = errorCategory(error);
         if (category === 'request') throw error;
         if (category === 'quota') {
-          entry.modelCooldowns.set(model, this.now() + retryDelay(error.details || error.message));
+          entry.modelCooldowns.set(model, this.now() + Math.max(retryDelay(error.details || error.message), Number(error.retryAfterMs) || 0));
           this.refreshAccountQuota(entry);
         }
         else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'image_request' });
@@ -899,7 +905,7 @@ class AccountPool {
 
   requestPoolError(model, error) {
     if (!error) return this.noAccountError(model);
-    if (error.status === 429) error.retryAfterMs = this.cooldownRemaining(model);
+    if (error.status === 429) error.retryAfterMs = Math.max(Number(error.retryAfterMs) || 0, this.cooldownRemaining(model));
     return error;
   }
 

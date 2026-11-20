@@ -59,7 +59,7 @@ test('Sonar normalizes only the verified framework identity and preserves all cl
   assert.equal(metadata.profile, null, 'an instruction edit must not select a new tool-mapping profile');
 });
 
-test('the verified catalog fallback is recognized in top-level instructions only', async t => {
+test('the verified top-level catalog fallback preserves exact-match boundaries', async t => {
   mockCapturedDigest(t);
   const model = 'gemini-4-carbon-medium';
   const payloadWithCatalog = { ...payload(), model, instructions: catalogTemplate,
@@ -83,12 +83,57 @@ test('the verified catalog fallback is recognized in top-level instructions only
   for (const candidate of [
     normalizeResponses({ ...payloadWithCatalog, instructions: catalogTemplate + '\nProject-specific policy' }),
     normalizeResponses({ ...payloadWithCatalog, instructions: catalogTemplate.slice(0, -1) + 'X' }),
-    normalizeResponses({ ...payloadWithCatalog, instructions: '', input: [{ role: 'developer', content: catalogTemplate }] }),
+    normalizeResponses({ ...payloadWithCatalog, instructions: '', input: [{ role: 'developer', content: catalogTemplate + '\nCaller policy' }] }),
     { ...normalized, system: 'A different projection' }
   ]) {
     assert.deepEqual(sanitizeClientIdentity(candidate, hints).normalized, candidate);
   }
   assert.deepEqual(sanitizeClientIdentity(normalized,{ ...hints, clientProfile: 'unknown-client' }).normalized, normalized);
+});
+
+test('Desktop catalog in the first developer block keeps caller rules, tools and history intact', t => {
+  mockCapturedDigest(t);
+  for (const model of ['gemini-4-argon-high', 'gemini-4-hydrogen-sonar']) {
+    const body = { ...payload(), model, instructions: '', input: [
+      { role: 'developer', content: catalogTemplate },
+      { role: 'developer', content: 'Require approval before writes. Never disclose credentials.' },
+      { role: 'user', content: 'Keep literal quote: ' + catalog.identity }
+    ] };
+    const normalized = normalizeResponses(body), before = structuredClone(normalized);
+    const hints = { ...options, model };
+    const result = sanitizeClientIdentity(normalized, hints);
+    assert.deepEqual(normalized, before);
+    assert.equal(result.normalized.instructionMessages[0].text,
+      catalog.replacement + catalogTemplate.slice(catalog.identity.length));
+    assert.deepEqual(result.normalized.instructionMessages.slice(1), before.instructionMessages.slice(1));
+    assert.deepEqual(result.normalized.messages, before.messages);
+    assert.deepEqual(result.normalized.tools, before.tools);
+    assert.deepEqual(result.metadata.editedInstructionBlocks, [0]);
+    assert.equal(result.metadata.profile, null);
+    for (const content of [catalogTemplate.slice(0, -1) + '!', catalogTemplate + '\nCaller policy']) {
+      const changed = normalizeResponses({ ...body, input: [{ role: 'developer', content }] });
+      assert.deepEqual(sanitizeClientIdentity(changed, hints).normalized, changed);
+    }
+    assert.deepEqual(sanitizeClientIdentity(before, { ...hints, clientProfile: 'unknown-client' }).normalized, before);
+  }
+});
+
+test('Desktop catalog and a verified model-switch framework retain intervening permission rules', t => {
+  mockCapturedDigest(t);
+  const permission = 'Never disclose credentials. Require approval before modifying files.';
+  const body = { ...payload(), instructions: '', input: [
+    { role: 'developer', content: catalogTemplate },
+    { role: 'developer', content: permission },
+    { role: 'developer', content: extraTemplates[1] },
+    { role: 'user', content: 'Synthetic previous question.' },
+    { role: 'assistant', content: 'Synthetic previous answer.' },
+    { role: 'user', content: 'Continue after a model switch.' }
+  ] };
+  const normalized = normalizeResponses(body), result = sanitizeClientIdentity(normalized, options);
+  assert.deepEqual(result.metadata.editedInstructionBlocks, [0, 2]);
+  assert.equal(result.normalized.instructionMessages[1].text, permission);
+  assert.deepEqual(result.normalized.messages, normalized.messages);
+  assert.deepEqual(result.normalized.tools, normalized.tools);
 });
 
 test('unverified templates, mismatched provenance and other protocols remain untouched', t => {
@@ -195,9 +240,10 @@ test('Carbon handles all verified repeated frameworks without changing rules, hi
     const normalized = normalizeResponses(body), before = structuredClone(normalized);
     const result = sanitizeClientIdentity(normalized, { ...options, model: modelId });
     assert.deepEqual(normalized, before);
-    assert.deepEqual(result.metadata.editedInstructionBlocks, [0, 1, 2]);
+    assert.deepEqual(result.metadata.editedInstructionBlocks,
+      Array.from({ length: extraTemplates.length + 1 }, (_, index) => index));
     assert.equal(result.metadata.profile, null);
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index <= extraTemplates.length; index++) {
       const rule = index ? capture.additionalFrameworks[index - 1] : { ...capture, identityOffset: 0 };
       const original = before.instructionMessages[index].text;
       assert.equal(result.normalized.instructionMessages[index].text,
@@ -207,6 +253,27 @@ test('Carbon handles all verified repeated frameworks without changing rules, hi
     assert.deepEqual(result.normalized.tools, before.tools);
     assert.equal(result.normalized.instructions, before.instructions);
   }
+});
+
+test('a verified GPT stock framework can lead an old session before its catalog model-switch block', t => {
+  mockCapturedDigest(t);
+  const stock = extraTemplates.at(-1);
+  const body = { ...payload(), instructions: '', input: [
+    { role: 'developer', content: stock },
+    { role: 'developer', content: 'Require approval before writes. Preserve all safety constraints.' },
+    { role: 'developer', content: extraTemplates[1] },
+    { role: 'user', content: 'Synthetic old-session history.' }
+  ] };
+  const before = normalizeResponses(body), result = sanitizeClientIdentity(before, options);
+  assert.deepEqual(result.metadata.editedInstructionBlocks, [0, 2]);
+  assert.equal(result.normalized.instructionMessages[1].text, before.instructionMessages[1].text);
+  assert.deepEqual(result.normalized.messages, before.messages);
+  assert.deepEqual(result.normalized.tools, before.tools);
+  const changed = normalizeResponses({ ...body, input: [
+    { role: 'developer', content: stock.slice(0, -1) + '!' },
+    ...body.input.slice(1)
+  ] });
+  assert.deepEqual(sanitizeClientIdentity(changed, options).normalized, changed);
 });
 
 test('a modified extra framework remains literal even beside a verified first framework', t => {

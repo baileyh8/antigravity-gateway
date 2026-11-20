@@ -176,18 +176,26 @@ function codex169Template(normalized, { clientProfile } = {}) {
   const first = normalized.instructionMessages?.[0];
   const framework = CODEX_169_FRAMEWORK;
   const firstDeveloper = first?.role === 'developer' && typeof first.text === 'string'
-    && first.text.length >= framework.length && first.text.startsWith(framework.identity)
-    && hash(first.text.slice(0, framework.length)) === framework.sha256;
-  // This catalog fallback arrives in Responses instructions, outside the
-  // developer blocks. Match the complete stock text to keep caller rules out.
+    && [{ ...framework, identityOffset: 0 }, ...framework.additionalFrameworks].some(candidate =>
+      first.text.length >= candidate.length
+      && first.text.startsWith(candidate.identity, candidate.identityOffset)
+      && hash(first.text.slice(0, candidate.length)) === candidate.sha256);
+  // The catalog fallback can arrive in top-level Responses instructions.
+  // Match the complete stock text to keep caller rules out.
   const instructions = normalized.instructions;
   const catalog = framework.catalogInstructions;
   const topLevel = typeof instructions === 'string' && instructions.length === catalog.length
     && instructions.startsWith(catalog.identity) && hash(instructions) === catalog.sha256;
-  if (!firstDeveloper && !topLevel) return null;
+  // Desktop 0.169.1 puts the same complete catalog fallback in the first
+  // developer message. Its full captured digest is required here as well;
+  // an arbitrary identity prefix or caller-appended policy does not qualify.
+  const catalogDeveloper = first?.role === 'developer' && typeof first.text === 'string'
+    && first.text.length === catalog.length && first.text.startsWith(catalog.identity)
+    && hash(first.text) === catalog.sha256;
+  if (!firstDeveloper && !catalogDeveloper && !topLevel) return null;
   const projection = [instructions, ...(normalized.instructionMessages || []).map(item => item.text)]
     .filter(Boolean).join('\n\n');
-  return normalized.system === projection ? { firstDeveloper, topLevel } : null;
+  return normalized.system === projection ? { firstDeveloper: firstDeveloper || catalogDeveloper, topLevel } : null;
 }
 
 function anthropicSystemBlockEvidence(blocks) {
@@ -401,8 +409,10 @@ function sanitizeClientIdentity(normalized, options = {}) {
       ? catalog.replacement + normalized.instructions.slice(catalog.identity.length) : normalized.instructions;
     const instructionMessages = (normalized.instructionMessages || []).map((message, index) => {
       if (!codex169.firstDeveloper || message.role !== 'developer' || typeof message.text !== 'string') return message;
-      const candidates = [{ ...framework, identityOffset: 0 }, ...framework.additionalFrameworks];
+      const candidates = [{ ...framework, identityOffset: 0 }, ...framework.additionalFrameworks,
+        { ...catalog, identityOffset: 0, exactLength: true }];
       const match = candidates.find(candidate => message.text.length >= candidate.length
+        && (!candidate.exactLength || message.text.length === candidate.length)
         && message.text.startsWith(candidate.identity, candidate.identityOffset)
         && hash(message.text.slice(0, candidate.length)) === candidate.sha256);
       if (!match) return message;
