@@ -26,4 +26,4 @@ function selectGenerationFailure(last, capacity) {
     ? capacity : last;
 }
 
-module.exports = { upstreamError, isModelCapacityFailure, selectGenerationFailure };
+module.exports = { upstreamError, isModelCapacityFailure, isUnspecifiedResourceExhaustion, selectGenerationFailure };

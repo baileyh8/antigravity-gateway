@@ -270,3 +270,33 @@ test('an optional summary permission denial does not quarantine an otherwise wor
   assert.equal(requests.filter(({ url }) => url.endsWith(':fetchAvailableModels')).length, 1);
   assert.equal(manager.getSchedulingSnapshot('0')?.groups.length || 0, 0);
 });
+
+test('full quota catalog refresh updates account routing after model access changes', async t => {
+  const { DirectAntigravityProvider } = require('../src/direct-provider');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-model-access-refresh-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const store = new AccountStore({ configDir: directory });
+  const account = store.save({ id: 'catalog-fixture', email: 'fixture@example.test', accessToken: 'synthetic', projectId: 'synthetic-project' });
+  const argon = 'gemini-4-argon-high', sonar = 'gemini-4-hydrogen-sonar';
+  let models = { [argon]: { quotaInfo: { remainingFraction: 1 }, thinkingLevel: 3 } };
+  const pool = new AccountPool({ store, providerFactory: () => new DirectAntigravityProvider({
+    localAuth: null, accessToken: 'synthetic', projectId: 'synthetic-project', baseUrl: 'https://catalog.example.test',
+    fetchImpl: async url => new Response(JSON.stringify(url.endsWith(':fetchAvailableModels') ? { models }
+      : url.endsWith(':retrieveUserQuotaSummary') ? usageBody : {}), { status: 200 })
+  }) });
+  const manager = new QuotaManager({ configDir: directory, accountPool: pool });
+  pool.quotaManager = manager;
+  await pool.ensureModelCatalogs();
+  const entry = pool.entries.get(account.id);
+  assert.equal(pool.isModelCandidate(entry, argon, Date.now()), true);
+  models = { [sonar]: { quotaInfo: { remainingFraction: 1 }, thinkingLevel: 1 },
+    'gemini-4-argon-disabled': { disabled: true, quotaInfo: { remainingFraction: 1 } } };
+  await manager.refreshAccount(account.id, { force: true, summaryOnly: false });
+  assert.equal(pool.isModelCandidate(entry, argon, Date.now()), false);
+  assert.equal(pool.isModelCandidate(entry, sonar, Date.now()), true);
+  assert.equal(entry.provider.modelInfo(sonar).thinkingLevel, 1);
+  models = { [argon]: { quotaInfo: { remainingFraction: 1 }, thinkingLevel: 3 } };
+  await manager.refreshAccount(account.id, { force: true, summaryOnly: false });
+  assert.equal(pool.isModelCandidate(entry, argon, Date.now()), true);
+  assert.equal(pool.isModelCandidate(entry, sonar, Date.now()), false);
+});

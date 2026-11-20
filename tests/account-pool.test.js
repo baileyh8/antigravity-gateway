@@ -805,3 +805,44 @@ for (const method of ['send', 'generateImage']) {
   }
 }
 
+
+
+test('unspecified exhaustion preserves first failure and cooldown without switching accounts', async t => {
+  const store = tempStore(t);
+  store.save(account('one@example.com'));
+  store.save(account('two@example.com'));
+  let calls = 0;
+  const upstream = new Error('Resource exhausted');
+  upstream.status = 429;
+  upstream.details = JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [] } });
+  upstream.retryAfterMs = 125000;
+  const pool = new AccountPool({
+    store, fallbackProvider: {},
+    providerFactory: () => ({
+      send: async () => { calls++; throw upstream; },
+      listModels: async () => ['gemini-3.8-flash-high'], modelInfo: () => null
+    })
+  });
+  await assert.rejects(pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'isolated' }),
+    error => error === upstream && error.retryAfterMs >= 124000);
+  assert.equal(calls, 1);
+});
+
+
+test('unspecified exhaustion without upstream timing retains the existing one minute cooldown', async t => {
+  const store = tempStore(t);
+  store.save(account('one@example.com'));
+  store.save(account('two@example.com'));
+  let calls = 0;
+  const pool = new AccountPool({
+    store, fallbackProvider: {}, now: () => 100000,
+    providerFactory: () => ({
+      send: async () => { calls++; throw Object.assign(new Error('Resource exhausted'), {
+        status: 429, details: JSON.stringify({ error: { status: 'RESOURCE_EXHAUSTED' } }) }); },
+      listModels: async () => ['gemini-3.8-flash-high'], modelInfo: () => null
+    })
+  });
+  await assert.rejects(pool.send({}, 'gemini-3.8-flash-high', { sessionId: 'default-cooldown' }),
+    error => error.status === 429 && error.retryAfterMs === 60000);
+  assert.equal(calls, 1);
+});

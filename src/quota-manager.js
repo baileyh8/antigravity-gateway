@@ -243,6 +243,7 @@ class QuotaManager {
     if (!isCurrent() || !this.usableEntry(this.currentEntry(accountId))) return null;
     try {
       const token = await provider.access(AbortSignal.timeout(30_000));
+      const catalogRequestStartedAt = Date.now();
       const [loadResult, modelsResult, usageResult] = await Promise.allSettled([
         summaryOnly ? Promise.resolve(null) : fetchJson(provider, token, LOAD_PATH, { metadata: { ideType: 'ANTIGRAVITY' } }),
         summaryOnly ? Promise.resolve(null) : fetchJson(provider, token, MODELS_PATH, provider.projectRequestBody?.() || {}),
@@ -260,17 +261,27 @@ class QuotaManager {
         }
         throw failure;
       }
+      // Reuse the authoritative catalog parser. A quota refresh must update the
+      // same account's routing permissions and model metadata, not just its UI.
+      // Discard catalogs overtaken by a later discovery request.
+      const modelsCurrent = !summaryOnly && modelsResult.status === 'fulfilled'
+        && catalogRequestStartedAt >= (provider.modelCatalogRequestStartedAt || 0);
+      if (modelsCurrent && modelsResult.value?.models && typeof modelsResult.value.models === 'object'
+        && typeof provider.recordDiscoveredModels === 'function') {
+        const catalog = provider.recordDiscoveredModels(modelsResult.value, catalogRequestStartedAt);
+        this.accountPool.recordModelCatalog?.(entry, catalog);
+      }
       const previous = this.snapshots[accountId] || {};
       const credits = !summaryOnly && loadResult.status === 'fulfilled'
         ? creditSnapshot(loadResult.value)
         : { plan: previous.plan || '', creditType: previous.creditType || '', creditAmount: previous.creditAmount ?? null, minimumCreditAmountForUsage: previous.minimumCreditAmountForUsage ?? null };
-      const models = !summaryOnly && modelsResult.status === 'fulfilled' ? modelQuotaSnapshot(modelsResult.value) : previous.models || {};
+      const models = modelsCurrent ? modelQuotaSnapshot(modelsResult.value) : previous.models || {};
       const groups = usageResult.status === 'fulfilled' ? usageQuotaSnapshot(usageResult.value) : previous.groups || [];
       const now = this.now();
       const observedAt = new Date(now).toISOString();
       const expiresAt = new Date(now + this.intervalMs).toISOString();
       const groupsExpiresAt = usageResult.status === 'fulfilled' ? expiresAt : previous.groupsExpiresAt || previous.expiresAt || '';
-      const modelsExpiresAt = !summaryOnly && modelsResult.status === 'fulfilled' ? expiresAt : previous.modelsExpiresAt || previous.expiresAt || '';
+      const modelsExpiresAt = modelsCurrent ? expiresAt : previous.modelsExpiresAt || previous.expiresAt || '';
       const values = Object.values(models);
       const available = groups.length && Date.parse(groupsExpiresAt) > now
         ? groups.some((group) => group.available)

@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.35 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.41 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,11 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.35
+### 当前源码版本：1.7.1-bailey.41
+
+补齐 Codex Desktop 0.169.1 的目录模板位于 `developer` 消息、以及旧 GPT 会话保留 stock 框架时的精确兼容。仅在来源、完整框架摘要和指令投影符合已验证样本时处理固定模型身份句，其余权限规则、工具与历史保持。
+
+无明确配额细节的 `RESOURCE_EXHAUSTED` 429 不再在入口与账号之间立即重试；保留上游冷却信息，无上游时间提示时沿用现有模型冷却。实时目录会排除明确 `disabled` 的条目，防止旧查询覆盖新权限。
 
 所有 Cloud Code 模型共用 Responses 链路的 Codex 框架兼容。符合已验证的来源和框架指纹时，仅处理固定身份段落，保留思考档位、工具和历史。
 
@@ -697,7 +701,11 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.35
+### Current source version: 1.7.1-bailey.41
+
+Recognize the verified Codex Desktop 0.169.1 catalog in developer messages and the stock GPT framework retained during model switches. Exact source, digest and instruction-projection checks scope edits to fixed model-identity clauses; permissions, tools and history are preserved.
+
+Return unspecified `RESOURCE_EXHAUSTED` refusals without immediate endpoint/account retry amplification, preserving upstream cooldown hints and the existing fallback cooldown. Discovery excludes explicitly disabled models and rejects stale results that would restore superseded access.
 
 All Cloud Code models share the Codex Responses framework handling. The verified request source and framework digest scope the fixed identity edits while preserving thinking settings, tools and history.
 
