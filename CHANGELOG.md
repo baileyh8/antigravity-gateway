@@ -5,6 +5,7 @@
 - 明确的 `503 UNAVAILABLE / MODEL_CAPACITY_EXHAUSTED` 只发送一次，不再立即切入口或换账号；保留合法上游退避提示，无提示时按模型冷却 60 秒。
 - 容量冷却不修改账号健康、额度冷却或会话绑定；后续同模型请求使用现有 120 项共享队列和 30 秒累计等待预算，仍无容量时返回 503 与剩余冷却时间。其他模型不受该模型冷却影响，原并发和额度预留保持。
 - 直连 Responses 默认在上游接受后开启 SSE，避免拒绝被包装成 HTTP 200 并触发客户端反复重连。显式 `X-AGY-Defer-Stream-Start: 0` 保留旧行为。
+- 保留 HTTP 200 流内顶层与嵌套 RPC 错误的结构化状态、容量原因和 RetryInfo，避免把流内拒绝误判为普通临时失败或成功。
 - 脱敏转换日志增加最终 system 字符数与输出预算，不记录正文、凭证或工具定义。该修复解决重试放大和错误反馈，不声称解决真实上游容量不足。
 
 English: Stop explicit model-capacity retry amplification; preserve model-local cooldown and retry timing through the bounded shared queue without penalizing account health or quota. Defer direct Responses SSE until upstream acceptance by default, retaining an explicit legacy opt-out. Add content-free system-length and output-budget diagnostics. Actual upstream capacity remains external to the gateway.

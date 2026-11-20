@@ -441,9 +441,17 @@ async function consumeUpstreamValue(value, state, onDelta, onThinkingDelta, resp
   if (rpcError && (rpcError.status === 'RESOURCE_EXHAUSTED' || rpcError.code === 429 || rpcError.code === 8)) {
     recordUpstream429(response, value);
   }
-  if (value.error) throw new DirectProviderError('Antigravity 直连上游返回错误。', {
-    code: 'direct_upstream_error', status: Number(value.error.code) || 502, details: redact(value.error.message || compact(value.error))
-  });
+  if (rpcError) {
+    const details = redact(compact({ error: rpcError }));
+    const rpcStatuses = { RESOURCE_EXHAUSTED: 429, UNAVAILABLE: 503, UNAUTHENTICATED: 401, PERMISSION_DENIED: 403, INVALID_ARGUMENT: 400 };
+    const numeric = Number(rpcError.code);
+    const status = rpcStatuses[rpcError.status] || (numeric >= 400 && numeric <= 599 ? numeric : 502);
+    recordUpstreamFailure(response || { status: 200 }, details);
+    throw new DirectProviderError('Antigravity 直连上游返回错误。', {
+      code: 'direct_upstream_error', status, details,
+      retryAfterMs: Math.max(retryInfoMs(status, details), response ? retryAfterMs(response, 0, 0) : 0)
+    });
+  }
   const root = value.response || value;
   const reason = (root.candidates?.[0] || value.candidates?.[0])?.finishReason;
   if (reason) state.finishReason = reason;
