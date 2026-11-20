@@ -778,3 +778,24 @@ test('long structured upstream cooldown is returned without waiting or truncatin
     error => error.status === 429 && error.retryAfterMs === 145000 && JSON.parse(error.details).error.details.length === 1);
   assert.equal(calls, 1);
 });
+
+test('HTTP 200 stream RPC errors preserve capacity, quota and retry details in both envelopes', async () => {
+  for (const nested of [false, true]) {
+    for (const [status, rpc, code] of [[503, 'UNAVAILABLE', 14], [429, 'RESOURCE_EXHAUSTED', 8]]) {
+      const error = { code, status: rpc, message: 'Synthetic stream refusal', details: [
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '125s' },
+        ...(status === 503 ? [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'MODEL_CAPACITY_EXHAUSTED' }] : [])
+      ] };
+      let calls = 0;
+      const provider = new DirectAntigravityProvider({ localAuth: null, accessToken: 'synthetic', projectId: 'fixture', maxRetries: 2,
+        fetchImpl: async () => {
+          calls++;
+          const value = nested ? { response: { error } } : { error };
+          return new Response(`data: ${JSON.stringify(value)}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+        } });
+      await assert.rejects(provider.send(normalized(), 'gemini-test-high', { sessionId: `rpc-${nested}-${status}` }), e =>
+        e.status === status && e.retryAfterMs === 125000 && JSON.parse(e.details).error.status === rpc);
+      assert.equal(calls, 1);
+    }
+  }
+});
