@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.43 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.44 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,7 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.43
+### 当前源码版本：1.7.1-bailey.44
 
 修复已验证的 Claude Desktop SDK 2.1.330 与 Hermes 指令封装：客户端规则移入独立消息，由上游 system 明确其优先级，安全、权限、工具契约与签名历史保留。DSH 的普通和长规则样本均正常，保持其指令位置；补齐 `max_completion_tokens`，按实时模型目录约束输出上限。冷启动预算查询共享一次有界目录请求，不增加生成重试。未知框架不猜测改写，工具视图仍由独立的已验证声明选择。
 
@@ -707,7 +707,7 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.43
+### Current source version: 1.7.1-bailey.44
 
 Adapt verified Claude Desktop SDK 2.1.330 and Hermes instruction layouts with a dedicated client-policy message and a system-level precedence bridge. Preserve safety, permissions, tool contracts and signed history. Keep DSH instruction placement unchanged after successful short/long-rule checks; support `max_completion_tokens` within live catalog output limits. Cold budget requests share a bounded metadata lookup without generation retries. Unknown frameworks are left intact and tool views remain independently declaration-verified.
 
@@ -1154,3 +1154,7 @@ Chat streaming usage is opt-in via `stream_options.include_usage:true`: intermed
 模型目录取账号实际返回的 Cloud Code 元数据；公开 ID、输入窗口、输出上限与思考参数分别处理。当前已观察到 Argon 三档、Hydrogen 四档，默认输出上限分别为65,536及262,144，输入窗口均为1,048,576。目录规格不是所有账号的权限或所有媒体场景的实测结果。客户端旧条目需重新同步目录；具体参数与验证边界见 [1.5.9 对照](docs/agy-1.5.9-compatibility.md)。
 
 Model metadata comes from the account's actual Cloud Code catalog. Public IDs, context limits, output caps and thinking settings are handled separately. Observed Argon and Hydrogen entries have default output caps of 65,536 and 262,144 respectively and context limits of 1,048,576. These are directory values, not proof of every account's entitlement or every media path. Refresh previously saved client entries; see the compatibility report for evidence and limits.
+
+Claude Desktop 的已验证固定框架也支持不带 SDK 默认身份前缀的直接 system 布局；框架摘要和段落边界校验保持，安全与权限指令完整保留。
+
+Verified Claude Desktop frameworks also support directly assembled system prompts without the SDK identity preamble. Full framework hashes and section boundaries remain required; safety and permission instructions are retained.

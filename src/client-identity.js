@@ -84,12 +84,15 @@ function claudeDesktop330Prefix(text) {
   let rest = text.trimStart();
   const billing = rest.match(/^x-anthropic-billing-header: cc_version=2\.1\.330(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
   if (billing) rest = rest.slice(billing[0].length);
-  if (!rest.startsWith(CLAUDE_IDENTITY + '\n')) return null;
-  rest = rest.slice(CLAUDE_IDENTITY.length).trimStart();
+  // Desktop may supply the same framework directly as its custom system
+  // prompt, without the SDK's default identity block. Recognition still
+  // requires the complete captured framework and guidance boundary below.
+  const hasIdentity = rest.startsWith(CLAUDE_IDENTITY + '\n');
+  if (hasIdentity) rest = rest.slice(CLAUDE_IDENTITY.length).trimStart();
   const framework = CLAUDE_DESKTOP_330.frameworks.find(({ length, sha256 }) => hash(rest.slice(0, length)) === sha256
     && rest.slice(length).startsWith('# Session-specific guidance\n'));
   if (!framework) return null;
-  return { end: text.length - rest.length, billing: Boolean(billing), desktop330: true, toolTemplateVersion: framework.toolTemplateVersion };
+  return { end: text.length - rest.length, billing: Boolean(billing), desktop330: true, identityBlock: hasIdentity, toolTemplateVersion: framework.toolTemplateVersion };
 }
 
 function cleanDesktop330ModelReminder(text, record) {
@@ -327,7 +330,7 @@ function cleanInstruction(text, client, record) {
   if (client === 'claude') {
     const prefix = claudePrefix(text);
     if (prefix.billing) record('claude-billing-marker');
-    record(prefix.tui ? 'claude-tui-identity' : 'claude-sdk-identity');
+    record(prefix.desktop330 && !prefix.identityBlock ? 'claude-desktop-framework-layout' : prefix.tui ? 'claude-tui-identity' : 'claude-sdk-identity');
     const cleaned = prefix.desktop330 ? cleanDesktop330ModelReminder(text.slice(prefix.end), record) : text.slice(prefix.end);
     if (prefix.tui) return cleaned;
     if (prefix.searchHelper) {

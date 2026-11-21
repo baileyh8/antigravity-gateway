@@ -26,3 +26,14 @@ test('real request builder preserves signed Claude tool continuation under the i
  assert.ok(call && reply);assert.equal(call.thoughtSignature,'synthetic-signature');assert.equal(call.functionCall.id,reply.functionResponse.id);
  assert.ok(parts.findIndex(p=>p.functionCall)<parts.findIndex(p=>p.functionResponse));
 });
+
+test('framework-only Desktop system reaches the envelope in the real request builder',()=>{
+ const {normalizeChat}=require('../src/protocol'),{buildDirectRequest}=require('../src/direct-provider');
+ const fixture=require('./fixtures/claude-desktop-2.1.330-framework.json');
+ const system=fixture.compactSystem.replace("You are a Claude agent, built on Anthropic's Claude Agent SDK.\n",'')+'\nCustom permissions: never write files.';
+ const n=normalizeChat({messages:[{role:'system',content:system},{role:'user',content:'Synthetic fixture: reply OK.'}]});
+ const native={};const wire=buildDirectRequest(n,'gemini-4-hydrogen-sonar','fixture','session','',null,native);
+ assert.equal(native.clientInstructionEnvelope,true);assert.equal(wire.request.contents.length,2);
+ assert.ok(wire.request.contents[0].parts[0].text.includes(OPEN));
+ assert.ok(wire.request.contents[0].parts[0].text.includes('Custom permissions: never write files.'));
+});
