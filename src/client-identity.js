@@ -1,7 +1,9 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { capturedInstructionProfile } = require('./client-instruction-profile');
 const { CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE } = require('./agy-client-profile');
+const CLAUDE_DESKTOP_330 = Object.freeze(require('./data/claude-desktop-2.1.330-framework.json'));
 const CODEX_169_FRAMEWORK = Object.freeze(require('./data/codex-0.169.0-framework.json'));
 
 // Evidence: tests/fixtures/agent-requests-20261107; these are template matches, not client authentication.
@@ -76,7 +78,50 @@ function claudeTuiPrefix(text) {
   return { end, billing: true, tui: true };
 }
 
+// Captured independently from Desktop's bundled SDK, not a header-only identity.
+// Only fixed framework bytes qualify; session guidance and safety stay intact.
+function claudeDesktop330Prefix(text) {
+  let rest = text.trimStart();
+  const billing = rest.match(/^x-anthropic-billing-header: cc_version=2\.1\.330(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
+  if (billing) rest = rest.slice(billing[0].length);
+  if (!rest.startsWith(CLAUDE_IDENTITY + '\n')) return null;
+  rest = rest.slice(CLAUDE_IDENTITY.length).trimStart();
+  const framework = CLAUDE_DESKTOP_330.frameworks.find(({ length, sha256 }) => hash(rest.slice(0, length)) === sha256
+    && rest.slice(length).startsWith('# Session-specific guidance\n'));
+  if (!framework) return null;
+  return { end: text.length - rest.length, billing: Boolean(billing), desktop330: true, toolTemplateVersion: framework.toolTemplateVersion };
+}
+
+function cleanDesktop330ModelReminder(text, record) {
+  // Desktop's custom Magpie model alias is embedded in the compact framework's
+  // environment, rather than a separate reminder. Require its captured layout
+  // and the intact safety paragraph; never scan arbitrary user turns.
+  const envs = [...text.matchAll(/# Environment\nYou have been invoked in the following environment: ?\n - Primary working directory: [^\n]+\n - Is a git repository: (?:true|false)\n - Platform: [^\n]+\n - Shell: [^\n]+\n - OS Version: [^\n]+\n/g)];
+  if (envs.length === 1) {
+    const safetyAt = envs[0].index + envs[0][0].length;
+    const end = safetyAt + CLAUDE_DESKTOP_330.environmentSafetyTextLength;
+    if (hash(text.slice(safetyAt, end)) === CLAUDE_DESKTOP_330.environmentSafetyTextSha256) {
+      const alias = text.slice(end).match(/^\n\n(You are powered by the model mythos-magpie-\d{10}(?:\[1m\])?\.)\n\n/);
+      if (alias && text.split(alias[1]).length === 2) {
+        record('claude-desktop-330-model-alias');
+        return text.slice(0, end + 2) + text.slice(end + 2 + alias[1].length);
+      }
+    }
+  }
+  const notice = CLAUDE_DESKTOP_330.notice, at = text.indexOf(notice);
+  if (at < 0 || text.indexOf(notice, at + notice.length) >= 0) return text;
+  const before = text.slice(0, at).trimEnd(), start = before.lastIndexOf('<system-reminder>');
+  if (start < 0) return text;
+  const environment = before.slice(start);
+  const fields = environment.match(/^<system-reminder>\n# Environment\nYou have been invoked in the following environment: ?\n - Primary working directory: [^\n]+\n - Is a git repository: (?:true|false)\n - Platform: [^\n]+\n - Shell: [^\n]+\n - OS Version: [^\n]+\n/);
+  if (!fields || hash(environment.slice(fields[0].length)) !== CLAUDE_DESKTOP_330.environmentSafetyTailSha256) return text;
+  record('claude-desktop-330-model-reminder');
+  return text.slice(0, at) + text.slice(at + notice.length);
+}
+
 function claudePrefix(text) {
+  const desktop330 = claudeDesktop330Prefix(text);
+  if (desktop330) return desktop330;
   const tui = claudeTuiPrefix(text);
   if (tui) return tui;
   let rest = text.trimStart();
@@ -109,7 +154,7 @@ function claudePrefix(text) {
 function detectTemplate(text) {
   if (typeof text !== 'string') return null;
   const claude = claudePrefix(text);
-  if (claude) return { client: 'claude', evidence: claude.tui ? 'claude-tui-system-template' : claude.searchHelper ? 'claude-sdk-search-helper-template'
+  if (claude) return { client: 'claude', ...(claude.toolTemplateVersion ? { toolTemplateVersion: claude.toolTemplateVersion } : {}), evidence: claude.desktop330 ? 'claude-desktop-330-system-template' : claude.tui ? 'claude-tui-system-template' : claude.searchHelper ? 'claude-sdk-search-helper-template'
     : claude.compact ? 'claude-sdk-compact-system-template' : 'claude-sdk-system-template' };
   const paragraphs = text.trimStart().split(/\n\s*\n/);
   // SOUL.md may contain multiple paragraphs, including user rules appended to
@@ -264,9 +309,16 @@ function inferClientProfile(normalized, options = {}) {
   const found = instructionSources(normalized).map(source => detectTemplate(source.text)).filter(Boolean);
   const codex = codexTemplate(normalized, options);
   if (codex) found.push({ client: 'codex', evidence: codex });
-  if (!found.length || new Set(found.map(item => item.client)).size !== 1) return null;
+  if (!found.length) {
+    // Only DSH's captured declarations also match the existing tool-contract
+    // version. Hermes instruction provenance must not select a tool view.
+    const captured = capturedInstructionProfile(normalized);
+    return captured?.client === 'dsh' ? captured : null;
+  }
+  if (new Set(found.map(item => item.client)).size !== 1) return null;
   const client = found[0].client;
-  return { client, templateVersion: VERSIONS[client], evidence: [...new Set(found.map(item => item.evidence))] };
+  return { client, templateVersion: found.some(item => item.evidence === 'claude-desktop-330-system-template') ? '2.1.330' : VERSIONS[client],
+    ...(found[0].toolTemplateVersion ? { toolTemplateVersion: found[0].toolTemplateVersion } : {}), evidence: [...new Set(found.map(item => item.evidence))] };
 }
 
 function cleanInstruction(text, client, record) {
@@ -276,7 +328,7 @@ function cleanInstruction(text, client, record) {
     const prefix = claudePrefix(text);
     if (prefix.billing) record('claude-billing-marker');
     record(prefix.tui ? 'claude-tui-identity' : 'claude-sdk-identity');
-    const cleaned = text.slice(prefix.end);
+    const cleaned = prefix.desktop330 ? cleanDesktop330ModelReminder(text.slice(prefix.end), record) : text.slice(prefix.end);
     if (prefix.tui) return cleaned;
     if (prefix.searchHelper) {
       record('claude-search-helper-model-identity');
@@ -488,6 +540,11 @@ function sanitizeClientIdentity(normalized, options = {}) {
       return transformed;
     });
     if (Array.isArray(normalized.tools)) result.tools = normalized.tools.map(tool => sanitizeToolDescription(tool, profile, record));
+  }
+  if (!profile && capturedInstructionProfile(normalized)?.client === 'hermes' && Array.isArray(normalized.tools)) {
+    // Instruction provenance may authorize a fixed description cleanup without
+    // promoting that capture to an unrelated tool-view compatibility version.
+    result.tools = normalized.tools.map(tool => sanitizeToolDescription(tool, { client: 'hermes' }, record));
   }
   return { normalized: result, metadata: { profile, rules } };
 }

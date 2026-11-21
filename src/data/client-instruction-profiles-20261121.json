@@ -1,0 +1,37 @@
+[
+  {
+    "client": "hermes",
+    "version": "0.22.2-captured",
+    "evidence": "hermes-instructions-20261121",
+    "tools": [
+      {
+        "name": "read_file",
+        "sha256": "28aa3128bf87660c1beaf77a05b58972e2c1b953621f2df9def7796d2f723c13"
+      },
+      {
+        "name": "terminal",
+        "sha256": "085dd0b39b699a867c4cbb363613762ef6a6f9c33c21a61689cee8eb8ddc9ae8"
+      }
+    ],
+    "anchor": "# Finishing the job\n",
+    "frameworkLength": 769,
+    "frameworkSha256": "3baa51af2f4d627c2b1b2cffee38919540472a1215558c88e8616443efb7da1c"
+  },
+  {
+    "client": "dsh",
+    "version": "0.2.2-rc.1",
+    "evidence": "dsh-instructions-20261121",
+    "prefixLength": 92,
+    "prefixSha256": "647bd85ba2e8c2a558ff8902caf03cf83f594bc35ac40ed905a10f61c73ec071",
+    "tools": [
+      {
+        "name": "read",
+        "sha256": "2b17d55b111c764a021d2f8d65e1441a1989dc54faddea14a009b4f4963c6a5e"
+      },
+      {
+        "name": "bash",
+        "sha256": "12650de8231a06675fa71e3b7f490e14b5116be8fd15cf3a89149ca924587b0d"
+      }
+    ]
+  }
+]

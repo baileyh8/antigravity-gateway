@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { envelopeClientInstructions } = require('./client-instruction-envelope');
+const { capturedInstructionProfile } = require('./client-instruction-profile');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -370,6 +372,8 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
       if (name) request.toolConfig.functionCallingConfig.allowedFunctionNames = [name];
     }
   }
+  native.clientInstructionEnvelope = envelopeClientInstructions(request, identity.normalized.system,
+    capturedInstructionProfile(identity.normalized) || identity.metadata.profile, model);
   const state = native.state || newState('', '');
   native.context = yield prepareContext(state, request.contents, model, { metadata: native.modelInfo, now: native.now, checkpoint: native.checkpoint, compactionProfile: native.compactionProfile, clientProfile: native.clientProfile, imageStore: native.imageStore,
     restoreStreamRecovery: native.restoreStreamRecovery, toolAdapter: native.toolAdapter });
@@ -1031,7 +1035,21 @@ class DirectAntigravityProvider {
       (state, checkpoint) => this.sendInSession(normalized, model, options, state, checkpoint));
   }
 
+  async ensureCompletionBudgetCatalog(normalized, model) {
+    if (!normalized.completionBudgetNeedsCatalog || this.modelInfo(model)?.maxOutputTokens > 0) return;
+    // A cold DSH/OpenAI-completions request must not forward an advertised
+    // 256K output budget before this account's actual output limit is known.
+    // Share only the bounded metadata lookup; no model generation or retry.
+    if (!this.completionBudgetCatalog) {
+      const lookup = this.discoverModels(AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS));
+      this.completionBudgetCatalog = lookup;
+      lookup.finally(() => { if (this.completionBudgetCatalog === lookup) this.completionBudgetCatalog = null; }).catch(() => {});
+    }
+    await this.completionBudgetCatalog;
+  }
+
   async sendInSession(normalized, model, { signal, sessionId, auxiliaryScope = '', nativeCompaction = '', nativeClientProfile = '', repairInstruction = '', onDelta, onThinkingDelta, onUpstreamAttempt, onUpstreamAccepted, clientProjection } = {}, nativeState, checkpoint) {
+    await this.ensureCompletionBudgetCatalog(normalized, model);
     let token = await this.access(signal);
     let project = await this.project(signal, token);
     const compactionProfile = nativeCompaction === CLAUDE_COMPACTION_PROFILE ? nativeCompaction : '';

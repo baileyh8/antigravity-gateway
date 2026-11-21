@@ -1,0 +1,18 @@
+{
+  "version": "2.1.330",
+  "notice": "<system-reminder>\nYou are powered by the model named Sonnet 5. The exact model ID is claude-sonnet-5. Assistant knowledge cutoff is January 2026.\n</system-reminder>",
+  "environmentSafetyTailSha256": "0f0d438da7053af2e05b1201cafe176971367e21d4a3f8ab1ace199aa1f4217f",
+  "frameworks": [
+    {
+      "length": 13517,
+      "sha256": "b2210826e193b4bb6dadf9cb980097c7bb582431d4bd0ebe72d3b87b6a6a33b3",
+      "toolTemplateVersion": "2.1.322"
+    },
+    {
+      "length": 3333,
+      "sha256": "58eba40d8348caa78ebbb46ef0cc6b00b4281abd51d2896ebfd0eae808eab662"
+    }
+  ],
+  "environmentSafetyTextLength": 543,
+  "environmentSafetyTextSha256": "fed2d6bfdb05ee4ede07176893e3e460abdc4de84c377ac7bbc036bfb58f0560"
+}

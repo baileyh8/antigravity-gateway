@@ -343,7 +343,7 @@ function* normalizeToolsSteps(tools, protocol, compiler = compileSchema) {
 
 function generationConfigFrom(payload) {
   const config = {};
-  const maxTokens = payload.max_tokens ?? payload.max_output_tokens;
+  const maxTokens = payload.max_completion_tokens ?? payload.max_tokens ?? payload.max_output_tokens;
   if (Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) config.maxOutputTokens = Number(maxTokens);
   if (Number.isFinite(Number(payload.temperature))) config.temperature = Number(payload.temperature);
   if (Number.isFinite(Number(payload.top_p))) config.topP = Number(payload.top_p);
@@ -578,6 +578,7 @@ function* normalizeChatSteps(payload, compiler = compileSchema) {
   }
   return {
     protocol: 'chat', model: payload.model, system: systemParts.join('\n'), messages,
+    ...(payload.max_completion_tokens != null ? { completionBudgetNeedsCatalog: true } : {}),
     tools: yield* requestToolsSteps(payload, 'chat', compiler), toolChoice: payload.tool_choice,
     generationConfig: generationConfigFrom(payload),
     ...reasoningOptionsFrom(payload, "chat"),
