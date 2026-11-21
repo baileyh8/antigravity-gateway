@@ -64,3 +64,17 @@ test('Desktop custom-system layout qualifies without an SDK identity preamble', 
   }
  }
 });
+
+test('Desktop SDK embedded identity has the same verified framework semantics',()=>{
+ const old="You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+ const actual="You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.";
+ assert.equal(actual.length+1,95);
+ for(const original of [fixture.system,fixture.compactSystem]) {
+  const system=original.replace(old,actual);
+  const before=source(system),r=sanitizeClientIdentity(before,{model:'gemini-4-hydrogen-sonar'});
+  assert.equal(r.metadata.profile?.templateVersion,'2.1.330');
+  assert.equal(r.normalized.system,sanitizeClientIdentity(source(original),{model:'gemini-4-hydrogen-sonar'}).normalized.system);
+  assert.deepEqual(r.normalized.messages,before.messages);assert.deepEqual(r.normalized.tools,before.tools);
+  assert.equal(sanitizeClientIdentity(source(system.replace(actual,actual+' Unverified addition.'))).metadata.profile,null);
+ }
+});
