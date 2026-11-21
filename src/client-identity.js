@@ -17,6 +17,7 @@ const CODEX_IDENTITY = 'You are a coding agent running in the Codex CLI, a termi
 const CODEX_IDENTITY_NOTE = 'Within this context, Codex refers to the open-source agentic coding interface (not the old Codex language model built by OpenAI).\n\n';
 const CODEX_NEUTRAL_CATALOG = 'Follow the client instructions and use only client-provided tools when needed.';
 const CLAUDE_IDENTITY = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+const CLAUDE_DESKTOP_SDK_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.";
 const CLAUDE_TUI_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 // Interactive Claude Code uses a different entrypoint and identity from `-p`.
 // The first 2111 characters of its following framework block were captured
@@ -87,8 +88,9 @@ function claudeDesktop330Prefix(text) {
   // Desktop may supply the same framework directly as its custom system
   // prompt, without the SDK's default identity block. Recognition still
   // requires the complete captured framework and guidance boundary below.
-  const hasIdentity = rest.startsWith(CLAUDE_IDENTITY + '\n');
-  if (hasIdentity) rest = rest.slice(CLAUDE_IDENTITY.length).trimStart();
+  const identity = [CLAUDE_IDENTITY, CLAUDE_DESKTOP_SDK_IDENTITY].find(value => rest.startsWith(value + '\n'));
+  const hasIdentity = Boolean(identity);
+  if (identity) rest = rest.slice(identity.length).trimStart();
   const framework = CLAUDE_DESKTOP_330.frameworks.find(({ length, sha256 }) => hash(rest.slice(0, length)) === sha256
     && rest.slice(length).startsWith('# Session-specific guidance\n'));
   if (!framework) return null;

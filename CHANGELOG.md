@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1-bailey.45
+
+- 兼容官方 Claude Desktop SDK 的另一种固定身份前缀（running within the Claude Agent SDK），仍要求完整框架摘要与段落边界；修复前缀差异导致指令封装被跳过。
+- 回归测试要求两种 SDK 身份前缀及无前缀布局产生相同的指令语义，任意增添的未知前缀不匹配。
+
 ## 1.7.1-bailey.44
 
 - 补齐 Claude Desktop 直接组装固定框架、没有 SDK 默认身份前缀的指令布局；仍要求完整已捕获框架摘要和 guidance 边界，不按 UA 直接改写。

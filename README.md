@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.44 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.45 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,7 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.44
+### 当前源码版本：1.7.1-bailey.45
 
 修复已验证的 Claude Desktop SDK 2.1.330 与 Hermes 指令封装：客户端规则移入独立消息，由上游 system 明确其优先级，安全、权限、工具契约与签名历史保留。DSH 的普通和长规则样本均正常，保持其指令位置；补齐 `max_completion_tokens`，按实时模型目录约束输出上限。冷启动预算查询共享一次有界目录请求，不增加生成重试。未知框架不猜测改写，工具视图仍由独立的已验证声明选择。
 
@@ -707,7 +707,7 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.44
+### Current source version: 1.7.1-bailey.45
 
 Adapt verified Claude Desktop SDK 2.1.330 and Hermes instruction layouts with a dedicated client-policy message and a system-level precedence bridge. Preserve safety, permissions, tool contracts and signed history. Keep DSH instruction placement unchanged after successful short/long-rule checks; support `max_completion_tokens` within live catalog output limits. Cold budget requests share a bounded metadata lookup without generation retries. Unknown frameworks are left intact and tool views remain independently declaration-verified.
 
