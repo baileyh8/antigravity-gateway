@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This is a maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed in the direction of a proxy core plus a separate management service. The original gateway, protocol work and project history come from upstream. Original attribution, history and the MIT license are preserved.
 
-**1.7.1-bailey.45 · 代理基座与独立后台 / Proxy core + separate admin**
+**1.7.1-bailey.46 · 代理基座与独立后台 / Proxy core + separate admin**
 
 - 基座承担所有代理、账号凭据、API 密钥与请求调度；`manager/` 提供静态前端和独立 Node 管理 API。
 - 后台入口 `/admin/`：看板、账号与额度、用量、日志、模型发现/参数、密钥和设置。
@@ -44,7 +44,7 @@
 
 ## 中文
 
-### 当前源码版本：1.7.1-bailey.45
+### 当前源码版本：1.7.1-bailey.46
 
 修复已验证的 Claude Desktop SDK 2.1.330 与 Hermes 指令封装：客户端规则移入独立消息，由上游 system 明确其优先级，安全、权限、工具契约与签名历史保留。DSH 的普通和长规则样本均正常，保持其指令位置；补齐 `max_completion_tokens`，按实时模型目录约束输出上限。冷启动预算查询共享一次有界目录请求，不增加生成重试。未知框架不猜测改写，工具视图仍由独立的已验证声明选择。
 
@@ -707,7 +707,7 @@ MIT，见 [LICENSE](LICENSE)。
 
 ## English
 
-### Current source version: 1.7.1-bailey.45
+### Current source version: 1.7.1-bailey.46
 
 Adapt verified Claude Desktop SDK 2.1.330 and Hermes instruction layouts with a dedicated client-policy message and a system-level precedence bridge. Preserve safety, permissions, tool contracts and signed history. Keep DSH instruction placement unchanged after successful short/long-rule checks; support `max_completion_tokens` within live catalog output limits. Cold budget requests share a bounded metadata lookup without generation retries. Unknown frameworks are left intact and tool views remain independently declaration-verified.
 
@@ -1158,3 +1158,7 @@ Model metadata comes from the account's actual Cloud Code catalog. Public IDs, c
 Claude Desktop 的已验证固定框架也支持不带 SDK 默认身份前缀的直接 system 布局；框架摘要和段落边界校验保持，安全与权限指令完整保留。
 
 Verified Claude Desktop frameworks also support directly assembled system prompts without the SDK identity preamble. Full framework hashes and section boundaries remain required; safety and permission instructions are retained.
+
+Claude Desktop 的会话标题与分支名辅助请求使用独立的短 system 模板。本版本为该固定模板补齐指令封装，保留环境安全约束、用户描述和推理参数；标题识别不改变主会话工具映射。
+
+Claude Desktop title and branch helpers use a separate short system template. This release envelopes that verified template while retaining environment safety rules, user descriptions and reasoning parameters. Helper recognition does not select or override main-session tool views.
