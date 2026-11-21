@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1-bailey.46
+
+- 补齐 Claude Desktop 标题及分支名辅助调用的短 system 模板，支持 SDK 多段文本及 Magpie 合并后相邻的身份句/任务指令。
+- 仅识别固定标题指令及已捕获环境安全布局，沿用指令分离封装；完整保留原 system、安全规则和用户描述，不改权限检查或推理档位。
+- 标题指令识别不参与工具视图版本选择；新增 Chat/Anthropic、直接/SDK布局、内部工具、变异拒绝和多模型参数回归。
+
 ## 1.7.1-bailey.45
 
 - 兼容官方 Claude Desktop SDK 的另一种固定身份前缀（running within the Claude Agent SDK），仍要求完整框架摘要与段落边界；修复前缀差异导致指令封装被跳过。

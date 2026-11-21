@@ -8,8 +8,8 @@ const OPEN = '<CLIENT_SYSTEM_INSTRUCTIONS>';
 const CLOSE = '</CLIENT_SYSTEM_INSTRUCTIONS>';
 
 function envelopeClientInstructions(request, clientSystem, profile, model) {
-  const evidence = { claude: 'claude-desktop-330-system-template', hermes: 'hermes-instructions-20261121' }[profile?.client];
-  if (!evidence || !profile?.evidence?.includes(evidence)
+  const evidence = { claude: ['claude-desktop-330-system-template', 'claude-desktop-title-system-template'], hermes: ['hermes-instructions-20261121'] }[profile?.client];
+  if (!evidence || !evidence.some(item => profile?.evidence?.includes(item))
     || !/^gemini-/.test(model || '') || typeof clientSystem !== 'string' || !clientSystem
     || !Array.isArray(request.contents) || request.systemInstruction?.parts?.length !== 1) return false;
   const text = request.systemInstruction.parts[0].text;
