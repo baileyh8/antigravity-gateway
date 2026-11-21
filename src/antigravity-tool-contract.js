@@ -186,9 +186,12 @@ function customValidator(tool, options) {
 
 function recognizedRule(tool, normalized, options) {
   const profile = options.clientIdentity;
+  const version = profile?.client === 'claude' && profile.templateVersion === '2.1.330'
+    && profile.evidence?.includes('claude-desktop-330-system-template')
+    && profile.toolTemplateVersion === '2.1.322' ? profile.toolTemplateVersion : profile?.templateVersion;
   if (options.checkpoint || normalized.autoMode || !profile || !own(VERSIONS, profile.client)
-    || VERSIONS[profile.client] !== profile.templateVersion) return null;
-  if (options.clientVersion && options.clientVersion !== VERSIONS[profile.client]) return null;
+    || VERSIONS[profile.client] !== version) return null;
+  if (options.clientVersion && options.clientVersion !== version && options.clientVersion !== profile.templateVersion) return null;
   const rules = own(PROFILES, profile.client) ? PROFILES[profile.client] : null;
   const rule = rules && own(rules, tool.name) ? rules[tool.name] : null;
   return rule && rule.slice(2).includes(fingerprint(tool)) ? { operation: rule[0], pathField: rule[1], client: profile.client } : null;

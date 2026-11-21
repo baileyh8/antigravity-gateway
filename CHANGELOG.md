@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1-bailey.43 - 2026-11-21
+
+- 修复已验证的 Claude Desktop SDK 2.1.330 与 Hermes 的 Gemini 指令封装；客户端指令放入独立消息，system 明确其优先级、安全与权限约束，网关工具契约保持原位置。原历史、工具参数及签名保留。
+- 指令封装识别与工具视图版本解耦；保留旧 Hermes 文件工具视图和 Claude 标准框架的已验证工具兼容。Hermes 自定义 SOUL 不被替换，重复或未知框架不猜测归属。
+- DSH 0.2.2-rc.1 的普通与长规则样本均正常，保持其指令位置；补齐 `max_completion_tokens`，按账号实时模型目录约束输出上限。冷启动共享一次有界目录查询，不增加生成重试、不调整思考档。
+- 脱敏、同账号固定出口串行验证：Claude 原位置429→独立消息200→恢复原位置429；正式封装的 Claude、Hermes、DSH 生成与带签名工具续接均200。不宣称消除所有上游429或容量波动。
+- 后台、调度、并发、额度保护、原生传输和 Magpie 本体保持；不新增转接服务或更新器。
+
+English: Repair verified Claude Desktop and Hermes instruction placement on Gemini while preserving client-policy precedence, safety and signed tool continuation. Keep instruction provenance independent of tool-view compatibility. Preserve working DSH placement and support completion-token budgets within live catalog limits, sharing a bounded cold metadata lookup. Controlled synthetic generation/tool roundtrips pass; external capacity and quota errors remain possible.
+
 ## 1.7.1-bailey.42 - 2026-11-20
 
 - 明确的 `503 UNAVAILABLE / MODEL_CAPACITY_EXHAUSTED` 只发送一次，不再立即切入口或换账号；保留合法上游退避提示，无提示时按模型冷却 60 秒。

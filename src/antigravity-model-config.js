@@ -101,6 +101,12 @@ function generationProfile(normalized = {}, model, metadata) {
     ...(client && typeof client === 'object' && !Array.isArray(client)
       ? Object.fromEntries(Object.entries(client).filter(([key]) => !CLIENT_THINKING_FIELDS.has(key))) : {})
   };
+  // A client may advertise a larger window than this account's live output
+  // capability. Respect the output ceiling without changing reasoning tier.
+  const outputLimit = resolved.profile.maxOutputTokens;
+  if (Number.isSafeInteger(outputLimit) && outputLimit > 0 && generation.maxOutputTokens > outputLimit) {
+    generation.maxOutputTokens = outputLimit;
+  }
   // Google removes matched stop sequences from its response. Let an identified
   // classifier generate its actual closing tag so strict XML validation can
   // check the complete verdict; never reconstruct a missing verdict or tag.
