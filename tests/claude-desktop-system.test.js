@@ -50,3 +50,17 @@ test('Desktop instruction capture never downgrades an already verified legacy to
  assert.deepEqual(views(cleaned.normalized,cleaned.metadata.profile),original);
  assert.equal(cleaned.metadata.profile.templateVersion,'2.1.330');assert.equal(cleaned.metadata.profile.toolTemplateVersion,'2.1.322');
 });
+
+test('Desktop custom-system layout qualifies without an SDK identity preamble', () => {
+ const identity="You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+ for(const original of [fixture.system, fixture.compactSystem]) {
+  const system=original.replace(identity+'\n','');
+  assert.notEqual(system,original);
+  const n=source(system),before=structuredClone(n),r=sanitizeClientIdentity(n,{model:'gemini-4-hydrogen-sonar'});
+  assert.equal(r.metadata.profile?.templateVersion,'2.1.330');
+  assert.deepEqual(n,before);assert.equal(r.normalized.system,sanitizeClientIdentity(source(original),{model:'gemini-4-hydrogen-sonar'}).normalized.system);
+  for (const changed of [system.replace('You are an agent working','You are a fixture working'),system.replace('# Session-specific guidance','# Arbitrary guidance')]) {
+   assert.equal(sanitizeClientIdentity(source(changed)).metadata.profile,null);
+  }
+ }
+});
