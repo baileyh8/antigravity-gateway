@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads');
 const { reverseLines, forwardLines } = require('./log-reader');
+const { resolveClientIp } = require('./client-ip');
 const { pipeline } = require('node:stream/promises');
 const { AsyncLocalStorage } = require('node:async_hooks');
 
@@ -94,9 +95,11 @@ function recordUpstreamFailure(response, body, upstreamIndex) {
   });
 }
 
+const KNOWN_IDENTITY_CLIENTS = new Set(['claude', 'codex', 'hermes', 'dsh', 'pi']);
+
 // Persist counts and bounded protocol values only. Never serialize message text,
 // tool names, schemas, signatures, project identifiers or arbitrary metadata.
-function recordConversionSummary(normalized, request) {
+function recordConversionSummary(normalized, request, diagnostics = {}) {
   const entry = requestContext();
   if (!entry) return;
   const roles = { user: 0, assistant: 0, other: 0 };
@@ -118,6 +121,18 @@ function recordConversionSummary(normalized, request) {
   }
   const mode = request.toolConfig?.functionCallingConfig?.mode;
   const thinking = request.generationConfig?.thinkingConfig;
+  const rawClient = diagnostics.identityClient;
+  const identityProfile = KNOWN_IDENTITY_CLIENTS.has(rawClient) ? rawClient : null;
+  const toolViews = { direct: 0, json: 0, native: 0, service: 0, legacy: 0 };
+  for (const record of Array.isArray(diagnostics.toolRecords) ? diagnostics.toolRecords : []) {
+    for (const view of Array.isArray(record?.views) ? record.views : []) {
+      if (view?.mode === 'mcp-direct') toolViews.direct++;
+      else if (view?.mode === 'mcp-json') toolViews.json++;
+      else if (view?.mode === 'native') toolViews.native++;
+      else if (view?.mode === 'native-service') toolViews.service++;
+      else if (view?.mode === 'mcp-legacy') toolViews.legacy++;
+    }
+  }
   entry.conversion = {
     roles,
     instructionBlocks: normalized.instructionMessages?.length || 0,
@@ -128,8 +143,12 @@ function recordConversionSummary(normalized, request) {
     clientTools: normalized.tools?.length || 0,
     wireDeclarations: (request.tools || []).reduce((n, item) => n + (item.functionDeclarations?.length || 0), 0),
     toolMode: ['AUTO', 'ANY', 'NONE'].includes(mode) ? mode : null,
-    thinkingLevel: ['LOW', 'MEDIUM', 'HIGH', 'MINIMAL'].includes(thinking?.thinkingLevel) ? thinking.thinkingLevel : null,
+    thinkingLevel: thinking?.thinkingLevel === 100 || ['LOW', 'MEDIUM', 'HIGH', 'MINIMAL'].includes(thinking?.thinkingLevel) ? thinking.thinkingLevel : null,
     thinkingBudget: Number.isSafeInteger(thinking?.thinkingBudget) ? thinking.thinkingBudget : null,
+    identityProfile,
+    envelopeApplied: Boolean(diagnostics.envelopeApplied),
+    toolViews,
+    schemaCache: { hits: Number(entry.schemaCacheHits) || 0, misses: Number(entry.schemaCacheMisses) || 0 },
     wire
   };
 }
@@ -157,7 +176,7 @@ class RequestLog {
       path: String(req.url || '').split('?')[0],
       keyId: key?.id || '',
       keyName: key?.name || '',
-      ip: String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || String(req.socket?.remoteAddress || ''),
+      ip: resolveClientIp(req),
       ua: String(req.headers['user-agent'] || '').slice(0, 120),
       model: '',
       upstreamModel: '',
@@ -199,6 +218,7 @@ class RequestLog {
       mapped: Number(entry.mappedCount) || 0,
       bytes: Number(entry.bytes) || 0,
       ...(entry.upstreamFailures?.length ? { upstreamFailures: entry.upstreamFailures } : {}),
+      ...(entry.emptyUpstreamResponse ? { emptyUpstreamResponse: true } : {}),
       ...(entry.conversion ? { conversion: entry.conversion } : {}),
       ...(entry.firstUpstream429 ? { upstream429: entry.firstUpstream429, upstream429Count: entry.upstream429Count } : {})
     });

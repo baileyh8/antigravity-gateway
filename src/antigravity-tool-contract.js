@@ -71,6 +71,26 @@ function parseJSON(value, status = 502) {
   try { return JSON.parse(value); }
   catch { return fail('工具参数不是有效 JSON。', { status }); }
 }
+function parseArgumentsJson(value, status = 502) {
+  if (typeof value !== 'string') return value;
+  if (Buffer.byteLength(value) > MAX_ARGUMENT_BYTES) fail('工具参数超过 4 MiB。', { status });
+  try { return JSON.parse(value); }
+  catch {
+    const fenced = value.trim().match(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i);
+    if (fenced) {
+      try { return JSON.parse(fenced[1]); } catch { /* fall through */ }
+    }
+    return fail('工具参数不是有效 JSON。', { status });
+  }
+}
+function toolSlug(clientName, maxLength = 24) {
+  return String(clientName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength)
+    .replace(/_+$/g, '');
+}
 function serialize(value, status = 400) {
   function check(item, depth = 0) {
     if (depth > 64) fail('工具参数嵌套超过支持深度。', { status });
@@ -266,12 +286,13 @@ function* prepareAntigravityToolsSteps(normalized, options = {}) {
   const compiler = options.schemaCompiler || compileSchema;
   const run = options.runSteps || runSync;
   const tools = normalized.tools || [], sourceTools = options.sourceTools || tools;
-  const sources = new Map(), clients = new Map(), providers = new Map(), prepared = [], records = [], serviceInstructions = [];
+  const sources = new Map(), sourceValidators = new Map(), viewValidators = new Map(), clients = new Map(), providers = new Map(), prepared = [], records = [], serviceInstructions = [];
   for (const source of sourceTools) {
     if (!source || typeof source.name !== 'string' || !source.name || sources.has(source.name)) fail('工具名称为空或重复。', { code: 'invalid_tool_declaration', status: 400 });
     // Bound and validate schemas before full fingerprint traversal as well as
     // before declaration projection (including recognized-profile requests).
-    yield compiler(source.schema);
+    const compiled = yield compiler(source.schema);
+    if (source.schema !== undefined) sourceValidators.set(source.name, compiled);
     sources.set(source.name, source);
   }
   // .24 cache migration stays scoped to the current account-owned native
@@ -291,8 +312,12 @@ function* prepareAntigravityToolsSteps(normalized, options = {}) {
   const reserved = new Set();
   function allocate(clientName, suffix = '') {
     const hash = digest(clientName + '\0' + suffix);
+    const prefix = 'mcp_gateway_tool_';
+    const tail = suffix ? `_${suffix}` : '';
     for (let length = 16; length <= hash.length; length += 8) {
-      const name = `mcp_gateway_tool_${hash.slice(0, length)}${suffix ? '_' + suffix : ''}`;
+      const maxSlug = Math.max(0, 64 - prefix.length - length - tail.length - 1);
+      const slug = maxSlug >= 2 ? toolSlug(clientName, Math.min(24, maxSlug)) : '';
+      const name = `${prefix}${slug ? `${slug}_` : ''}${hash.slice(0, length)}${tail}`;
       if (!reserved.has(name)) { reserved.add(name); return name; }
     }
     return fail('无法为工具分配无冲突名称。', { code: 'tool_name_collision', status: 400 });
@@ -308,10 +333,13 @@ function* prepareAntigravityToolsSteps(normalized, options = {}) {
     if (clients.has(tool.name)) fail('工具名称重复。', { code: 'invalid_tool_declaration', status: 400 });
     const modelService = trustedModelServiceDefinition(sources.get(tool.name), tool);
     const source = clone(sources.get(tool.name));
-    source.schema = source.schema === undefined ? { type: 'object' } : source.schema;
+    const hadExplicitSchema = source.schema !== undefined;
+    source.schema = hadExplicitSchema ? source.schema : { type: 'object' };
     source.kind ||= 'function';
     if (!['function', 'custom'].includes(source.kind)) fail('不支持此工具种类。', { code: 'unsupported_tool_type', status: 400 });
-    const validator = yield compiler(source.schema);
+    const validator = hadExplicitSchema && sourceValidators.has(tool.name)
+      ? sourceValidators.get(tool.name)
+      : (yield compiler(source.schema));
     const checkCustom = customValidator(source, options);
     const executionOwner = modelService ? 'Gateway model-service tool' : 'Client-executed tool';
     const contract = { source, validator, checkCustom, views: [], rule: rules.get(tool.name) };
@@ -321,7 +349,13 @@ function* prepareAntigravityToolsSteps(normalized, options = {}) {
     const directName = projected ? allocate(tool.name) : null;
     contract.fullName = modelService?.declaration.name || jsonName || directName;
     function* register(declaration, mode) {
-      const view = { declaration, mode, contract, validator: yield compiler(declaration.schema) };
+      const schemaKey = JSON.stringify(declaration.schema);
+      let viewValidator = viewValidators.get(schemaKey);
+      if (!viewValidator) {
+        viewValidator = yield compiler(declaration.schema);
+        viewValidators.set(schemaKey, viewValidator);
+      }
+      const view = { declaration, mode, contract, validator: viewValidator };
       if (providers.has(declaration.name)) fail('上游工具名称冲突。', { code: 'tool_name_collision', status: 400 });
       providers.set(declaration.name, view); contract.views.push(view); prepared.push(declaration);
     }
@@ -383,7 +417,7 @@ function* prepareAntigravityToolsSteps(normalized, options = {}) {
     let decoded;
     if (view.mode === 'native-service') decoded = args;
     else if (view.mode === 'native') decoded = fromNative(args, contract.rule);
-    else if (view.mode === 'mcp-json' || view.mode === 'mcp-legacy') decoded = parseJSON(args.argumentsJson);
+    else if (view.mode === 'mcp-json' || view.mode === 'mcp-legacy') decoded = parseArgumentsJson(args.argumentsJson);
     else decoded = Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'toolSummary'));
     serialize(decoded, 502); yield* validateSource(decoded, contract, 502);
     return replaceCall(call, contract.source.name, decoded, contract.source);

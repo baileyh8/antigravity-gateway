@@ -63,3 +63,15 @@ test('conversion diagnostics retain counts without private payload values', asyn
   assert.equal(conversion.maxOutputTokens, 65536);
   assert.equal(conversion.wireSystemChars, privateValue.length);
 });
+
+
+test('conversion diagnostics retain captured Hydrogen XHigh numeric thinking level only', () => {
+  const { runRequestLog, recordConversionSummary } = require('../src/request-log');
+  for (const [level, expected] of [[100, 100], ['HIGH', 'HIGH'], ['100', null], [999, null]]) {
+    const entry = {};
+    runRequestLog(entry, () => recordConversionSummary({ messages: [] }, {
+      contents: [], generationConfig: { thinkingConfig: { thinkingLevel: level } }
+    }));
+    assert.equal(entry.conversion.thinkingLevel, expected);
+  }
+});

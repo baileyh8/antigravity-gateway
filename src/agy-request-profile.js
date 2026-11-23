@@ -13,16 +13,7 @@ function cliUserAgent({ platform = process.platform, arch = process.arch, authMe
   return `antigravity/cli/${version} (aidev_client; os_type=${os}; arch=${cpu}; cl=${build}; auth_method=${authMethod})`;
 }
 const AGY_SESSION_ID = '-3750763034362895579';
-const { CAPTURED_MODELS, generationProfile, modelProfile } = require('./antigravity-model-config');
-
-// Fresh official high/medium/low switch captures preserve previous text and
-// tool-call signatures in both directions. Do not infer compatibility from a
-// broad "gemini-*" prefix, a provider name or an unobserved model alias.
-const SHARED_HISTORY = new Set(['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low']);
-function compatibleHistoryModels(source, target) {
-  return typeof source === 'string' && source.length > 0 && typeof target === 'string' && target.length > 0
-    && (source === target || (SHARED_HISTORY.has(source) && SHARED_HISTORY.has(target)));
-}
+const { CAPTURED_MODELS, generationProfile, modelProfile, compatibleHistoryModels } = require('./antigravity-model-config');
 
 function agentEnvelope({ model, project, contents, systemInstruction, tools, generationConfig, toolConfig, state, metadata, step, requestType = 'agent', now = Date.now() }) {
   const profile = modelProfile(model, metadata);

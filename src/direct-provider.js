@@ -17,7 +17,7 @@ const { isStreamError } = require('./agy-stream-recovery');
 const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
 const { AgyImageStore, registerImagePart } = require('./agy-image-references');
 const { agentEnvelope, generationProfile, cliUserAgent } = require('./agy-request-profile');
-const { assertGenerationCompatibility } = require('./antigravity-model-config');
+const { assertGenerationCompatibility, requiresToolSignature, hasActiveThinking } = require('./antigravity-model-config');
 const { CAPTURED_IMAGE_MODEL, DEFAULT_IMAGE_MODEL, imageModelName, assertImageModel } = require('./image-model-config');
 const { validateSearchParameters, searchRequest, parseSearchResponse } = require('./antigravity-server-search');
 const { sanitizeClientIdentity } = require('./client-identity');
@@ -216,7 +216,7 @@ function normalizedMessageParts(message) {
 }
 
 function ensureToolSignatures(contents, model) {
-  if (!/^gemini-(?:3(?:[.-]|$)|4-(?:hydrogen|carbon|neon)(?:[.-]|$)|4-argon(?:-(?:low|medium|high))?$)/i.test(String(model || ''))) return contents;
+  if (!requiresToolSignature(model)) return contents;
   for (const content of contents) {
     const firstCall = content.parts?.find(p => p.functionCall);
     if (firstCall) firstCall.thoughtSignature = readThoughtSignature(firstCall) || THOUGHT_SIGNATURE_SENTINEL;
@@ -333,7 +333,10 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
   normalized = structured.normalized;
   native.structuredSchema = structured.schema;
   let generationConfig = generationProfile(normalized, model, native.modelInfo);
-  if (generationConfig?.maxOutputTokens > 0 && generationConfig.maxOutputTokens < 1024 && /^gemini-3(?:[.-]|$)/i.test(model)) generationConfig.maxOutputTokens = 1024;
+  if (generationConfig?.maxOutputTokens > 0 && generationConfig.maxOutputTokens < 1024
+    && (/^gemini-3(?:[.-]|$)/i.test(model) || (/^gemini-/i.test(model) && hasActiveThinking(generationConfig.thinkingConfig)))) {
+    generationConfig.maxOutputTokens = 1024;
+  }
   if (normalized.autoMode && /^gemini-3(?:[.-]|$)/i.test(model)) { generationConfig ||= {}; generationConfig.maxOutputTokens = Math.max(generationConfig.maxOutputTokens || 0, 8192); }
   if (native.checkpoint) {
     generationConfig ||= {};
@@ -372,18 +375,25 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
       if (name) request.toolConfig.functionCallingConfig.allowedFunctionNames = [name];
     }
   }
-  // Envelope the final client instructions after tool/structured adapters.
-  // Matching the pre-adapter text can silently miss rewritten tool references.
-  const envelopeSource = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE === '1'
-    && /^gemini-4-neon(?:-|$)/.test(model) ? normalized : identity.normalized;
-  native.clientInstructionEnvelope = envelopeClientInstructions(request, envelopeSource.system,
-    capturedInstructionProfile(identity.normalized) || identity.metadata.profile, model, envelopeSource);
   const state = native.state || newState('', '');
   native.context = yield prepareContext(state, request.contents, model, { metadata: native.modelInfo, now: native.now, checkpoint: native.checkpoint, compactionProfile: native.compactionProfile, clientProfile: native.clientProfile, imageStore: native.imageStore,
     restoreStreamRecovery: native.restoreStreamRecovery, toolAdapter: native.toolAdapter });
   request.contents = ensureToolSignatures(native.context.contents, model);
   native.context.contents = request.contents;
-  recordConversionSummary(normalized, request);
+  // Envelope the final client instructions after native context/signature
+  // preparation so dynamic system prompt updates never break the session's
+  // historyPrefix chain or double-wrap CLIENT_SYSTEM_INSTRUCTIONS in USER_REQUEST.
+  const envelopeSource = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE === '1'
+    && /^gemini-4-neon(?:-|$)/.test(model) ? normalized : identity.normalized;
+  const envelopeProfile = capturedInstructionProfile(identity.normalized) || identity.metadata.profile;
+  native.clientInstructionEnvelope = envelopeClientInstructions(request, envelopeSource.system,
+    envelopeProfile, model, envelopeSource);
+  if (native.clientInstructionEnvelope) native.context.contents = request.contents;
+  recordConversionSummary(normalized, request, {
+    identityClient: identity.metadata.profile?.client || envelopeProfile?.client || null,
+    envelopeApplied: native.clientInstructionEnvelope,
+    toolRecords: native.toolAdapter?.records
+  });
   return agentEnvelope({ ...request, model, project: projectId, state, metadata: native.modelInfo, now: native.now,
     step: native.context.step, requestType: native.checkpoint ? 'checkpoint' : 'agent' });
 }
@@ -1406,6 +1416,17 @@ class DirectAntigravityProvider {
       for (const call of state.calls) if (!call.id) call.id = `call_${crypto.randomUUID().replaceAll('-', '')}`;
     }
     const termination = upstreamTermination(state);
+    if (!state.finishReason && !state.promptBlockReason && !visiblePrefix && !state.text
+      && !state.calls.length && !state.thinking && !recoveredThinking) {
+      const log = requestContext();
+      if (log) log.emptyUpstreamResponse = true;
+      this.reportDiagnostic('empty_upstream_response', {
+        model, receivedContent: state.receivedContent, hasSignature: Boolean(state.textSignature)
+      });
+      throw new GatewayError('上游未返回任何正文、工具调用或结束原因，请重试或切换模型。', {
+        code: 'empty_upstream_response', status: 502
+      });
+    }
     if (termination === 'filtered' && state.calls.length) {
       throw new GatewayError('被上游过滤的响应不能执行工具。', { code: 'invalid_tool_call', status: 502 });
     }

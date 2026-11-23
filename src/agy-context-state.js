@@ -21,8 +21,11 @@ function localTimestamp(now) {
 
 function textContent(content) { return content.parts.map(p => p.text || '').join(''); }
 function summaryContent(content) { return content.role === 'user' && /^<CONTEXT_SUMMARY>\n[\s\S]*\n<\/CONTEXT_SUMMARY>\s*$/.test(textContent(content)); }
+function instructionEnvelopeContent(content) { return content.role === 'user' && /^<CLIENT_SYSTEM_INSTRUCTIONS>\n[\s\S]*\n<\/CLIENT_SYSTEM_INSTRUCTIONS>\s*$/.test(textContent(content)); }
 function nativeWrapped(content) {
-  return summaryContent(content) || /^<USER_REQUEST>\n[\s\S]*\n<\/USER_REQUEST>\n<ADDITIONAL_METADATA>\n/.test(textContent(content));
+  return summaryContent(content)
+    || instructionEnvelopeContent(content)
+    || /^<USER_REQUEST>\n[\s\S]*\n<\/USER_REQUEST>\n<ADDITIONAL_METADATA>\n/.test(textContent(content));
 }
 function eventWeight(content) { return Math.max(1, content.parts.filter(p => p.functionResponse).length); }
 

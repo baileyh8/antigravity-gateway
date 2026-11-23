@@ -4,11 +4,13 @@ const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { setTimeout, clearTimeout } = require('node:timers');
+const { requestContext } = require('./request-log');
 const schemaBoundary = new AsyncLocalStorage();
 const MAX_SCHEMA_BYTES = 1024 * 1024;
 const MAX_VALUE_BYTES = 4 * 1024 * 1024;
 const MAX_SCHEMA_DEPTH = 64;
-const DEFAULT_LIMITS = Object.freeze({ workers: 1, queue: 32, queueBytes: 8 * 1024 * 1024,
+const MAX_COMPILED_CACHE = 2048;
+const DEFAULT_LIMITS = Object.freeze({ workers: 2, queue: 32, queueBytes: 8 * 1024 * 1024,
   compileMs: 1000, validateMs: 250, queueMs: 2000, startupMs: 10000, memoryMb: 64, idleMs: 30000 });
 
 class SchemaContractError extends Error {
@@ -42,6 +44,26 @@ class SchemaWorkerPool {
     this.limits = { ...DEFAULT_LIMITS, ...limits };
     for (const [key, value] of Object.entries(this.limits)) if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`Invalid schema worker limit: ${key}`);
     this.slots = []; this.queue = []; this.queuedBytes = 0; this.closed = false;
+    this.compiledCache = new Map();
+    this.cacheStats = { hits: 0, misses: 0 };
+  }
+  hasCompiled(serialized) {
+    if (!this.compiledCache.has(serialized)) return false;
+    this.compiledCache.delete(serialized);
+    this.compiledCache.set(serialized, true);
+    this.cacheStats.hits += 1;
+    const log = requestContext();
+    if (log) log.schemaCacheHits = (log.schemaCacheHits || 0) + 1;
+    return true;
+  }
+  rememberCompiled(serialized) {
+    if (this.closed) return;
+    if (this.compiledCache.has(serialized)) this.compiledCache.delete(serialized);
+    else if (this.compiledCache.size >= MAX_COMPILED_CACHE) {
+      const oldest = this.compiledCache.keys().next().value;
+      if (oldest !== undefined) this.compiledCache.delete(oldest);
+    }
+    this.compiledCache.set(serialized, true);
   }
   execute(operation, schema, value, { signal } = {}) {
     if (this.closed) return Promise.reject(failure('Schema 校验服务已关闭。', 'schema_worker_unavailable', 503));
@@ -157,6 +179,7 @@ class SchemaWorkerPool {
       return slot.termination || slot.worker.terminate();
     }));
     this.slots = [];
+    this.compiledCache.clear();
   }
 }
 
@@ -169,7 +192,15 @@ async function compileSchemaAsync(schema, options = {}) {
   }
   const serialized = serialize(source, MAX_SCHEMA_BYTES, '工具 Schema');
   const workerPool = options.pool || pool();
-  await workerPool.execute('compile', serialized, undefined, options);
+  if (workerPool.closed) throw failure('Schema 校验服务已关闭。', 'schema_worker_unavailable', 503);
+  if (options.signal?.aborted) throw abortFailure(options.signal);
+  if (!workerPool.hasCompiled?.(serialized)) {
+    if (workerPool.cacheStats) workerPool.cacheStats.misses += 1;
+    const log = requestContext();
+    if (log) log.schemaCacheMisses = (log.schemaCacheMisses || 0) + 1;
+    await workerPool.execute('compile', serialized, undefined, options);
+    workerPool.rememberCompiled?.(serialized);
+  }
   const validate = async value => {
     const serializedValue = serialize(value, MAX_VALUE_BYTES, '工具参数');
     const result = await workerPool.execute('validate', serialized, serializedValue, options);

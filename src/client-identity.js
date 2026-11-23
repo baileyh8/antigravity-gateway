@@ -205,7 +205,8 @@ function instructionSources(normalized) {
 }
 
 function codexTemplate(normalized, { clientProfile } = {}) {
-  if (clientProfile !== CODEX_167_CLIENT_PROFILE || normalized?.protocol !== 'responses' || normalized.instructions) return null;
+  if (![CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE].includes(clientProfile)
+    || normalized?.protocol !== 'responses' || normalized.instructions) return null;
   const first = normalized.instructionMessages?.[0];
   if (first?.role !== 'developer' || typeof first.text !== 'string') return null;
   const projected = normalized.instructionMessages.map(item => item.text).filter(Boolean).join('\n\n');
