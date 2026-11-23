@@ -10,21 +10,42 @@ const { reverseLines } = require('./log-reader');
 const { hashPassword } = require('./auth');
 
 const usersFile = path.join(config.dataDir, 'users.json');
+let usersCache = { mtimeMs: -1, size: -1, state: null };
+let auditQueue = Promise.resolve();
 
 function ensureDataDir() {
   fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
 }
 
+function cloneUsers(state) {
+  return { version: state.version, users: state.users.map((user) => ({ ...user })) };
+}
+
 function loadUsers({ strict = false } = {}) {
   ensureDataDir();
-  if (!fs.existsSync(usersFile)) return { version: 1, users: [] };
+  let stat;
+  try {
+    stat = fs.statSync(usersFile);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      usersCache = { mtimeMs: -1, size: -1, state: null };
+      return { version: 1, users: [] };
+    }
+    if (strict) throw new Error(`users.json 无法读取，拒绝覆盖：${error.message}`);
+    return { version: 1, users: [] };
+  }
+  if (!strict && usersCache.state && usersCache.mtimeMs === stat.mtimeMs && usersCache.size === stat.size) {
+    return cloneUsers(usersCache.state);
+  }
   try {
     const parsed = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
     if (!parsed || !Array.isArray(parsed.users)) {
       if (strict) throw new Error('users.json 结构无效，拒绝覆盖。');
       return { version: 1, users: [] };
     }
-    return { version: 1, users: parsed.users.filter((user) => user && typeof user.username === 'string') };
+    const normalized = { version: 1, users: parsed.users.filter((user) => user && typeof user.username === 'string') };
+    usersCache = { mtimeMs: stat.mtimeMs, size: stat.size, state: cloneUsers(normalized) };
+    return normalized;
   } catch (error) {
     if (strict) throw new Error(`users.json 无法解析，拒绝覆盖：${error.message}`);
     return { version: 1, users: [] };
@@ -37,6 +58,12 @@ function saveUsers(state) {
   fs.writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(temporary, usersFile);
   fs.chmodSync(usersFile, 0o600);
+  try {
+    const stat = fs.statSync(usersFile);
+    usersCache = { mtimeMs: stat.mtimeMs, size: stat.size, state: cloneUsers(state) };
+  } catch {
+    usersCache = { mtimeMs: -1, size: -1, state: null };
+  }
 }
 
 function getUser(username) {
@@ -75,8 +102,13 @@ function bootstrapAdmin() {
   return { created: true, username: config.adminUsername, passwordFile };
 }
 
+function enqueueAuditOp(fn) {
+  const next = auditQueue.then(fn, fn);
+  auditQueue = next.catch(() => {});
+  return next;
+}
+
 function audit({ actor, ip, action, target = '', result = 'ok', durationMs = 0, detail = '' }) {
-  ensureDataDir();
   const now = new Date();
   const month = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   const file = path.join(config.dataDir, `audit-${month}.jsonl`);
@@ -90,40 +122,58 @@ function audit({ actor, ip, action, target = '', result = 'ok', durationMs = 0, 
     durationMs,
     detail
   });
-  fs.appendFile(file, `${line}\n`, { mode: 0o600 }, () => {});
+  return enqueueAuditOp(async () => {
+    try {
+      await fs.promises.mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+      await fs.promises.appendFile(file, `${line}\n`, { mode: 0o600 });
+    } catch (error) {
+      console.error('[agy-manager] 审计日志写入失败:', error?.message || error);
+    }
+  });
 }
 
-async function pruneAudit() {
-  ensureDataDir();
-  const cutoff = Date.now() - 180 * 86400000;
-  const boundary = new Date(cutoff);
-  const month = `${boundary.getFullYear()}${String(boundary.getMonth() + 1).padStart(2, '0')}`;
-  const files = (await fs.promises.readdir(config.dataDir)).filter(name => /^audit-\d{6}\.jsonl$/.test(name));
-  for (const name of files) {
-    const key = name.slice(6, 12);
-    const file = path.join(config.dataDir, name);
-    if (key < month) { await fs.promises.rm(file, { force: true }); continue; }
-    if (key !== month) continue;
-    const temporary = `${file}.${process.pid}.prune`;
-    const output = await fs.promises.open(temporary, 'w', 0o600);
-    try {
-      const input = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
-      for await (const line of input) {
-        let row; try { row = JSON.parse(line); } catch { continue; }
-        if (Date.parse(row.ts) >= cutoff) await output.write(`${line}\n`);
+function pruneAudit() {
+  return enqueueAuditOp(async () => {
+    await fs.promises.mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+    const cutoff = Date.now() - 180 * 86400000;
+    const boundary = new Date(cutoff);
+    const month = `${boundary.getFullYear()}${String(boundary.getMonth() + 1).padStart(2, '0')}`;
+    const files = (await fs.promises.readdir(config.dataDir)).filter((name) => /^audit-\d{6}\.jsonl$/.test(name));
+    for (const name of files) {
+      const key = name.slice(6, 12);
+      const file = path.join(config.dataDir, name);
+      if (key < month) { await fs.promises.rm(file, { force: true }); continue; }
+      if (key !== month) continue;
+      const temporary = `${file}.${process.pid}.prune`;
+      const output = await fs.promises.open(temporary, 'w', 0o600);
+      try {
+        const input = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
+        for await (const line of input) {
+          let row; try { row = JSON.parse(line); } catch { continue; }
+          if (Date.parse(row.ts) >= cutoff) await output.write(`${line}\n`);
+        }
+        await output.close();
+        await fs.promises.rename(temporary, file);
+      } catch (error) {
+        await output.close().catch(() => {});
+        await fs.promises.rm(temporary, { force: true });
+        throw error;
       }
-      await output.close();
-      await fs.promises.rename(temporary, file);
-    } catch (error) { await output.close().catch(() => {}); await fs.promises.rm(temporary, { force: true }); throw error; }
-  }
+    }
+  });
 }
 
 function readAudit({ days = 30, action = '', actor = '', page = 1, size = 20 } = {}) {
   ensureDataDir();
   const cutoff = Date.now() - Math.max(1, Math.min(180, Number(days) || 30)) * 86400_000;
+  const cutoffDate = new Date(cutoff);
+  const cutoffMonth = `${cutoffDate.getFullYear()}${String(cutoffDate.getMonth() + 1).padStart(2, '0')}`;
   const rows = [];
   let files = [];
-  try { files = fs.readdirSync(config.dataDir).filter((name) => /^audit-\d{6}\.jsonl$/.test(name)); } catch { files = []; }
+  try {
+    files = fs.readdirSync(config.dataDir)
+      .filter((name) => /^audit-\d{6}\.jsonl$/.test(name) && name.slice(6, 12) >= cutoffMonth);
+  } catch { files = []; }
   let scanned = 0;
   for (const name of files.sort().reverse()) {
     for (const line of reverseLines(path.join(config.dataDir, name), 4 * 1024 * 1024)) {
@@ -137,6 +187,7 @@ function readAudit({ days = 30, action = '', actor = '', page = 1, size = 20 } =
       if (actor && !String(row.actor || '').toLowerCase().includes(String(actor).toLowerCase())) continue;
       rows.push(row);
     }
+    if (scanned > 20000) break;
   }
   rows.sort((left, right) => Date.parse(right.ts) - Date.parse(left.ts));
   const currentPage = Math.max(1, Number(page) || 1);
@@ -145,4 +196,8 @@ function readAudit({ days = 30, action = '', actor = '', page = 1, size = 20 } =
   return { items: rows.slice(start, start + limit), total: rows.length, page: currentPage, size: limit, hasMore: start + limit < rows.length };
 }
 
-module.exports = { audit, bootstrapAdmin, getUser, loadUsers, pruneAudit, readAudit, saveUsers, updateUser };
+function flushAudit() {
+  return auditQueue;
+}
+
+module.exports = { audit, bootstrapAdmin, flushAudit, getUser, loadUsers, pruneAudit, readAudit, saveUsers, updateUser };

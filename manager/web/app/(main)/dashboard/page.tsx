@@ -7,6 +7,7 @@ import { TrendChart } from '@/components/trend-chart';
 import { AlertIcon, GaugeIcon, RefreshIcon, RequestIcon, ServerIcon, TokenIcon, UsersIcon } from '@/components/icons';
 import { QuotaChips } from '@/components/quota-chips';
 import { api, ApiError } from '@/lib/api';
+import { accountStateLabel, calculateCacheHitRate, isErrorAccountState } from '@/lib/account-state';
 import { fmtBytes, fmtCompact, fmtNumber, fmtPercent, fmtUptime } from '@/lib/format';
 import { lowestOverall } from '@/lib/quota';
 import type { Account, Overview } from '@/lib/types';
@@ -15,7 +16,7 @@ function stateBadge(account: Account) {
   if (account.state === 'available') return <span className="badge green"><span className="dot" />可用</span>;
   if (account.state === 'cooldown') return <span className="badge amber"><span className="dot amber" />冷却</span>;
   if (account.state === 'disabled') return <span className="badge"><span className="dot gray" />禁用</span>;
-  return <span className="badge red"><span className="dot red" />异常</span>;
+  return <span className="badge red" title={account.healthMessage || account.lastError || ''}><span className="dot red" />{accountStateLabel(account.state)}</span>;
 }
 
 export default function DashboardPage() {
@@ -51,8 +52,7 @@ export default function DashboardPage() {
   }, [load]);
 
   const today = data?.usage.today;
-  const cacheBase = (today?.inputTokens || 0) + (today?.cachedTokens || 0);
-  const cacheRate = cacheBase > 0 ? ((today?.cachedTokens || 0) / cacheBase) * 100 : null;
+  const cacheRate = calculateCacheHitRate(today?.inputTokens, today?.cachedTokens);
   const successRate = today && today.upstreamCalls > 0
     ? (today.successfulUpstreamCalls / today.upstreamCalls) * 100
     : null;
@@ -71,7 +71,9 @@ export default function DashboardPage() {
 
   const problemAccounts = useMemo(() => {
     if (!data) return [];
-    return data.accounts.items.filter((account) => account.state === 'error' || account.state === 'cooldown').slice(0, 3);
+    return data.accounts.items
+      .filter((account) => account.state === 'cooldown' || isErrorAccountState(account.state))
+      .slice(0, 3);
   }, [data]);
 
   const tightest = useMemo(() => {
@@ -192,7 +194,7 @@ export default function DashboardPage() {
           <div className="panel">
             <div className="panel-head"><div><h2>需要关注</h2><p>冷却与异常账号</p></div><span className="badge">{data ? problemAccounts.length : '—'}</span></div>
             {problemAccounts.length ? problemAccounts.map((account) => (
-              <div className="kv" key={account.id}><span>{account.emailMasked || account.id}</span><b>{account.state === 'cooldown' ? '冷却中' : '异常'}</b></div>
+              <div className="kv" key={account.id}><span>{account.emailMasked || account.id}</span><b>{account.state === 'cooldown' ? '冷却中' : accountStateLabel(account.state)}</b></div>
             )) : <div className="muted small">{data ? '没有需要处理的账号' : '等待基座恢复'}</div>}
           </div>
           <div className="panel">

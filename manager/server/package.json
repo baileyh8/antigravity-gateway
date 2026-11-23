@@ -6,7 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node -e \"for (const f of require('node:fs').readdirSync('src').filter(f => f.endsWith('.js'))) require('node:child_process').execFileSync(process.execPath, ['--check', 'src/' + f], { stdio: 'inherit' })\"",
+    "check": "node -e \"const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');const walk=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):e.name.endsWith('.js')?[path.join(dir,e.name)]:[]);for(const f of walk('src'))cp.execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {

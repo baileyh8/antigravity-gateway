@@ -10,15 +10,16 @@ import { AddAccountDialog } from '@/components/accounts/add-account-dialog';
 import { EditAccountDialog } from '@/components/accounts/edit-account-dialog';
 import { ProxyPanel } from '@/components/accounts/proxy-panel';
 import { api, ApiError } from '@/lib/api';
+import { accountStateLabel, matchesAccountStateFilter } from '@/lib/account-state';
 import { fmtRelative } from '@/lib/format';
 import { lowestByKind, lowestOverall, poolSummary, quotaMatrix } from '@/lib/quota';
 import type { Account, AccountsResponse, ProxySnapshot } from '@/lib/types';
 
-function StateBadge({ state }: { state: string }) {
+function StateBadge({ state, title }: { state: string; title?: string }) {
   if (state === 'available') return <span className="badge green"><span className="dot" />可用</span>;
   if (state === 'cooldown') return <span className="badge amber"><span className="dot amber" />冷却</span>;
   if (state === 'disabled') return <span className="badge"><span className="dot gray" />已禁用</span>;
-  return <span className="badge red"><span className="dot red" />异常</span>;
+  return <span className="badge red" title={title || ''}><span className="dot red" />{accountStateLabel(state)}</span>;
 }
 
 export default function AccountsPage() {
@@ -67,7 +68,7 @@ export default function AccountsPage() {
     const list = data?.items || [];
     const needle = query.trim().toLowerCase();
     return list.filter((account) => {
-      if (state !== 'all' && account.state !== state) return false;
+      if (!matchesAccountStateFilter(account.state, state)) return false;
       if (!needle) return true;
       return `${account.emailMasked} ${account.id} ${account.note || ''}`.toLowerCase().includes(needle);
     });
@@ -191,7 +192,7 @@ export default function AccountsPage() {
                     return (
                       <tr key={account.id}>
                         <td><div className="strong">{account.emailMasked || account.id}</div></td>
-                        <td><StateBadge state={account.state} /></td>
+                        <td><StateBadge state={account.state} title={account.healthMessage || account.lastError} /></td>
                         <td>{account.weight}</td>
                         <td className="muted">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</td>
                         <td className="muted">{fmtRelative(account.lastSuccessAt)}</td>

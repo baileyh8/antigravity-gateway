@@ -91,9 +91,17 @@ function getUsage(days, groupBy, grain = 'day') {
 
 async function adminStream(pathname) {
   const token = adminToken();
-  if (!token) throw new GatewayError('基座管理接口未启用。', { status: 503 });
-  const response = await fetch(`${config.gatewayUrl}${pathname}`, { headers: { 'x-agy-admin-token': token }, signal: AbortSignal.timeout(30000) });
-  if (!response.ok) throw new GatewayError('日志导出失败，请稍后重试。', { status: response.status });
+  if (!token) throw new GatewayError('基座管理接口未启用。', { status: 503, code: 'admin_api_disabled' });
+  let response;
+  try {
+    response = await fetch(`${config.gatewayUrl}${pathname}`, {
+      headers: { 'x-agy-admin-token': token, 'x-agy-admin-version': '1' },
+      signal: AbortSignal.timeout(30000)
+    });
+  } catch {
+    throw new GatewayError('无法连接基座管理接口。', { status: 503, code: 'gateway_unreachable' });
+  }
+  if (!response.ok) throw new GatewayError('日志导出失败，请稍后重试。', { status: response.status === 401 ? 503 : response.status, code: response.status === 401 ? 'admin_token_invalid' : 'gateway_error' });
   return response;
 }
 

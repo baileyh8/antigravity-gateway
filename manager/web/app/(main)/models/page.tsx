@@ -19,7 +19,6 @@ export default function ModelsPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [source, setSource] = useState('all');
   const [busy, setBusy] = useState('');
   const [editing, setEditing] = useState<ModelEntry | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -87,19 +86,19 @@ export default function ModelsPage() {
   const items = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return (data?.items || []).filter((model) => {
-      if (source !== 'all' && model.source !== source) return false;
       if (!needle) return true;
       return `${model.id} ${model.displayName} ${model.aliases.join(' ')}`.toLowerCase().includes(needle);
     });
-  }, [data, query, source]);
+  }, [data, query]);
 
   const stats = useMemo(() => {
     const all = data?.items || [];
+    const disabled = all.filter((model) => !model.enabled).length;
     return {
       total: all.length,
-      robin: all.filter((model) => model.source === 'robin').length,
+      enabled: all.length - disabled,
       aliases: all.reduce((sum, model) => sum + model.aliases.length, 0),
-      disabled: all.filter((model) => !model.enabled).length
+      disabled
     };
   }, [data]);
 
@@ -119,7 +118,7 @@ export default function ModelsPage() {
 
       <div className="cards c4">
         <div className="card"><div className="stat-label">可用模型<BoxesIcon size={14} /></div><div className="stat-value">{stats.total}</div><div className="stat-hint">来自基座目录</div></div>
-        <div className="card"><div className="stat-label">Gemini App</div><div className="stat-value">{stats.robin}</div><div className="stat-hint">Robin 独立来源</div></div>
+        <div className="card"><div className="stat-label">已启用</div><div className="stat-value">{stats.enabled}</div><div className="stat-hint">Cloud Code 在线提供</div></div>
         <div className="card"><div className="stat-label">别名</div><div className="stat-value">{stats.aliases}</div><div className="stat-hint">请求会按别名解析</div></div>
         <div className="card"><div className="stat-label">已停用</div><div className="stat-value">{stats.disabled}</div><div className="stat-hint">停用后从 /v1/models 隐藏</div></div>
       </div>
@@ -129,7 +128,6 @@ export default function ModelsPage() {
           <SearchIcon size={14} style={{ position: 'absolute', left: 11, top: 10, color: 'var(--muted)' }} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型 ID、显示名或别名" style={{ width: '100%', paddingLeft: 32 }} />
         </div>
-        <select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">全部来源</option><option value="cloudcode">Cloud Code</option><option value="robin">Gemini App</option></select>
         <button className="btn ghost small" onClick={() => void downloadCatalog('codex')}>Codex JSON</button><button className="btn ghost small" onClick={() => void downloadCatalog('claude')}>Claude JSON</button><span className="muted tiny">读取于 {data?.discoveredAt ? new Date(data.discoveredAt).toLocaleTimeString('zh-CN', { hour12: false }) : '—'}</span>
       </div>
 
