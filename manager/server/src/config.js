@@ -21,6 +21,20 @@ const extraOrigins = String(process.env.AGY_MANAGER_EXTRA_ORIGINS || '')
   .split(',')
   .map((item) => item.trim().replace(/\/$/, ''))
   .filter(Boolean);
+const isProduction = process.env.NODE_ENV === 'production';
+const devOrigins = isProduction
+  ? []
+  : ['http://127.0.0.1:9898', 'http://localhost:9898', 'http://127.0.0.1:3000', 'http://localhost:3000'];
+
+function parseTrustProxy(raw = process.env.AGY_MANAGER_TRUST_PROXY) {
+  if (raw == null || String(raw).trim() === '') return 'loopback';
+  const value = String(raw).trim();
+  const lower = value.toLowerCase();
+  if (['0', 'false', 'off', 'no', 'none'].includes(lower)) return false;
+  if (lower === 'true') return true;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value.includes(',') ? value.split(',').map((item) => item.trim()).filter(Boolean) : value;
+}
 
 const sessionSecretFile = process.env.AGY_SESSION_SECRET_FILE || '/etc/agy-manager/session-secret';
 let sessionSecret = String(process.env.AGY_SESSION_SECRET || '').trim() || readText(sessionSecretFile);
@@ -47,7 +61,8 @@ const config = {
   sessionSecret,
   sessionSecretFile,
   origin,
-  allowedOrigins: [...new Set([origin, 'http://127.0.0.1:9898', 'http://localhost:9898', 'http://127.0.0.1:3000', 'http://localhost:3000', ...extraOrigins])],
+  allowedOrigins: [...new Set([origin, ...devOrigins, ...extraOrigins])],
+  trustProxy: parseTrustProxy(),
   allowNoOrigin: bool('AGY_MANAGER_ALLOW_NO_ORIGIN', false),
   basePath,
   cookieName: 'agy_manager_session',

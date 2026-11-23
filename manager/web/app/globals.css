@@ -193,10 +193,15 @@ a { color: inherit; }
 .field textarea:focus, .field select:focus { border-color: rgba(24, 24, 27, 0.35); box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.06); }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
 .switch-row span { font-size: 12px; }
-.switch { position: relative; width: 40px; height: 22px; border: 0; border-radius: 999px; background: #d4d4d8; cursor: pointer; transition: background 0.16s ease; }
+.switch { position: relative; width: 40px; height: 22px; border: 0; border-radius: 999px; background: #d4d4d8; cursor: pointer; transition: background 0.16s ease, opacity 0.16s ease; }
 .switch:after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(24, 24, 27, 0.2); transition: transform 0.16s ease; }
 .switch.on { background: var(--ink); }
 .switch.on:after { transform: translateX(18px); }
+.switch:disabled { opacity: 0.45; cursor: not-allowed; }
+.switch.compact { width: 34px; height: 20px; vertical-align: middle; }
+.switch.compact:after { top: 3px; left: 3px; width: 14px; height: 14px; }
+.switch.compact.on { background: var(--green); }
+.switch.compact.on:after { transform: translateX(14px); }
 
 .btn.small { height: 28px; padding: 0 10px; font-size: 11px; border-radius: 14px; }
 .btn.danger { background: transparent; color: var(--red); border: 1px solid rgba(220, 38, 38, 0.25); }

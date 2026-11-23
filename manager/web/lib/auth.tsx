@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from './api';
+import { api, ApiError, clearApiCaches } from './api';
 
 export type User = { username: string; role: 'admin' | 'viewer' };
 
@@ -46,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try { await api('/auth/logout', { method: 'POST' }); } catch { /* clear locally anyway */ }
+    clearApiCaches();
     setMe(null);
   }, []);
 

@@ -203,6 +203,10 @@ function fail(res, status, code, message) {
 }
 
 function adminFail(res, error) {
+  if (res.headersSent) {
+    if (!res.destroyed && !res.writableEnded) res.destroy();
+    return;
+  }
   const status = Number(error?.status) || 500;
   const code = error?.code || 'admin_write_failed';
   const message = status >= 500 ? '管理操作失败，请查看基座日志。' : (error?.message || '管理操作失败。');
@@ -484,7 +488,8 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
     }
     if (route === `${PREFIX}/models` && req.method === 'GET') {
       if (!deps.listModels || !deps.modelSettings) throw Object.assign(new Error('模型设置未启用。'), { status: 503, code: 'models_disabled' });
-      const models = await deps.listModels(false);
+      const force = requestUrl?.searchParams?.get('force') === '1';
+      const models = await deps.listModels(force);
       const items = models.map((id) => {
         const override = deps.modelSettings.get(id);
         const metadata = deps.modelInfo?.(id) || {};

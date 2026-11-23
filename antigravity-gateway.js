@@ -11,14 +11,35 @@ const path = require('node:path');
 
 const { AgyError, AgyWorker, getVersion, listModels, resolveAgyCommand } = require('./src/agy-worker');
 const { AccountPool } = require('./src/account-pool');
-const { writeStream, streamReady, endStream } = require('./src/sse-writer');
+const { endStream } = require('./src/sse-writer');
+const {
+  beginSse,
+  createAnthropicTextEmitter,
+  createChatTextEmitter,
+  createResponsesTextEmitter,
+  emitAnthropicStream,
+  emitChatStream,
+  emitResponsesStream,
+  sendSse,
+  textStreamingAllowed
+} = require('./src/sse-emitters');
+const {
+  ARGON_MODEL,
+  createCatalogHelpers,
+  displayModels,
+  featuredModels,
+  preferredFastModel: selectPreferredFastModel
+} = require('./src/client-catalogs');
+const { parseMultipart } = require('./src/multipart');
+const { isConversionError } = require('./src/conversion-errors');
+const { withAsyncSchemaBoundary } = require('./src/schema-contract');
 const { pipeline } = require('node:stream/promises');
 const { ByteBudget } = require('./src/resource-budget');
 const { AdmissionError, Semaphore, executionSlots, MAX_CONCURRENCY, MAX_QUEUE } = require('./src/admission-control');
 const { gracefulShutdown } = require('./src/graceful-shutdown');
 const { ProxyManager } = require('./src/proxy-manager');
 const { AccountStore } = require('./src/account-store');
-const { imageArtifact, imageArtifacts, internalImageToolResult, streamTextRemainder } = require('./src/artifacts');
+const { imageArtifact, imageArtifacts, internalImageToolResult } = require('./src/artifacts');
 const { handleAdminRequest, readAdminToken } = require('./src/admin-api');
 const { AdminOAuth } = require('./src/admin-oauth');
 const { KeyStore } = require('./src/key-store');
@@ -27,7 +48,7 @@ const { RequestLog, requestContext, runRequestLog } = require('./src/request-log
 const { ModelSettings } = require('./src/model-settings');
 const { DiagnosticLog } = require('./src/diagnostic-log');
 const { DirectAntigravityProvider, DirectProviderError } = require('./src/direct-provider');
-const { resolveModelConfiguration, requestedReasoningLevel } = require('./src/antigravity-model-config');
+const { requestedReasoningLevel } = require('./src/antigravity-model-config');
 const { closeNativeTransport } = require('./src/agy-native-transport');
 const { imageReferencePaths } = require('./src/agy-image-references');
 const { nativeImageToolResponse } = require('./src/agy-tool-results');
@@ -144,9 +165,6 @@ const diagnosticReporter = (event, fields) => {
 };
 const DIRECT_PROVIDER = new DirectAntigravityProvider({ diagnosticReporter });
 DIRECT_PROVIDER.localAuth.agyPath = AGY_PATH;
-// The Argon family is served by the Cloud Code pool since the Robin and
-// Gemini Windows channels were removed; only the bare slug ever routed there.
-const ARGON_MODEL = 'gemini-4-argon';
 const ACCOUNT_STORE = new AccountStore({ configDir: CONFIG_DIR });
 const USAGE_STORE = new UsageStore({ configDir: CONFIG_DIR, onSaveError: (error) => gatewayWarn(`[Antigravity Gateway] 用量保存失败，将重试 (${error.code})`) });
 const KEY_PEPPER = readKeyPepper();
@@ -333,22 +351,7 @@ async function availableCloudCodeModels() {
 }
 
 function preferredFastModel(models) {
-  if (FAST_MODEL) return FAST_MODEL;
-  const priorities = [
-    /^gemini-3\.8-flash-low$/i,
-    /^gemini-3\.7-flash-low$/i,
-    /^gemini-3\.6-flash-low$/i,
-    /^gemini-3\.5-flash-(?:extra-)?low$/i,
-    /flash-lite/i,
-    /-flash-low$/i,
-    /-low$/i,
-    /-flash$/i
-  ];
-  for (const pattern of priorities) {
-    const match = models.find((model) => pattern.test(model));
-    if (match) return match;
-  }
-  return DEFAULT_MODEL;
+  return selectPreferredFastModel(models, { fastModel: FAST_MODEL, defaultModel: DEFAULT_MODEL });
 }
 
 async function resolveModel(requested, { preferFast = false } = {}) {
@@ -403,212 +406,21 @@ async function upstreamModelDiagnostic(error, model) {
   return error;
 }
 
-// Published Gemini API specifications, not a measured transport limit.
-// Input and output share the window; long-decode API mode is not advertised.
-const ARGON_MODEL_METADATA = Object.freeze({
-  context_window: 1048576,
-  max_output_tokens: 65536,
-  input_modalities: ['text', 'image', 'video', 'audio', 'pdf'],
-  output_modalities: ['text'],
-  supports_function_calling: true,
-  metadata_source: 'https://ai.google.dev/gemini-api/docs/models/gemini-4-argon',
-  metadata_scope: 'published_gemini_api_specification',
-  context_window_shared: true,
-  gateway_transport: 'cloudcode_default_model',
-  gateway_limits_verified: false,
-  video_route: 'cloudcode_default_model'
+const {
+  codexModelInfo,
+  codexCatalogPath,
+  claudeConfigPath,
+  codexCatalogBody,
+  writeCodexCatalog,
+  claudeConfigBody,
+  writeClaudeConfig
+} = createCatalogHelpers({
+  configDir: CONFIG_DIR,
+  version: GATEWAY_VERSION,
+  usesDirectTransport,
+  accountPool: ACCOUNT_POOL,
+  modelSettings: MODEL_SETTINGS
 });
-
-function codexModelInfo(slug, priority) {
-  const argon = slug === ARGON_MODEL;
-  const tieredArgon = /^gemini-4-argon-(?:low|medium|high)$/.test(slug);
-  const upstream = usesDirectTransport() ? ACCOUNT_POOL.modelInfo(slug) : null;
-  const resolved = resolveModelConfiguration(slug, upstream);
-  const mimeTypes = resolved.profile.supportedMimeTypes && typeof resolved.profile.supportedMimeTypes === 'object'
-    && !Array.isArray(resolved.profile.supportedMimeTypes) ? structuredClone(resolved.profile.supportedMimeTypes) : {};
-  const mediaCapability = (field, prefix) => typeof resolved.profile[field] === 'boolean' ? resolved.profile[field]
-    : Object.entries(mimeTypes).some(([type, supported]) => supported === true && type.toLowerCase().startsWith(prefix + '/'));
-  const supportsImages = argon || mediaCapability('supportsImages', 'image');
-  const thinking = argon ? null : resolved.thinkingConfig;
-  // Preserve our captured numeric Hydrogen XHigh enum; upstream's generic
-  // fixed-tier catalog handles strings, while this fork also supports 100.
-  const effort = thinking?.thinkingLevel === 100 ? 'xhigh'
-    : typeof thinking?.thinkingLevel === 'string' ? thinking.thinkingLevel.toLowerCase() : null;
-  // Cloud Code currently reports 1,048,576 input tokens for Gemini 3.7/3.8
-  // Flash. Keep that verified fallback even when a transient discovery request
-  // fails; otherwise the client would compact a healthy 1M context at 200K.
-  const contextWindow = MODEL_SETTINGS.get(slug).contextWindow || (argon ? ARGON_MODEL_METADATA.context_window : upstream?.maxTokens)
-    || (tieredArgon ? resolved.profile.maxTokens : null)
-    || (/^gemini-3\.[78]-flash(?:[.-]|$)/i.test(slug) ? 1048576 : 200000);
-  return {
-    slug,
-    display_name: MODEL_SETTINGS.get(slug).displayName || upstream?.displayName || slug,
-    description: 'Model provided through the local Antigravity Gateway.',
-    prefer_websockets: false,
-    support_verbosity: false,
-    default_verbosity: 'low',
-    apply_patch_tool_type: 'freeform',
-    web_search_tool_type: 'text_and_image',
-    upstream_provider: 'cloudcode',
-    upstream_protocol: 'Google Antigravity API',
-    input_modalities: argon ? ARGON_MODEL_METADATA.input_modalities : supportsImages ? ['text', 'image'] : ['text'],
-    supports_images: supportsImages,
-    supports_video: argon || mediaCapability('supportsVideo', 'video'),
-    supports_audio: argon || mediaCapability('supportsAudio', 'audio'),
-    supported_mime_types: mimeTypes,
-    supports_image_detail_original: supportsImages && resolved.profile.supportsImageDetailOriginal === true,
-    truncation_policy: { mode: 'tokens', limit: 10000 },
-    supports_parallel_tool_calls: true,
-    tool_mode: 'direct',
-    multi_agent_version: 'v1',
-    use_responses_lite: false,
-    include_skills_usage_instructions: true,
-    include_plugin_usage_instructions: true,
-    include_apps_usage_instructions: true,
-    auto_review_model_override: null,
-    context_window: contextWindow,
-    max_context_window: contextWindow,
-    max_output_tokens: argon ? ARGON_MODEL_METADATA.max_output_tokens
-      : (tieredArgon ? resolved.profile.maxOutputTokens : upstream?.maxOutputTokens) || null,
-    ...(argon ? ARGON_MODEL_METADATA : {}),
-    ...(MODEL_SETTINGS.get(slug).contextWindow ? { context_window: MODEL_SETTINGS.get(slug).contextWindow, max_context_window: MODEL_SETTINGS.get(slug).contextWindow } : {}),
-    ...(MODEL_SETTINGS.get(slug).maxOutputTokens ? { max_output_tokens: MODEL_SETTINGS.get(slug).maxOutputTokens } : {}),
-    auto_compact_token_limit: null,
-    comp_hash: `antigravity-gateway-${GATEWAY_VERSION}`,
-    base_instructions: 'Follow the client instructions and use only client-provided tools when needed.',
-    reasoning_summary_format: 'experimental',
-    default_reasoning_summary: 'none',
-    default_reasoning_level: effort,
-    supported_reasoning_levels: resolved.supportedReasoningLevels
-      ? resolved.supportedReasoningLevels.map(effort => ({ effort, description: `Selectable reasoning level: ${effort}` }))
-      : effort ? [{ effort, description: `Fixed by model: ${slug}` }] : [],
-    ...(thinking ? { [resolved.supportedReasoningLevels ? 'default_thinking_config' : 'fixed_thinking_config']: structuredClone(thinking) } : {}),
-    shell_type: 'shell_command',
-    visibility: 'list',
-    minimal_client_version: '0.0.0',
-    supported_in_api: true,
-    availability_nux: null,
-    upgrade: null,
-    priority,
-    model_messages: null,
-    experimental_supported_tools: [],
-    available_in_plans: [],
-    supports_search_tool: false,
-    default_service_tier: null,
-    service_tiers: [],
-    additional_speed_tiers: [],
-    supports_reasoning_summaries: false
-  };
-}
-
-function codexCatalogPath() {
-  return path.join(CONFIG_DIR, 'codex-models.json');
-}
-
-function claudeConfigPath() {
-  return path.join(CONFIG_DIR, 'claude-models.json');
-}
-
-// Presentation order only. Request routing always uses the untouched model ID
-// supplied by the client and never depends on this list.
-const MODEL_DISPLAY_PRIORITY = [
-  'gemini-3.8-flash-high',
-  'gemini-3.7-flash-high',
-  'claude-opus-4-6-thinking',
-  'claude-sonnet-4-6',
-  'gemini-3.1-pro-high',
-  'gemini-3.1-flash-image',
-  'gemini-3.8-flash-medium',
-  'gemini-3.8-flash-low',
-  'gemini-3.8-flash-tiered',
-  'gemini-3.7-flash-medium',
-  'gemini-3.7-flash-low',
-  'gemini-3.7-flash',
-  'gemini-3.7-flash-tiered',
-  'gemini-3.5-flash-extra-low',
-  'gemini-3.1-pro-low',
-  'gemini-3.1-flash-lite',
-  'gemini-3-flash-agent',
-  'gemini-3-flash',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash-thinking',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-pro-agent'
-];
-
-const MODEL_DISPLAY_RANK = new Map(MODEL_DISPLAY_PRIORITY.map((model, index) => [model, index]));
-
-function displayModels(models) {
-  return [...models].sort((left, right) => {
-    const leftRank = MODEL_DISPLAY_RANK.get(left);
-    const rightRank = MODEL_DISPLAY_RANK.get(right);
-    if (leftRank !== undefined || rightRank !== undefined) {
-      if (leftRank === undefined) return 1;
-      if (rightRank === undefined) return -1;
-      return leftRank - rightRank;
-    }
-    const leftKey = left.toLowerCase();
-    const rightKey = right.toLowerCase();
-    if (leftKey < rightKey) return -1;
-    if (leftKey > rightKey) return 1;
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
-}
-
-function codexCatalogBody(models) {
-  const ordered = displayModels(models);
-  const catalog = ordered.map((id, index) => codexModelInfo(id, index));
-  return {
-    object: 'list',
-    data: catalog.map((model) => ({
-      id: model.slug, object: 'model', created: 0, owned_by: 'antigravity', display_name: model.display_name,
-      ...(model.slug === ARGON_MODEL ? ARGON_MODEL_METADATA : {}),
-      upstream_provider: model.upstream_provider, upstream_protocol: model.upstream_protocol,
-      context_window: model.context_window, max_output_tokens: model.max_output_tokens,
-      input_modalities: model.input_modalities, supports_images: model.supports_images,
-      supports_video: model.supports_video, supports_audio: model.supports_audio,
-      supported_mime_types: structuredClone(model.supported_mime_types),
-      default_reasoning_level: model.default_reasoning_level, supported_reasoning_levels: model.supported_reasoning_levels,
-      ...(model.fixed_thinking_config ? { fixed_thinking_config: structuredClone(model.fixed_thinking_config) } : {}),
-      ...(model.default_thinking_config ? { default_thinking_config: structuredClone(model.default_thinking_config) } : {})
-    })),
-    models: catalog
-  };
-}
-
-function writeCodexCatalog(models) {
-  const target = codexCatalogPath();
-  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  const temporary = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(codexCatalogBody(models), null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, target);
-  return target;
-}
-
-function claudeConfigBody(models) {
-  const ordered = displayModels(models);
-  return {
-    $schema: 'https://json.schemastore.org/claude-code-settings.json',
-    modelPicker: {
-      options: ordered.map((model) => ({
-        model,
-        label: model,
-        description: 'Antigravity Gateway'
-      })),
-      replaceBuiltInOptions: true
-    }
-  };
-}
-
-function writeClaudeConfig(models) {
-  const target = claudeConfigPath();
-  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  const temporary = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(claudeConfigBody(models), null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, target);
-  return target;
-}
 
 async function refreshClientModelCatalogs() {
   const models = await availableModels(true);
@@ -617,15 +429,6 @@ async function refreshClientModelCatalogs() {
   try { writeClaudeConfig(models); }
   catch (error) { gatewayWarn(`[Antigravity Gateway] Claude Code 模型配置写入失败：${error.message}`); }
   return models;
-}
-
-function featuredModels(models) {
-  return displayModels(models).filter((model) => (
-    /^gemini-3\.[78](?:[.-]|$)/i.test(model)
-    || model === 'claude-opus-4-6-thinking'
-    || model === 'claude-sonnet-4-6'
-    || model === ARGON_MODEL
-  ));
 }
 
 function credentialSourceDescription() {
@@ -732,10 +535,6 @@ function sendJson(res, status, body, headers = {}) {
   res.end(data);
 }
 
-function sendSse(res, event, data) {
-  writeStream(res, `${event ? `event: ${event}\n` : ''}data: ${JSON.stringify(data)}\n\n`);
-}
-
 function setCors(req, res) {
   const origin = req.headers.origin;
   if (origin) {
@@ -812,38 +611,6 @@ async function readJson(req) {
   }
 }
 
-function parseMultipart(buffer, contentType) {
-  const boundaryValue = String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;\s]+))/i);
-  const boundary = boundaryValue?.[1] || boundaryValue?.[2];
-  if (!boundary) throw new GatewayError('multipart/form-data 缺少 boundary。', { code: 'invalid_multipart', status: 400 });
-  const marker = Buffer.from(`--${boundary}`);
-  const fields = {};
-  const files = [];
-  let cursor = 0;
-  while (true) {
-    const start = buffer.indexOf(marker, cursor);
-    if (start < 0) break;
-    const next = buffer.indexOf(marker, start + marker.length);
-    if (next < 0) break;
-    let part = buffer.subarray(start + marker.length, next);
-    if (part.subarray(0, 2).toString() === '\r\n') part = part.subarray(2);
-    if (part.subarray(-2).toString() === '\r\n') part = part.subarray(0, -2);
-    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'));
-    if (headerEnd > 0) {
-      const headers = part.subarray(0, headerEnd).toString('utf8');
-      const body = part.subarray(headerEnd + 4);
-      const disposition = headers.match(/content-disposition:\s*form-data;([^\r\n]+)/i)?.[1] || '';
-      const name = disposition.match(/name="([^"]+)"/i)?.[1] || '';
-      const filename = disposition.match(/filename="([^"]*)"/i)?.[1];
-      const mediaType = headers.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim() || '';
-      if (name && filename !== undefined) files.push({ name, filename, mediaType: normalizeMime(mediaType, filename), buffer: body });
-      else if (name) fields[name] = body.toString('utf8');
-    }
-    cursor = next;
-  }
-  return { fields, files };
-}
-
 function errorBody(error, protocol) {
   const detail = clientError(error);
   if (protocol === 'anthropic') return { type: 'error', error: detail };
@@ -851,7 +618,7 @@ function errorBody(error, protocol) {
 }
 
 function mapAgyError(error) {
-  if (require('./src/conversion-errors').isConversionError(error) || error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
+  if (isConversionError(error) || error instanceof AdmissionError || error instanceof GatewayError || error instanceof AgyError || error instanceof DirectProviderError
     || error instanceof MultimediaError || error instanceof ProviderRouterError
     || error instanceof SessionIdentityError) return error;
   if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || /request aborted/i.test(String(error?.message || ''))) {
@@ -932,9 +699,21 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
       // pool.
       const argonVideoFallback = model === ARGON_MODEL && hasVideoInput(resolved);
       const upstreamModel = argonVideoFallback ? await argonVideoFallbackModel() : model;
+      const logContext = requestContext();
+      if (logContext) logContext.upstreamModel = upstreamModel;
+      const markTtft = () => {
+        if (logContext && logContext.ttftMs == null) logContext.ttftMs = Math.max(0, Date.now() - logContext.at);
+      };
+      const trackedOnDelta = onDelta
+        ? (text, part) => { markTtft(); return onDelta(text, part); }
+        : (text) => { if (text) markTtft(); };
+      const trackedOnThinkingDelta = normalized.includeThinking && onThinkingDelta
+        ? (text, part) => { markTtft(); return onThinkingDelta(text, part); }
+        : undefined;
       const providerType = 'cloudcode';
       const prepared = prepareNativeMultimodal(resolved);
       const finalize = async (raw) => {
+        markTtft();
         try { return await finalizeModelResultAsync(normalized, raw, { signal }); }
         catch (error) { throw error; }
       };
@@ -947,10 +726,10 @@ async function runTurn(normalized, model, signal, { sessionId, routingKey, reque
         gatewayLog(`[Antigravity Gateway] 路由账号=${email || accountId} source=${source} model=${upstreamModel} attempt=${attempt} ${trace}`);
       };
       let raw = await PROVIDER_ROUTER.send(prepared.normalized, upstreamModel, {
-        signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta, onAccountSelected, onUpstreamAccepted, reuseConversation, ...taskScope,
+        signal, sessionId, routingKey, requestId, clientId, clientLabel, onDelta: trackedOnDelta, onAccountSelected, onUpstreamAccepted, reuseConversation, ...taskScope,
         ...(providerType === 'cloudcode' && nativeCompaction ? { nativeCompaction } : {}),
         ...(nativeClientProfile ? { nativeClientProfile } : {}),
-        onThinkingDelta: normalized.includeThinking ? onThinkingDelta : undefined
+        onThinkingDelta: trackedOnThinkingDelta
       });
       const initialUsage = raw.usage;
       const internalCalls = prepared.imageToolInjected
@@ -1155,322 +934,6 @@ async function runTurnWithModelDiagnostic(normalized, model, signal, options) {
   return await trackTransaction(transaction);
 }
 
-function beginSse(res) {
-  if (!res.headersSent) {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.flushHeaders?.();
-  }
-  writeStream(res, ': antigravity-gateway keep-alive\n\n');
-  const timer = setInterval(() => {
-    if (!res.destroyed && !res.writableEnded) { try { writeStream(res, ': keep-alive\n\n'); } catch { res.destroy(); } }
-  }, 15000);
-  timer.unref?.();
-  return () => clearInterval(timer);
-}
-
-function textStreamingAllowed(normalized) {
-  return Boolean(normalized.stream)
-    && (normalized.protocol === 'chat' || normalized.tools.length === 0)
-    && !normalized.structuredSchema
-    && !normalized.autoMode;
-}
-
-function createAnthropicTextEmitter(res, model) {
-  const id = `msg_${crypto.randomUUID().replaceAll('-', '')}`;
-  let started = false;
-  let blockCount = 0;
-  let activeBlock = null;
-  let emittedText = '';
-  let emittedThinking = '';
-  const start = () => {
-    if (started) return;
-    started = true;
-    sendSse(res, 'message_start', { type: 'message_start', message: {
-      id, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
-    } });
-  };
-  const closeBlock = () => {
-    if (activeBlock) sendSse(res, 'content_block_stop', { type: 'content_block_stop', index: activeBlock.index });
-    activeBlock = null;
-  };
-  const emitBlock = (kind, text) => {
-    text = String(text || '');
-    if (!text) return;
-    start();
-    if (activeBlock?.kind !== kind) {
-      closeBlock();
-      activeBlock = { index: blockCount++, kind };
-      sendSse(res, 'content_block_start', { type: 'content_block_start', index: activeBlock.index,
-        content_block: kind === 'thinking' ? { type: 'thinking', thinking: '' } : { type: 'text', text: '' } });
-    }
-    if (kind === 'thinking') emittedThinking += text;
-    else emittedText += text;
-    sendSse(res, 'content_block_delta', { type: 'content_block_delta', index: activeBlock.index,
-      delta: kind === 'thinking' ? { type: 'thinking_delta', thinking: text } : { type: 'text_delta', text } });
-  };
-  return {
-    onDelta: (text) => { emitBlock('text', text); return streamReady(res); },
-    onThinkingDelta: (text) => { emitBlock('thinking', text); return streamReady(res); },
-    finish: (body) => {
-      start();
-      const finalThinking = (body.content || []).filter(block => block.type === 'thinking').map(block => block.thinking || '').join('');
-      emitBlock('thinking', streamTextRemainder(emittedThinking, finalThinking));
-      const finalText = (body.content || []).filter(block => block.type === 'text').map(block => block.text || '').join('');
-      emitBlock('text', streamTextRemainder(emittedText, finalText));
-      closeBlock();
-      // message_start went out before upstream usage existed; message_delta usage is cumulative per the Messages API.
-      sendSse(res, 'message_delta', {
-        type: 'message_delta',
-        delta: { stop_reason: body.stop_reason, stop_sequence: null },
-        usage: body.usage,
-        ...(body.usage_known === false ? { usage_known: false } : {}),
-        ...(body.artifacts ? { artifacts: body.artifacts } : {})
-      });
-      sendSse(res, 'message_stop', { type: 'message_stop' });
-      endStream(res);
-    }
-  };
-}
-
-function sendChatChunk(res, base, choices, { includeUsage = false, usage = null, usageKnown } = {}) {
-  writeStream(res, `data: ${JSON.stringify({ id: base.id, object: 'chat.completion.chunk', created: base.created,
-    model: base.model, choices, ...(includeUsage ? { usage } : {}),
-    ...(usageKnown === false ? { usage_known: false } : {}) })}\n\n`);
-}
-
-function createChatTextEmitter(res, model, { includeUsage = false } = {}) {
-  const id = `chatcmpl_${crypto.randomUUID().replaceAll('-', '')}`;
-  const created = Math.floor(Date.now() / 1000);
-  let started = false;
-  let emittedText = '';
-  let emittedThinking = '';
-  const base = { id, created, model };
-  const chunk = (delta, finish_reason = null, extra = {}) => sendChatChunk(res, base,
-    [{ index: 0, delta, finish_reason }], { includeUsage, ...extra });
-  const start = () => {
-    if (started) return;
-    started = true;
-    chunk({ role: 'assistant' });
-  };
-  return {
-    onThinkingDelta: (text) => {
-      text = String(text || '');
-      if (!text) return;
-      start();
-      emittedThinking += text;
-      chunk({ reasoning_content: text });
-      return streamReady(res);
-    },
-    onDelta: (text) => {
-      text = String(text || '');
-      if (!text) return;
-      start();
-      emittedText += text;
-      chunk({ content: text });
-      return streamReady(res);
-    },
-    finish: (body) => {
-      start();
-      const thinking = body.choices?.[0]?.message?.reasoning_content || '';
-      const thinkingRemainder = streamTextRemainder(emittedThinking, thinking);
-      if (thinkingRemainder) chunk({ reasoning_content: thinkingRemainder });
-      const finalText = body.choices?.[0]?.message?.content || '';
-      const remainder = streamTextRemainder(emittedText, finalText);
-      if (remainder) {
-        chunk({ content: remainder });
-      }
-      const finalMessage = body.choices?.[0]?.message || {};
-      if (finalMessage.images || finalMessage.artifacts) {
-        const delta = {};
-        if (finalMessage.images) delta.images = finalMessage.images;
-        if (finalMessage.artifacts) delta.artifacts = finalMessage.artifacts;
-        chunk(delta);
-      }
-      const toolCalls = body.choices?.[0]?.message?.tool_calls;
-      if (toolCalls?.length) chunk({ tool_calls: toolCalls.map((call, index) => ({ index, ...call })) });
-      const finishReason = body.choices?.[0]?.finish_reason || 'stop';
-      chunk({}, finishReason, { usageKnown: body.usage_known });
-      if (includeUsage) sendChatChunk(res, base, [], { includeUsage: true, usage: body.usage ?? null, usageKnown: body.usage_known });
-      writeStream(res, 'data: [DONE]\n\n');
-      endStream(res);
-    }
-  };
-}
-
-function emitAnthropicStream(res, body) {
-  if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-  const start = { ...body, content: [], stop_reason: null, stop_sequence: null };
-  sendSse(res, 'message_start', { type: 'message_start', message: start });
-  body.content.forEach((block, index) => {
-    const empty = block.type === 'text'
-      ? { type: 'text', text: '' }
-      : block.type === 'thinking'
-        ? { type: 'thinking', thinking: '' }
-        : { ...block, input: {} };
-    sendSse(res, 'content_block_start', { type: 'content_block_start', index, content_block: empty });
-    if (block.type === 'text') {
-      sendSse(res, 'content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } });
-    } else if (block.type === 'thinking') {
-      if (block.thinking) sendSse(res, 'content_block_delta', { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: block.thinking } });
-      if (block.signature) sendSse(res, 'content_block_delta', { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature } });
-    } else {
-      sendSse(res, 'content_block_delta', { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
-    }
-    sendSse(res, 'content_block_stop', { type: 'content_block_stop', index });
-  });
-  sendSse(res, 'message_delta', {
-    type: 'message_delta',
-    delta: { stop_reason: body.stop_reason, stop_sequence: null },
-    usage: body.usage,
-    ...(body.usage_known === false ? { usage_known: false } : {}),
-    ...(body.artifacts ? { artifacts: body.artifacts } : {})
-  });
-  sendSse(res, 'message_stop', { type: 'message_stop' });
-  endStream(res);
-}
-
-function emitChatStream(res, body, { includeUsage = false } = {}) {
-  if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-  const choice = body.choices[0];
-  const first = { role: 'assistant' };
-  if (choice.message.content) first.content = choice.message.content;
-  if (choice.message.reasoning_content) first.reasoning_content = choice.message.reasoning_content;
-  if (choice.message.tool_calls) first.tool_calls = choice.message.tool_calls.map((call, index) => ({ index, ...call }));
-  if (choice.message.images) first.images = choice.message.images;
-  if (choice.message.artifacts) first.artifacts = choice.message.artifacts;
-  sendChatChunk(res, body, [{ index: 0, delta: first, finish_reason: null }], { includeUsage });
-  sendChatChunk(res, body, [{ index: 0, delta: {}, finish_reason: choice.finish_reason }], { includeUsage, usageKnown: body.usage_known });
-  if (includeUsage) sendChatChunk(res, body, [], { includeUsage: true, usage: body.usage ?? null, usageKnown: body.usage_known });
-  writeStream(res, 'data: [DONE]\n\n');
-  endStream(res);
-}
-
-function emitResponsesItem(emit, item, outputIndex) {
-  emit({ type: 'response.output_item.added', output_index: outputIndex, item: { ...item, status: 'in_progress', content: item.content ? [] : undefined,
-    ...(item.type === 'function_call' ? { arguments: '' } : {}),
-    ...(item.type === 'custom_tool_call' ? { input: '' } : {}),
-    ...(item.type === 'reasoning' ? { summary: [] } : {}) } });
-  if (item.type === 'message') {
-    const part = item.content[0];
-    emit({ type: 'response.content_part.added', item_id: item.id, output_index: outputIndex, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } });
-    emit({ type: 'response.output_text.delta', item_id: item.id, output_index: outputIndex, content_index: 0, delta: part.text });
-    emit({ type: 'response.output_text.done', item_id: item.id, output_index: outputIndex, content_index: 0, text: part.text });
-    emit({ type: 'response.content_part.done', item_id: item.id, output_index: outputIndex, content_index: 0, part });
-  } else if (item.type === 'reasoning') {
-    (item.summary || []).forEach((part, summaryIndex) => {
-      const ids = { item_id: item.id, output_index: outputIndex, summary_index: summaryIndex };
-      emit({ type: 'response.reasoning_summary_part.added', ...ids, part: { type: 'summary_text', text: '' } });
-      emit({ type: 'response.reasoning_summary_text.delta', ...ids, delta: part.text });
-      emit({ type: 'response.reasoning_summary_text.done', ...ids, text: part.text });
-      emit({ type: 'response.reasoning_summary_part.done', ...ids, part });
-    });
-  } else if (item.type === 'function_call') {
-    emit({ type: 'response.function_call_arguments.delta', item_id: item.id, output_index: outputIndex, delta: item.arguments });
-    emit({ type: 'response.function_call_arguments.done', item_id: item.id, output_index: outputIndex, arguments: item.arguments });
-  } else if (item.type === 'custom_tool_call') {
-    emit({ type: 'response.custom_tool_call_input.delta', item_id: item.id, output_index: outputIndex, delta: item.input });
-    emit({ type: 'response.custom_tool_call_input.done', item_id: item.id, output_index: outputIndex, input: item.input });
-  }
-  emit({ type: 'response.output_item.done', output_index: outputIndex, item });
-}
-
-function createResponsesTextEmitter(res, model, responseId) {
-  const createdAt = Math.floor(Date.now() / 1000);
-  let sequence = 0;
-  let started = false;
-  let terminated = false;
-  const states = new Map();
-  const emit = (event) => sendSse(res, null, { ...event, sequence_number: sequence++ });
-  const start = () => {
-    if (started) return;
-    started = true;
-    emit({ type: 'response.created', response: {
-      id: responseId, object: 'response', created_at: createdAt, model,
-      status: 'in_progress', output: [], error: null, incomplete_details: null, usage: null
-    } });
-  };
-  const emitDelta = (kind, value) => {
-    if (terminated) return;
-    const text = String(value || '');
-    if (!text) return;
-    start();
-    let state = states.get(kind);
-    if (!state) {
-      state = { id: `${kind === 'reasoning' ? 'rs' : 'msg'}_${crypto.randomUUID().replaceAll('-', '')}`, index: states.size, text: '' };
-      states.set(kind, state);
-      const item = kind === 'reasoning'
-        ? { id: state.id, type: 'reasoning', status: 'in_progress', summary: [] }
-        : { id: state.id, type: 'message', role: 'assistant', status: 'in_progress', content: [] };
-      emit({ type: 'response.output_item.added', output_index: state.index, item });
-      if (kind === 'reasoning') emit({ type: 'response.reasoning_summary_part.added', item_id: state.id,
-        output_index: state.index, summary_index: 0, part: { type: 'summary_text', text: '' } });
-      else emit({ type: 'response.content_part.added', item_id: state.id, output_index: state.index,
-        content_index: 0, part: { type: 'output_text', text: '', annotations: [] } });
-    }
-    state.text += text;
-    emit({ type: kind === 'reasoning' ? 'response.reasoning_summary_text.delta' : 'response.output_text.delta',
-      item_id: state.id, output_index: state.index, ...(kind === 'reasoning' ? { summary_index: 0 } : { content_index: 0 }), delta: text });
-  };
-  return { onDelta: value => { emitDelta('message', value); return streamReady(res); }, onThinkingDelta: value => { emitDelta('reasoning', value); return streamReady(res); }, fail(error) {
-    if (terminated) return;
-    terminated = true;
-    start();
-    const output = [...states].map(([kind, state]) => kind === 'reasoning'
-      ? { id: state.id, type: 'reasoning', status: 'incomplete', summary: [{ type: 'summary_text', text: state.text }] }
-      : { id: state.id, type: 'message', role: 'assistant', status: 'incomplete',
-        content: [{ type: 'output_text', text: state.text, annotations: [] }] });
-    emit({ type: 'response.failed', response: {
-      id: responseId, object: 'response', created_at: createdAt, model, status: 'failed', output,
-      error: clientError(error),
-      incomplete_details: null, usage: null
-    } });
-    endStream(res);
-  }, finish(body) {
-    if (terminated) return;
-    start();
-    body.id = responseId;
-    body.created_at = createdAt;
-    const message = body.output.find((item) => item.type === 'message');
-    const reasoning = body.output.find((item) => item.type === 'reasoning');
-    emitDelta('reasoning', streamTextRemainder(states.get('reasoning')?.text || '',
-      (reasoning?.summary || []).map(part => part.text || '').join('')));
-    emitDelta('message', streamTextRemainder(states.get('message')?.text || '', message?.content?.[0]?.text || ''));
-    const completed = [];
-    for (const [kind, state] of states) {
-      const part = kind === 'reasoning' ? { type: 'summary_text', text: state.text }
-        : { type: 'output_text', text: state.text, annotations: message?.content?.[0]?.annotations || [] };
-      const item = kind === 'reasoning'
-        ? { id: state.id, type: 'reasoning', status: body.status === 'incomplete' ? 'incomplete' : 'completed', summary: [part] }
-        : { id: state.id, type: 'message', role: 'assistant', status: body.status === 'incomplete' ? 'incomplete' : 'completed', content: [part] };
-      const ids = { item_id: state.id, output_index: state.index,
-        ...(kind === 'reasoning' ? { summary_index: 0 } : { content_index: 0 }) };
-      emit({ type: kind === 'reasoning' ? 'response.reasoning_summary_text.done' : 'response.output_text.done', ...ids, text: state.text });
-      emit({ type: kind === 'reasoning' ? 'response.reasoning_summary_part.done' : 'response.content_part.done', ...ids, part });
-      emit({ type: 'response.output_item.done', output_index: state.index, item });
-      completed.push(item);
-    }
-    const remaining = body.output.filter(item => !(item === message && states.has('message'))
-      && !(item === reasoning && states.has('reasoning')));
-    body.output = [...completed, ...remaining];
-    remaining.forEach((item, index) => emitResponsesItem(emit, item, completed.length + index));
-    terminated = true;
-    emit({ type: body.status === 'incomplete' ? 'response.incomplete' : 'response.completed', response: body });
-    writeStream(res, 'data: [DONE]\n\n');
-    endStream(res);
-  } };
-}
-
-function emitResponsesStream(res, body) {
-  if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-  let sequence = 0;
-  sendSse(res, null, { type: 'response.created', sequence_number: sequence++, response: { ...body, status: 'in_progress', output: [] } });
-  body.output.forEach((item, index) => emitResponsesItem((event) => sendSse(res, null, { ...event, sequence_number: sequence++ }), item, index));
-  sendSse(res, null, { type: body.status === 'incomplete' ? 'response.incomplete' : 'response.completed', sequence_number: sequence++, response: body });
-  writeStream(res, 'data: [DONE]\n\n');
-  endStream(res);
-}
-
 function aspectRatioFromSize(size, fallback = '1:1') {
   const match = String(size || '').match(/^(\d+)x(\d+)$/i);
   if (!match) return fallback;
@@ -1483,7 +946,7 @@ async function generateImages(payload, req, signal, references = []) {
   const count = Math.max(1, Math.min(4, Number(payload.n) || 1));
   const prompt = String(payload.prompt || '').trim();
   if (!prompt) throw new GatewayError('生图请求缺少 prompt。', { code: 'image_prompt_missing', status: 400 });
-  const requestedModel = payload.model ? await resolveModel(payload.model) : '';
+  if (payload.model) await resolveModel(payload.model);
   const scope = clientScope(req);
   const identity = clientSessionIdentity(req, payload, { model: payload.model, messages: [{ role: 'user', text: prompt, parts: references }] });
   const trace = identityTrace(identity);
@@ -1620,13 +1083,15 @@ async function handleAnthropic(payload, req, res, signal) {
   payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
   const normalized = await normalizeAnthropicAsync(payload, { signal });
+  const logContext = requestContext();
+  if (logContext) { logContext.stream = Boolean(normalized.stream); logContext.bytes = Number(req.bodyBytes) || 0; }
   const model = await resolveModel(normalized.model, { preferFast: normalized.autoMode });
   const requestClass = normalized.autoMode ? 'auto-mode' : 'client';
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/messages model=${model} requested=${normalized.model || '-'} class=${requestClass} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} maxOut=${normalized.generationConfig?.maxOutputTokens || '-'} stream=${normalized.stream} ${identityTrace(identity)}`);
   let stopHeartbeat = null;
   const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
-  const liveEmitter = textStreamingAllowed(normalized) ? createAnthropicTextEmitter(res, normalized.model || model) : null;
+  const liveEmitter = textStreamingAllowed(normalized, { direct: usesDirectTransport() }) ? createAnthropicTextEmitter(res, normalized.model || model) : null;
   let result;
   try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
@@ -1639,12 +1104,14 @@ async function handleChat(payload, req, res, signal) {
   payload = applyModelDefaults(payload);
   USAGE_STORE.recordClientRequest();
   const normalized = await normalizeChatAsync(payload, { signal });
+  const logContext = requestContext();
+  if (logContext) { logContext.stream = Boolean(normalized.stream); logContext.bytes = Number(req.bodyBytes) || 0; }
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, null, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/chat/completions model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
   let stopHeartbeat = null;
   const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
-  const liveEmitter = textStreamingAllowed(normalized) ? createChatTextEmitter(res, normalized.model || model, { includeUsage: normalized.includeUsage }) : null;
+  const liveEmitter = textStreamingAllowed(normalized, { direct: usesDirectTransport() }) ? createChatTextEmitter(res, normalized.model || model, { includeUsage: normalized.includeUsage }) : null;
   let result;
   try { result = await runTurnWithModelDiagnostic(normalized, model, signal, { ...identity, mediaScope: clientScope(req), publicBaseUrl: requestBaseUrl(req), onAdmitted, onDelta: liveEmitter?.onDelta, onThinkingDelta: normalized.includeThinking ? liveEmitter?.onThinkingDelta : undefined }); } finally { stopHeartbeat?.(); }
   SESSION_MANAGER.bindToolCalls(identity, result.toolCalls);
@@ -1662,6 +1129,8 @@ async function handleResponses(payload, req, res, signal) {
     throw new GatewayError('previous_response_id 不属于当前客户端会话。', { code: 'previous_response_not_found', status: 400 });
   }
   const normalized = await normalizeResponsesAsync(payload, previous, { signal });
+  const logContext = requestContext();
+  if (logContext) { logContext.stream = Boolean(normalized.stream); logContext.bytes = Number(req.bodyBytes) || 0; }
   const model = await resolveModel(normalized.model);
   const identity = clientSessionIdentity(req, payload, normalized, previous, taskIdentityOptions(model));
   gatewayLog(`[Antigravity Gateway] /v1/responses model=${model} requested=${normalized.model || '-'} bytes=${req.bodyBytes || 0} tools=${normalized.tools.length} stream=${normalized.stream} ${identityTrace(identity)}`);
@@ -1673,7 +1142,7 @@ async function handleResponses(payload, req, res, signal) {
   const onAdmitted = () => { if (normalized.stream && !stopHeartbeat) stopHeartbeat = beginSse(res); };
   const responseId = `resp_${crypto.randomUUID().replaceAll('-', '')}`;
   const responseEmitter = createResponsesTextEmitter(res, normalized.model || model, responseId);
-  const liveEmitter = textStreamingAllowed(normalized) ? responseEmitter : null;
+  const liveEmitter = textStreamingAllowed(normalized, { direct: usesDirectTransport() }) ? responseEmitter : null;
   res[RESPONSES_FAILURE] = responseEmitter.fail;
   let result;
   const sessionId = identity.sessionId;
@@ -1788,6 +1257,7 @@ async function requestHandler(req, res) {
     return;
   }
   if (!authorized(req)) { sendJson(res, 401, errorBody(new GatewayError('API key 无效。', { code: 'authentication_error', status: 401 }), route.includes('messages') ? 'anthropic' : 'openai')); return; }
+  const protocol = route === '/v1/messages' || route === '/v1/messages/count_tokens' ? 'anthropic' : 'openai';
   const controller = new AbortController();
   activeControllers.add(controller);
   let timedOut = false;
@@ -1816,7 +1286,6 @@ async function requestHandler(req, res) {
   req.on('aborted', () => controller.abort());
   req.on('error', () => controller.abort());
   res.on('close', () => { if (!res.writableEnded) controller.abort(); });
-  let protocol = route === '/v1/messages' || route === '/v1/messages/count_tokens' ? 'anthropic' : 'openai';
   try {
     // Wait for the dedicated pool before holding a body-admission slot.
     if (req.method === 'POST' && route.startsWith('/v1/images/')) releaseRoute = await imageSlots.acquire(controller.signal);
@@ -1861,7 +1330,7 @@ async function requestHandler(req, res) {
       return;
     }
     if (req.method === 'GET' && route === '/v1/models') {
-      const models = await availableModels(true);
+      const models = await availableModels(requestUrl.searchParams.get('force') === '1');
       sendJson(res, 200, {
         ...codexCatalogBody(models),
         default_model: DEFAULT_MODEL,
@@ -1944,8 +1413,11 @@ function createServer({ directoryGuard = null } = {}) {
   }
   const server = http.createServer((req, res) => {
     let context = null;
-    const isApi = String(req.url || '').startsWith('/v1/');
-    if (isApi) {
+    const rawPath = String(req.url || '').split('?')[0].replace(/\/$/, '') || '/';
+    const isApi = rawPath.startsWith('/v1/');
+    const isPublicFileContent = ['GET', 'HEAD'].includes(req.method) && /^\/v1\/files\/file_[a-f0-9]{32}\/content$/.test(rawPath);
+    const requiresApiAuth = isApi && req.method !== 'OPTIONS' && !isPublicFileContent;
+    if (requiresApiAuth) {
       const auth = KEY_STORE.authenticate(req);
       if (auth.error) {
         sendJson(res, auth.error.status || 401, { error: { type: auth.error.code || 'authentication_error', message: auth.error.message || 'API key 无效。' } });
@@ -1953,21 +1425,31 @@ function createServer({ directoryGuard = null } = {}) {
       }
       context = auth.context;
     }
-    const logContext = isApi ? REQUEST_LOG.createContext(req, context) : null;
-    const runHandler = () => keyContext.run(context, () => require('./src/schema-contract').withAsyncSchemaBoundary(() => requestHandler(req, res)));
+    const logContext = requiresApiAuth ? REQUEST_LOG.createContext(req, context) : null;
+    const runHandler = () => keyContext.run(context, () => withAsyncSchemaBoundary(() => requestHandler(req, res)));
     const pending = trackTransaction(logContext ? runRequestLog(logContext, runHandler) : runHandler()).catch(() => {
       if (!res.headersSent && !res.destroyed) sendJson(res, 500, { error: { message: 'Antigravity Gateway 内部错误。' } });
       else res.destroy();
     });
     if (logContext) {
-      res.once('finish', () => {
+      let recorded = false;
+      const recordOnce = (aborted = false) => {
+        if (recorded) return;
+        recorded = true;
         // SSE headers are already HTTP 200 when a later upstream failure occurs.
-        logContext.status = logContext.status || res.statusCode;
-        logContext.latencyMs = Date.now() - logContext.at;
+        if (aborted && !res.writableFinished) {
+          logContext.status = logContext.status || 499;
+          logContext.code = logContext.code || 'request_aborted';
+        } else {
+          logContext.status = logContext.status || res.statusCode;
+        }
+        logContext.latencyMs = Math.max(0, Date.now() - logContext.at);
         USAGE_STORE.recordRequestMetrics(logContext);
         KEY_STORE.recordLatency(logContext);
         REQUEST_LOG.record(logContext);
-      });
+      };
+      res.once('finish', () => recordOnce(false));
+      res.once('close', () => recordOnce(true));
     }
     void pending.finally(() => { for (const release of bodyReservations.get(req) || []) release(); bodyReservations.delete(req); });
     activeRequests.add(pending);
@@ -2008,8 +1490,8 @@ if (require.main === module) {
     process.exitCode = 1;
     return;
   }
-  if (!isLoopbackHost(HOST) && !API_KEY) {
-    console.error('[Antigravity Gateway Error] 非本机监听必须设置 ANTIGRAVITY_GATEWAY_API_KEY。');
+  if (!isLoopbackHost(HOST) && !API_KEY && !MULTI_KEY) {
+    console.error('[Antigravity Gateway Error] 非本机监听必须设置 ANTIGRAVITY_GATEWAY_API_KEY 或启用 AGY_MULTI_KEY=1。');
     process.exitCode = 1;
     return;
   }

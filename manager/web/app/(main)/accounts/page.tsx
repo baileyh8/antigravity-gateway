@@ -10,15 +10,16 @@ import { AddAccountDialog } from '@/components/accounts/add-account-dialog';
 import { EditAccountDialog } from '@/components/accounts/edit-account-dialog';
 import { ProxyPanel } from '@/components/accounts/proxy-panel';
 import { api, ApiError } from '@/lib/api';
+import { accountStateLabel, applyAccountEnabledPatch, matchesAccountStateFilter } from '@/lib/account-state';
 import { fmtRelative } from '@/lib/format';
 import { lowestByKind, lowestOverall, poolSummary, quotaMatrix } from '@/lib/quota';
 import type { Account, AccountsResponse, ProxySnapshot } from '@/lib/types';
 
-function StateBadge({ state }: { state: string }) {
+function StateBadge({ state, title }: { state: string; title?: string }) {
   if (state === 'available') return <span className="badge green"><span className="dot" />可用</span>;
   if (state === 'cooldown') return <span className="badge amber"><span className="dot amber" />冷却</span>;
-  if (state === 'disabled') return <span className="badge"><span className="dot gray" />已禁用</span>;
-  return <span className="badge red"><span className="dot red" />异常</span>;
+  if (state === 'disabled') return <span className="badge"><span className="dot gray" />已暂停</span>;
+  return <span className="badge red" title={title || ''}><span className="dot red" />{accountStateLabel(state)}</span>;
 }
 
 export default function AccountsPage() {
@@ -35,6 +36,7 @@ export default function AccountsPage() {
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState('');
+  const [togglingIds, setTogglingIds] = useState<string[]>([]);
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
 
@@ -67,7 +69,7 @@ export default function AccountsPage() {
     const list = data?.items || [];
     const needle = query.trim().toLowerCase();
     return list.filter((account) => {
-      if (state !== 'all' && account.state !== state) return false;
+      if (!matchesAccountStateFilter(account.state, state)) return false;
       if (!needle) return true;
       return `${account.emailMasked} ${account.id} ${account.note || ''}`.toLowerCase().includes(needle);
     });
@@ -77,6 +79,25 @@ export default function AccountsPage() {
     notify(message);
     void load();
   }, [load, notify]);
+
+  async function toggleEnabled(account: Account) {
+    if (togglingIds.includes(account.id)) return;
+    const nextEnabled = !account.enabled;
+    setTogglingIds((current) => [...current, account.id]);
+    try {
+      await api(`/accounts/${encodeURIComponent(account.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: nextEnabled, provider: account.providerType })
+      });
+      setData((current) => current ? { ...current, items: applyAccountEnabledPatch(current.items, account.id, nextEnabled) } : current);
+      notify(`${nextEnabled ? '已启用' : '已暂停'} ${account.emailMasked || account.id}`);
+      await load();
+    } catch (err) {
+      notify(err instanceof ApiError || err instanceof Error ? err.message : `${nextEnabled ? '启用' : '暂停'}失败`, true);
+    } finally {
+      setTogglingIds((current) => current.filter((id) => id !== account.id));
+    }
+  }
 
   async function recheck(account: Account) {
     setBusyId(account.id);
@@ -175,7 +196,7 @@ export default function AccountsPage() {
               <option value="all">全部状态</option>
               <option value="available">可用</option>
               <option value="cooldown">冷却</option>
-              <option value="disabled">已禁用</option>
+              <option value="disabled">已暂停</option>
               <option value="error">异常</option>
             </select>
           </div>
@@ -185,13 +206,26 @@ export default function AccountsPage() {
               <div className="skeleton" style={{ height: 220 }} />
             ) : (
               <table className="table">
-                <thead><tr><th>账号</th><th>状态</th><th>权重</th><th>来源</th><th>最近成功</th><th>额度</th><th>备注</th><th>操作</th></tr></thead>
+                <thead><tr><th>账号</th><th>启停</th><th>状态</th><th>权重</th><th>来源</th><th>最近成功</th><th>额度</th><th>备注</th><th>操作</th></tr></thead>
                 <tbody>
                   {items.map((account) => {
+                    const toggling = togglingIds.includes(account.id);
                     return (
                       <tr key={account.id}>
                         <td><div className="strong">{account.emailMasked || account.id}</div></td>
-                        <td><StateBadge state={account.state} /></td>
+                        <td>
+                          <button
+                            className={`switch compact${account.enabled ? ' on' : ''}`}
+                            type="button"
+                            role="switch"
+                            aria-checked={account.enabled}
+                            aria-label={`${account.enabled ? '暂停' : '启用'} ${account.emailMasked || account.id}`}
+                            title={account.enabled ? '点击暂停调度' : '点击启用调度'}
+                            disabled={toggling || busyId === account.id}
+                            onClick={() => void toggleEnabled(account)}
+                          />
+                        </td>
+                        <td><StateBadge state={account.state} title={account.healthMessage || account.lastError} /></td>
                         <td>{account.weight}</td>
                         <td className="muted">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</td>
                         <td className="muted">{fmtRelative(account.lastSuccessAt)}</td>
@@ -199,7 +233,7 @@ export default function AccountsPage() {
                         <td className="note-cell" title={account.note || ''}>{account.note || '—'}</td>
                         <td>
                           <div className="table-actions">
-                            <button className="btn ghost small" type="button" onClick={() => void recheck(account)} disabled={Boolean(busyId) || account.state === 'disabled'}>{busyId === account.id ? '检测中…' : '重检'}</button>
+                            <button className="btn ghost small" type="button" onClick={() => void recheck(account)} disabled={Boolean(busyId) || toggling || !account.enabled}>{busyId === account.id ? '检测中…' : '重检'}</button>
                             <button className="btn ghost small" type="button" onClick={() => setEditing(account)}>编辑</button>
                             <button className="btn danger small" type="button" onClick={() => { setDeleting(account); setConfirm(''); }}>删除</button>
                           </div>
@@ -208,7 +242,7 @@ export default function AccountsPage() {
                     );
                   })}
                   {!items.length ? (
-                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有匹配的账号</td></tr>
+                    <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有匹配的账号</td></tr>
                   ) : null}
                 </tbody>
               </table>
@@ -244,7 +278,13 @@ export default function AccountsPage() {
                   const lowest = lowestOverall(account);
                   return (
                     <tr key={account.id}>
-                      <td><div className="strong">{account.emailMasked || account.id}</div><div className="muted tiny">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</div></td>
+                      <td>
+                        <div className="flex" style={{ gap: 6 }}>
+                          <span className="strong">{account.emailMasked || account.id}</span>
+                          {!account.enabled ? <span className="badge"><span className="dot gray" />已暂停</span> : null}
+                        </div>
+                        <div className="muted tiny">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</div>
+                      </td>
                       <td><QuotaGroupCell fiveHour={matrix.gemini5h} weekly={matrix.geminiWeek} /></td>
                       <td><QuotaGroupCell fiveHour={matrix.claude5h} weekly={matrix.claudeWeek} /></td>
                       <td><QuotaGroupCell fiveHour={null} weekly={matrix.argonWeek} /></td>

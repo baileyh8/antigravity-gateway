@@ -38,7 +38,7 @@ function createToolReceiptTransform(response, nativeName, toolAdapter) {
     if (!toolAdapter?.toProviderReferences) throw receiptError('动态工具结果缺少当次声明的引用映射。');
     references.push({ client, count: 1, providers: toolAdapter.toProviderReferences([client]) });
   }
-  return { mode: source && /^mcp_gateway_tool_[a-f0-9]{16,64}(?:_json)?$/.test(nativeName) ? 'mcp' : 'native', references };
+  return { mode: source && /^mcp_gateway_tool_(?:[a-z0-9_]{1,24}_)?[a-f0-9]{16,64}(?:_json)?$/.test(nativeName) ? 'mcp' : 'native', references };
 }
 
 function receiptError(message) {

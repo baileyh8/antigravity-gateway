@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CompactNumber } from '@/components/compact-number';
 import { PageHeader } from '@/components/page-header';
 import { AlertIcon, RefreshIcon, ScrollIcon } from '@/components/icons';
@@ -43,44 +43,58 @@ export default function LogsPage() {
   const [following, setFollowing] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearBefore, setClearBefore] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+  const [debouncedFilters, setDebouncedFilters] = useState({ key: '', model: '', ip: '', event: '', account: '', action: '', actor: '' });
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedFilters({ key, model, ip, event, account, action, actor });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [key, model, ip, event, account, action, actor]);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError('');
     try {
       let next: LogPage<RequestLogEntry | DiagnosticEntry | AuditEntry>;
       if (tab === 'requests') {
         const params = new URLSearchParams({ days, page: String(page), size: '20' });
-        if (key) params.set('key', key);
-        if (model) params.set('model', model);
+        if (debouncedFilters.key) params.set('key', debouncedFilters.key);
+        if (debouncedFilters.model) params.set('model', debouncedFilters.model);
         if (status) params.set('status', status);
-        if (ip) params.set('ip', ip);
-        next = await api(`/logs/requests?${params}`);
+        if (debouncedFilters.ip) params.set('ip', debouncedFilters.ip);
+        next = await api(`/logs/requests?${params}`, { signal: controller.signal });
       } else if (tab === 'diagnostics') {
         const params = new URLSearchParams({ days, page: String(page), size: '20' });
-        if (event) params.set('event', event);
-        if (account) params.set('account', account);
-        next = await api(`/logs/diagnostics?${params}`);
+        if (debouncedFilters.event) params.set('event', debouncedFilters.event);
+        if (debouncedFilters.account) params.set('account', debouncedFilters.account);
+        next = await api(`/logs/diagnostics?${params}`, { signal: controller.signal });
       } else {
         const params = new URLSearchParams({ days, page: String(page), size: '20' });
-        if (action) params.set('action', action);
-        if (actor) params.set('actor', actor);
-        next = await api(`/audit?${params}`);
+        if (debouncedFilters.action) params.set('action', debouncedFilters.action);
+        if (debouncedFilters.actor) params.set('actor', debouncedFilters.actor);
+        next = await api(`/audit?${params}`, { signal: controller.signal });
       }
-      setData(next);
+      if (!controller.signal.aborted) setData(next);
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (controller.signal.aborted) return;
       setError(err instanceof ApiError ? err.message : '无法读取日志');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [tab, days, key, model, status, ip, event, account, action, actor, page]);
+  }, [tab, days, status, debouncedFilters, page]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 250);
-    return () => window.clearTimeout(timer);
+    void load();
+    return () => abortRef.current?.abort();
   }, [load]);
 
-  useEffect(() => { setPage(1); }, [tab, days, key, model, status, ip, event, account, action, actor]);
+  useEffect(() => { setPage(1); }, [tab, days, status, debouncedFilters]);
 
   useEffect(() => {
     if (!following || page !== 1) return;

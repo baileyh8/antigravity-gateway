@@ -108,7 +108,7 @@ const CONTENT_BLOCK_TYPES = new Set(['text', 'input_text', 'output_text', 'think
   'tool_use', 'tool_result', 'tool_reference', 'function_call', 'function_call_output', 'computer_call_output',
   'image', 'image_url', 'input_image', 'video', 'video_url', 'input_video', 'audio', 'input_audio',
   'document', 'file', 'input_file', 'computer_screenshot', 'media']);
-const RESPONSE_INPUT_TYPES = new Set(['message', 'function_call', 'custom_tool_call', 'function_call_output',
+const RESPONSE_INPUT_TYPES = new Set(['message', 'compaction', 'function_call', 'custom_tool_call', 'function_call_output',
   'custom_tool_call_output', 'computer_call_output', 'image', 'image_url', 'input_image',
   'video', 'video_url', 'input_video', 'audio', 'input_audio', 'document', 'file', 'input_file', 'computer_screenshot', 'media']);
 
@@ -624,6 +624,23 @@ function* normalizeResponsesSteps(payload, previousTranscript, compiler = compil
     else if (topLevelMedia) messages.push({ role: 'user', text: '', parts: [topLevelMedia] });
     else if (['system', 'developer'].includes(item?.role)) {
       instructionMessages.push({ role: item.role, text: textFromContent(item.content, 'responses') });
+    }
+    else if (item?.type === 'compaction') {
+      const summary = typeof item.summary === 'string' && item.summary.trim()
+        ? item.summary.trim()
+        : item.content != null ? textFromContent(item.content, 'responses').trim() : '';
+      if (summary) {
+        const text = `<CONTEXT_SUMMARY>\n${summary}\n</CONTEXT_SUMMARY>`;
+        messages.push({ role: 'user', text, parts: [{ type: 'text', text }] });
+      } else if (typeof item.encrypted_content === 'string' && item.encrypted_content.trim()) {
+        throw new GatewayError('网关无法解密 OpenAI 加密压缩项（encrypted_content），请改用明文摘要或关闭客户端 remote compaction。', {
+          code: 'unsupported_encrypted_compaction', status: 400
+        });
+      } else {
+        throw new GatewayError('Responses compaction 输入项缺少可转换的明文摘要内容。', {
+          code: 'invalid_compaction_item', status: 400
+        });
+      }
     }
     else if (item?.type === 'message' || item?.role) messages.push({
       role: item.role || 'user',

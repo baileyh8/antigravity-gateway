@@ -166,22 +166,42 @@ function restoreHistory(state, contents, model, { verifiedToolSteps } = {}) {
 function recordResponse(state, contents, model, content, now = Date.now()) {
   if (!content.parts?.length) return;
   const key = historyKey(historyPrefix(contents), content);
-  state.responses[key] = { model, content: structuredClone(content), at: now };
-  pruneResponses(state);
+  const record = { model, content: structuredClone(content), at: now };
+  state.responses[key] = record;
+  pruneResponses(state, Buffer.byteLength(JSON.stringify(record)) + key.length + 4);
 }
 
-function pruneResponses(state) {
+const STATE_GROUPS = ['responses', 'projections', 'streamProjections', 'streamRecoveries', 'toolStreamErrors', 'receiptTransforms'];
+const stateBytesCache = new WeakMap();
+
+function pruneResponses(state, addedBytes = 0) {
   // Store server-produced content and receipt mapping metadata, never submitted
   // user results/history. All groups share the same bounded private cache.
-  const entries = ['responses', 'projections', 'streamProjections', 'streamRecoveries', 'toolStreamErrors', 'receiptTransforms'].flatMap(group => Object.entries(state[group] || {})
-    .map(([key, value]) => ({ group, key, value }))).sort((a, b) => a.value.at - b.value.at);
+  let entryCount = 0;
+  for (const group of STATE_GROUPS) {
+    const bucket = state[group];
+    if (bucket) entryCount += Object.keys(bucket).length;
+  }
+  const previousBytes = stateBytesCache.get(state);
+  const estimatedBytes = previousBytes !== undefined && addedBytes > 0 ? previousBytes + addedBytes : null;
+  if (entryCount <= 512 && estimatedBytes !== null && estimatedBytes <= MAX_FILE_BYTES - 65536) {
+    stateBytesCache.set(state, estimatedBytes);
+    return;
+  }
   let bytes = Buffer.byteLength(JSON.stringify(state));
+  if (entryCount <= 512 && bytes <= MAX_FILE_BYTES - 4096) {
+    stateBytesCache.set(state, bytes);
+    return;
+  }
+  const entries = STATE_GROUPS.flatMap(group => Object.entries(state[group] || {})
+    .map(([key, value]) => ({ group, key, value }))).sort((a, b) => a.value.at - b.value.at);
   while (entries.length > 512 || bytes > MAX_FILE_BYTES - 4096) {
     const item = entries.shift();
     if (!item) break;
     bytes -= Buffer.byteLength(JSON.stringify(item.value)) + item.key.length + 4;
     delete state[item.group][item.key];
   }
+  stateBytesCache.set(state, Math.max(0, bytes));
 }
 
 function restoreToolReceipts(state, submitted, prefix, model, toolNames, toolAdapter, now) {
@@ -306,22 +326,31 @@ function restoreClientProjections(state, contents, model, { nativeErrors, pendin
 function recordStreamProjection(state, prefix, visible, model, contents, now = Date.now(), clientCancelled = false) {
   if (visible?.role !== 'model' || !visible.parts?.length || !validStreamContents(contents)) return;
   state.streamProjections ||= {};
-  state.streamProjections[historyKey(historyPrefix(prefix), visible)] = { model, contents: structuredClone(contents), at: now,
+  const key = historyKey(historyPrefix(prefix), visible);
+  const record = { model, contents: structuredClone(contents), at: now,
     ...(clientCancelled ? { clientCancelled: true } : {}) };
-  pruneResponses(state);
+  state.streamProjections[key] = record;
+  pruneResponses(state, Buffer.byteLength(JSON.stringify(record)) + key.length + 4);
 }
 
 function recordStreamRecovery(state, prefix, model, contents, visibleText, now = Date.now(), terminal = false,
   retryCount = contents.filter(isStreamError).length, clientCancelled = false) {
   if (!validStreamContents(contents)) return;
   state.streamRecoveries ||= {};
-  state.streamRecoveries[historyPrefix(prefix)] = { model, contents: structuredClone(contents), visibleText, at: now,
+  const key = historyPrefix(prefix);
+  const record = { model, contents: structuredClone(contents), visibleText, at: now,
     retryCount: Math.min(9, Math.max(0, retryCount)), ...(terminal ? { terminal: true } : {}),
     ...(clientCancelled ? { clientCancelled: true } : {}) };
-  pruneResponses(state);
+  state.streamRecoveries[key] = record;
+  pruneResponses(state, Buffer.byteLength(JSON.stringify(record)) + key.length + 4);
 }
 
-function clearStreamRecovery(state, prefix) { if (state.streamRecoveries) delete state.streamRecoveries[historyPrefix(prefix)]; }
+function clearStreamRecovery(state, prefix) {
+  if (state.streamRecoveries) {
+    delete state.streamRecoveries[historyPrefix(prefix)];
+    stateBytesCache.delete(state);
+  }
+}
 
 function recordToolStreamError(state, prefix, model, content, retryCount, readyAt, now = Date.now()) {
   const parts = content?.parts?.filter(p => p.functionCall) || [];
@@ -330,17 +359,21 @@ function recordToolStreamError(state, prefix, model, content, retryCount, readyA
   const calls = parts.map(p => ({ id: p.functionCall.id, name: p.functionCall.name }));
   if (new Set(calls.map(c => c.id)).size !== calls.length) return;
   state.toolStreamErrors ||= {};
-  state.toolStreamErrors[historyPrefix([...prefix, content])] = { model, calls, retryCount, readyAt, at: now };
-  pruneResponses(state);
+  const key = historyPrefix([...prefix, content]);
+  const record = { model, calls, retryCount, readyAt, at: now };
+  state.toolStreamErrors[key] = record;
+  pruneResponses(state, Buffer.byteLength(JSON.stringify(record)) + key.length + 4);
 }
 
 function recordClientProjection(state, prefix, visible, model, contents, now = Date.now(), { kind } = {}) {
   if (!contents.length || contents.length > 3 || contents.some(c => c.role !== 'model')) return;
   if (kind !== undefined && kind !== 'client_tools') throw new TypeError('未知的客户端历史投影类型。');
   state.projections ||= {};
-  state.projections[historyKey(historyPrefix(prefix), visible)] = { model, contents: structuredClone(contents), at: now,
+  const key = historyKey(historyPrefix(prefix), visible);
+  const record = { model, contents: structuredClone(contents), at: now,
     ...(kind ? { kind } : {}) };
-  pruneResponses(state);
+  state.projections[key] = record;
+  pruneResponses(state, Buffer.byteLength(JSON.stringify(record)) + key.length + 4);
 }
 
 async function waitUntil(promise, signal) {

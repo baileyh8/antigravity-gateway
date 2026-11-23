@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { isConversionError } = require('./conversion-errors');
 const { isUnspecifiedResourceExhaustion, isModelCapacityFailure } = require('./agy-upstream-error');
 const { executionSlots, waitBudget } = require('./admission-control');
 const fs = require('node:fs');
@@ -24,7 +25,7 @@ function quotaReserveError() {
 }
 
 function errorCategory(error) {
-  if (require('./conversion-errors').isConversionError(error)) return 'request';
+  if (isConversionError(error)) return 'request';
   const status = Number(error?.status) || 0;
   const source = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.cause?.code || ''} ${error?.cause?.message || ''}`;
   if (error?.code === 'request_timeout' || error?.code === 'request_aborted' || /abort(?:ed|error)|请求已取消|网关请求超时/i.test(source)) return 'request';
@@ -759,7 +760,7 @@ class AccountPool {
     }
   }
 
-  async send(normalized, model, options = {}) {
+  async executeWithPool(model, options, { invoke, fallbackInvoke, allowPreferred = false, includeFallbackAccountId = false, failureSource = 'model_request' }) {
     await this.waitForModelCapacity(model, options.signal);
     if (!this.hasManagedAccounts()) {
       if (!this.canUseFallback()) throw this.noAccountError(model);
@@ -776,7 +777,7 @@ class AccountPool {
           attempt: 1
         });
         let responseSeen = false;
-        const result = await this.fallbackProvider.send(normalized, model, {
+        const result = await fallbackInvoke({
           ...options,
           onUpstreamAttempt: (event) => {
             if (event.phase === 'response') {
@@ -788,7 +789,7 @@ class AccountPool {
         // Custom/fake providers used by tests may not expose transport attempts.
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
         this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
-        return result;
+        return includeFallbackAccountId ? { ...result, accountId: 'local-agy-session' } : result;
       } catch (error) {
         if (errorCategory(error) === 'capacity') this.rememberCapacity(model, error);
         throw error;
@@ -804,7 +805,10 @@ class AccountPool {
       if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
       let finishAffinity = () => {};
       const lease = await this.admission.acquireAccount(() => {
-        const selected = this.selectAccount(model, routingKey, attempted, { allowSticky: attempted.size === 0 });
+        const selected = this.selectAccount(model, routingKey, attempted, {
+          ...(allowPreferred ? { preferredAccountId: options.accountId } : {}),
+          allowSticky: attempted.size === 0
+        });
         if (selected) finishAffinity = this.reserveSession(routingKey, selected.account.id, model, options);
         return selected;
       }, { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
@@ -823,7 +827,7 @@ class AccountPool {
           source: entry.account.source || 'managed-account',
           attempt: attempted.size
         });
-        const result = await entry.provider.send(normalized, model, {
+        const result = await invoke(entry, {
           ...options,
           onUpstreamAttempt: (event) => {
             if (event.phase === 'response') responseSeen = true;
@@ -845,19 +849,19 @@ class AccountPool {
         if (!this.isCurrentEntry(entry)) throw error;
         lastError = error;
         if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
-        if (errorCategory(error) === 'capacity') {
+        const category = errorCategory(error);
+        if (category === 'capacity') {
           this.rememberCapacity(model, error);
           throw error;
         }
         entry.lastFailureAt = new Date(this.now()).toISOString();
         entry.lastError = String(error.message || error);
-        const category = errorCategory(error);
         if (category === 'request') throw error;
         if (category === 'quota') {
           entry.modelCooldowns.set(model, this.now() + Math.max(retryDelay(error.details || error.message), Number(error.retryAfterMs) || 0));
           this.refreshAccountQuota(entry);
         }
-        else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'model_request' });
+        else if (category === 'account') this.observeAccountFailure(entry, error, { source: failureSource });
         else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
         if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
         if (isUnspecifiedResourceExhaustion(error.status, error.details)) {
@@ -870,90 +874,24 @@ class AccountPool {
     throw this.requestPoolError(model, lastError);
   }
 
+  async send(normalized, model, options = {}) {
+    return this.executeWithPool(model, options, {
+      invoke: (entry, opts) => entry.provider.send(normalized, model, opts),
+      fallbackInvoke: (opts) => this.fallbackProvider.send(normalized, model, opts),
+      allowPreferred: false,
+      includeFallbackAccountId: false,
+      failureSource: 'model_request'
+    });
+  }
+
   async generateImage(request, options = {}) {
-    const model = 'gemini-3.1-flash-image';
-    if (!this.hasManagedAccounts()) {
-      if (!this.canUseFallback()) throw this.noAccountError(model);
-      const localEntry = { account: { id: 'local-agy-session' }, healthState: 'available' };
-      if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
-      this.refreshSelectedAccount(localEntry, model);
-      const releaseFallback = await this.admission.acquire(options.signal);
-      try {
-        if (this.quotaProtected(localEntry, model)) throw quotaReserveError();
-        options.onAccountSelected?.({ accountId: 'local-agy-session', email: '', source: 'local-agy-session', attempt: 1 });
-        let responseSeen = false;
-        const result = await this.fallbackProvider.generateImage(request, {
-          ...options,
-          onUpstreamAttempt: (event) => {
-            if (event.phase === 'response') {
-              responseSeen = true;
-              this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: event.success, count: true });
-            }
-          }
-        });
-        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, success: true, count: true });
-        this.usageStore?.recordUpstream({ accountId: 'local-agy-session', model, usage: result.usage, success: true, count: false });
-        return { ...result, accountId: 'local-agy-session' };
-      } finally { releaseFallback(); }
-    }
-
-    await this.ensureModelCatalogs(options.signal);
-
-    const routingKey = options.routingKey || options.sessionId;
-    const attempted = new Set();
-    let lastError;
-    while (true) {
-      if (options.signal?.aborted) throw lastError || options.signal.reason || new Error('请求已取消');
-      let finishAffinity = () => {};
-      const lease = await this.admission.acquireAccount(() => {
-        const selected = this.selectAccount(model, routingKey, attempted, {
-          preferredAccountId: options.accountId, allowSticky: attempted.size === 0
-        });
-        if (selected) finishAffinity = this.reserveSession(routingKey, selected.account.id, model, options);
-        return selected;
-      }, { signal: options.signal, provider: 'cloudcode', hasCandidates: () => this.eligible(model, attempted).length > 0 });
-      const entry = lease?.entry;
-      if (!entry) break;
-      attempted.add(entry.account.id);
-      let responseSeen = false;
-      try {
-        options.onAccountSelected?.({ accountId: entry.account.id, email: entry.account.email, source: entry.account.source || 'managed-account', attempt: attempted.size });
-          const result = await entry.provider.generateImage(request, {
-            ...options,
-            onUpstreamAttempt: (event) => {
-              if (event.phase === 'response') responseSeen = true;
-              this.attemptReporter(entry.account.id, model)(event);
-            }
-          });
-        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: true, count: true });
-        this.usageStore?.recordUpstream({ accountId: entry.account.id, model, usage: result.usage, success: true, count: false });
-        if (this.isCurrentEntry(entry)) {
-          entry.lastSuccessAt = new Date(this.now()).toISOString();
-          entry.lastError = '';
-          finishAffinity(true);
-        }
-        return { ...result, accountId: entry.account.id };
-      } catch (error) {
-        if (options.signal?.aborted || error?.name === 'AbortError' || error?.code === 'request_aborted' || error?.code === 'request_timeout') {
-          throw error;
-        }
-        if (!this.isCurrentEntry(entry)) throw error;
-        lastError = error;
-        if (!responseSeen) this.usageStore?.recordUpstream({ accountId: entry.account.id, model, success: false, count: true });
-        entry.lastFailureAt = new Date(this.now()).toISOString();
-        entry.lastError = String(error.message || error);
-        const category = errorCategory(error);
-        if (category === 'request') throw error;
-        if (category === 'quota') {
-          entry.modelCooldowns.set(model, this.now() + Math.max(retryDelay(error.details || error.message), Number(error.retryAfterMs) || 0));
-          this.refreshAccountQuota(entry);
-        }
-        else if (category === 'account') this.observeAccountFailure(entry, error, { source: 'image_request' });
-        else entry.cooldownUntil = this.now() + TRANSIENT_COOLDOWN_MS;
-        if (routingKey && options.bindRouting !== false) this.deleteSession(routingKey, model, entry.account.id);
-      } finally { finishAffinity(false); lease.release(); }
-    }
-    throw this.requestPoolError(model, lastError);
+    return this.executeWithPool('gemini-3.1-flash-image', options, {
+      invoke: (entry, opts) => entry.provider.generateImage(request, opts),
+      fallbackInvoke: (opts) => this.fallbackProvider.generateImage(request, opts),
+      allowPreferred: true,
+      includeFallbackAccountId: true,
+      failureSource: 'image_request'
+    });
   }
 
   requestPoolError(model, error) {

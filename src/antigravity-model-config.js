@@ -131,6 +131,27 @@ function generationProfile(normalized = {}, model, metadata) {
 // Proven by actual forced-tool requests; do not infer a restriction for every
 // future model containing "claude" in its name.
 const NO_THINKING_WITH_FORCED_TOOLS = new Set(['claude-sonnet-4-6', 'claude-opus-4-6-thinking']);
+// Fresh official high/medium/low switch captures preserve previous text and
+// tool-call signatures in both directions. Do not infer compatibility from a
+// broad "gemini-*" prefix, a provider name or an unobserved model alias.
+const SHARED_HISTORY_GROUPS = Object.freeze([
+  Object.freeze(new Set(['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low']))
+]);
+const TOOL_SIGNATURE_MODEL_RE = /^gemini-(?:3(?:[.-]|$)|4-(?:hydrogen|carbon|neon)(?:[.-]|$)|4-argon(?:-(?:low|medium|high))?$)/i;
+
+function compatibleHistoryModels(source, target) {
+  if (typeof source !== 'string' || !source.length || typeof target !== 'string' || !target.length) return false;
+  return source === target || SHARED_HISTORY_GROUPS.some(group => group.has(source) && group.has(target));
+}
+
+function requiresToolSignature(model) {
+  return TOOL_SIGNATURE_MODEL_RE.test(String(model || ''));
+}
+
+function hasActiveThinking(thinkingConfig) {
+  return Boolean(thinkingConfig && (thinkingConfig.thinkingLevel || thinkingConfig.thinkingBudget > 0 || thinkingConfig.thinkingBudget === -1));
+}
+
 class ModelCapabilityError extends Error {
   constructor(model, { code = 'model_capability_conflict', message } = {}) {
     super(message || `模型 ${model} 的固定思考配置不支持强制工具调用。请使用自动工具选择，或选择支持该组合的模型。`);
@@ -147,4 +168,4 @@ function assertGenerationCompatibility(model, generationConfig, toolMode) {
 }
 
 module.exports = { CAPTURED_MODELS, thinkingLevel, modelProfile, resolveModelConfiguration, requestedReasoningLevel,
-  generationProfile, assertGenerationCompatibility, ModelCapabilityError };
+  generationProfile, assertGenerationCompatibility, compatibleHistoryModels, requiresToolSignature, hasActiveThinking, ModelCapabilityError };
