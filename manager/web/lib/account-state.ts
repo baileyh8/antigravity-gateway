@@ -11,11 +11,27 @@ export function matchesAccountStateFilter(state: string, filter: string): boolea
 export function accountStateLabel(state: string): string {
   if (state === 'available') return '可用';
   if (state === 'cooldown') return '冷却';
-  if (state === 'disabled') return '已禁用';
+  if (state === 'disabled') return '已暂停';
   if (state === 'verification_required') return '需核验';
   if (state === 'authentication_error') return '凭据失效';
   if (state === 'access_denied') return '访问受限';
   return '异常';
+}
+
+export function applyAccountEnabledPatch<T extends { id: string; enabled: boolean; state: string }>(
+  items: T[],
+  id: string,
+  enabled: boolean
+): T[] {
+  return items.map((item) => {
+    if (item.id !== id) return item;
+    const nextState = !enabled
+      ? 'disabled'
+      : item.state === 'disabled'
+        ? 'available'
+        : item.state;
+    return { ...item, enabled, state: nextState };
+  });
 }
 
 export function calculateCacheHitRate(inputTokens?: number | null, cachedTokens?: number | null): number | null {

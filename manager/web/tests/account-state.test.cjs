@@ -15,6 +15,7 @@ const {
   isErrorAccountState,
   matchesAccountStateFilter,
   accountStateLabel,
+  applyAccountEnabledPatch,
   calculateCacheHitRate
 } = exportsObject;
 
@@ -30,9 +31,24 @@ test('error account state helpers recognize all unhealthy gateway states', () =>
     assert.equal(matchesAccountStateFilter(healthyOrManaged, 'error'), false, healthyOrManaged);
     assert.equal(matchesAccountStateFilter(healthyOrManaged, healthyOrManaged), true, healthyOrManaged);
   }
+  assert.equal(accountStateLabel('disabled'), '已暂停');
   assert.equal(accountStateLabel('verification_required'), '需核验');
   assert.equal(accountStateLabel('authentication_error'), '凭据失效');
   assert.equal(accountStateLabel('access_denied'), '访问受限');
+});
+
+test('applyAccountEnabledPatch toggles enabled state without mutating unrelated accounts', () => {
+  const initial = [
+    { id: 'a1', enabled: true, state: 'available' },
+    { id: 'a2', enabled: false, state: 'disabled' }
+  ];
+  const paused = applyAccountEnabledPatch(initial, 'a1', false);
+  assert.deepEqual(paused[0], { id: 'a1', enabled: false, state: 'disabled' });
+  assert.deepEqual(paused[1], initial[1]);
+
+  const resumed = applyAccountEnabledPatch(paused, 'a2', true);
+  assert.deepEqual(resumed[1], { id: 'a2', enabled: true, state: 'available' });
+  assert.deepEqual(resumed[0], paused[0]);
 });
 
 test('calculateCacheHitRate uses Gemini inclusive inputTokens denominator', () => {

@@ -15,7 +15,7 @@
   - 请求日志补齐 `stream`、`bytes`、`upstreamModel`、`ttftMs` 及客户端中断 `499 / request_aborted`。
 - 管理后台（Manager Server & Web）安全与体验改进：
   - 后端拆分 6 组路由模块，改为异步 `scrypt` 校验与有界登录限流，修复生产默认 CORS 来源、审计日志串行写入与翻页扫描上限，复用网关共享日志读取器。
-  - 前端缓存 CSRF Token（403 自动刷新重试一次），修复异常账号筛选与看板缓存命中率公式，日志页引入 `AbortController` 竞态取消，移除已退役 Robin/Gemini App 模型筛选。
+  - 前端缓存 CSRF Token（403 自动刷新重试一次），账号列表新增一键启用/暂停开关（即时生效并记入审计），修复异常账号筛选与看板缓存命中率公式，日志页引入 `AbortController` 竞态取消，移除已退役 Robin/Gemini App 模型筛选。
 - 验证：959 项网关测试、9 项管理后台测试、Next.js 生产构建与 `npm pack --dry-run` 全部通过；本机与固定出口隔离真机实测通过 Anthropic/Responses 带工具流式、Hydrogen/Carbon/Neon/Argon 新旧会话与工具往返、小预算思考保底及 Schema 缓存 100% 命中（同时记录 `Carbon → Hydrogen Sonar` 上游偶现/稳定静默空流并补齐 502 防御）。线上 VPS 生产服务需另行部署，不以本发布等同已上线。
 
 English: Optimize the model-calling pipeline (bounded worker-pool schema compile LRU cache, live Anthropic/Responses streaming with tools, decoupled instruction envelope preserving multi-turn thought-signature history, readable MCP compatibility tool names with fenced `argumentsJson` recovery, Gemini 4 thinking small-budget floor, Responses plaintext compaction support, explicit 502 detection for silent empty upstream streams, and sanitized conversion diagnostics including Hydrogen XHigh `thinkingLevel: 100`). Harden gateway IP/auth boundaries, modularize core helpers and pool execution, and upgrade manager server/web security, route modularity, CSRF caching, and state filters. All 959 gateway tests, 9 manager tests, Next.js build, and controlled live upstream checks pass.
