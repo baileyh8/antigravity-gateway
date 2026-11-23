@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.1-bailey.48 - 2026-11-23
+
+- 模型调用链路与工具翻译优化：
+  - Schema Worker 池引入 2048 条有界编译 LRU 缓存，并将默认并发 worker 数提升至 2；单次请求内去重工具与视图 Schema 编译，零主线程 Ajv 约束保持不变。
+  - 直连模式放开 Anthropic `/v1/messages` 与 Responses `/v1/responses` 带工具请求的实时流式文本/思考推送；Anthropic 实时流在结束前按原序补发签名承载块与并行 `tool_use` 块，保持签名对应关系。
+  - 指令封装移至原生上下文/签名恢复之后，`nativeWrapped()` 识别 `<CLIENT_SYSTEM_INSTRUCTIONS>`，避免被二次套进 `<USER_REQUEST>` 与本地时间戳，动态系统提示更新不再打断会话 `historyPrefix` 签名链。
+  - MCP 兼容工具名新增可读前缀 `mcp_gateway_tool_<slug>_<hash16>[_json]`（总长 `<= 64` 字符，兼容旧纯哈希回执）；`mcp-json` 解码失败时支持安全剥离单层 Markdown JSON 代码围栏后继续执行严格 Schema 校验。
+  - 修复 `codexTemplate()` 仅匹配 `CODEX_167_CLIENT_PROFILE` 导致的在线死分支；集中管理模型签名与历史兼容配置，并将 `maxOutputTokens < 1024` 保底扩展到全部开启思考的 Gemini 4 模型；Responses 支持明文 `compaction` 摘要并明确拒绝加密 `encrypted_content`（400 `unsupported_encrypted_compaction`）。
+  - 新增上游静默空响应检测（无 `finishReason` / `promptBlockReason`、无正文/思考/工具调用时返回 `502 empty_upstream_response`，不冷却健康账号并写入脱敏日志与诊断）；脱敏 `conversion` 日志补充 `thinkingLevel: 100`、`identityProfile`、`envelopeApplied`、`toolViews`、`schemaCache`。
+- 网关安全、稳定性与模块化重构：
+  - 新增受信任代理感知的 `resolveClientIp()`（默认仅信任回环代理，取最右非信任跳），同步用于密钥白名单与请求日志；修复多密钥模式下 `OPTIONS` 预检、公开文件直链与非回环绑定校验，修复 `protocol` TDZ 与 `GET /v1/models` 缓存及 `/_admin/v1/models?force=1`。
+  - 抽取 `src/client-ip.js`、`src/multipart.js`、`src/sse-emitters.js`、`src/client-catalogs.js`，合并 `AccountPool` 的 `send()` / `generateImage()` 共享调度路径，优化会话剪枝增量字节估算，清理零引用旧模块 `gemini-account-store.js` 与 `server-search-protocol.js`。
+  - 请求日志补齐 `stream`、`bytes`、`upstreamModel`、`ttftMs` 及客户端中断 `499 / request_aborted`。
+- 管理后台（Manager Server & Web）安全与体验改进：
+  - 后端拆分 6 组路由模块，改为异步 `scrypt` 校验与有界登录限流，修复生产默认 CORS 来源、审计日志串行写入与翻页扫描上限，复用网关共享日志读取器。
+  - 前端缓存 CSRF Token（403 自动刷新重试一次），修复异常账号筛选与看板缓存命中率公式，日志页引入 `AbortController` 竞态取消，移除已退役 Robin/Gemini App 模型筛选。
+- 验证：959 项网关测试、9 项管理后台测试、Next.js 生产构建与 `npm pack --dry-run` 全部通过；本机与固定出口隔离真机实测通过 Anthropic/Responses 带工具流式、Hydrogen/Carbon/Neon/Argon 新旧会话与工具往返、小预算思考保底及 Schema 缓存 100% 命中（同时记录 `Carbon → Hydrogen Sonar` 上游偶现/稳定静默空流并补齐 502 防御）。线上 VPS 生产服务需另行部署，不以本发布等同已上线。
+
+English: Optimize the model-calling pipeline (bounded worker-pool schema compile LRU cache, live Anthropic/Responses streaming with tools, decoupled instruction envelope preserving multi-turn thought-signature history, readable MCP compatibility tool names with fenced `argumentsJson` recovery, Gemini 4 thinking small-budget floor, Responses plaintext compaction support, explicit 502 detection for silent empty upstream streams, and sanitized conversion diagnostics including Hydrogen XHigh `thinkingLevel: 100`). Harden gateway IP/auth boundaries, modularize core helpers and pool execution, and upgrade manager server/web security, route modularity, CSRF caching, and state filters. All 959 gateway tests, 9 manager tests, Next.js build, and controlled live upstream checks pass.
+
 ## 1.7.1-bailey.47
 
 - 新增 Neon 通用指令封装开关，按归一化 Responses/Anthropic/Chat 的 system/developer 来源识别，不以客户端 UA、版本或固定框架摘要作为启用门槛。完整保留指令、安全权限、工具契约与生成参数。
