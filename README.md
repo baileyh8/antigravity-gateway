@@ -611,6 +611,7 @@ tail -f ~/.antigravity-gateway/logs/auth-diagnostics.jsonl
 | `ANTIGRAVITY_CLI_PATH` | 自动查找 `agy` | 指定 agy 路径 |
 | `ANTIGRAVITY_CLI_VERSION` | `1.5.9` | 客户端身份串中的 agy CLI 版本；需与 changelist 成对 |
 | `ANTIGRAVITY_CLI_CHANGELIST` | `1021519450` | 同一官方构建的 changelist（`cl`）；升级版本时一并更新 |
+| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | 设为 `1` 时为 Neon 按协议角色封装最终客户端指令，不依赖客户端版本；保留安全权限与签名，设为 `0` 回退原封装 |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | 按参数形状识别未抓包客户端的工具声明；设为 `off` 恢复严格透传 |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | 空 | 设为 `on` 时每请求输出 `profile=... mapped=N/M` 日志 |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | 空 | 设为 `on` 时在上一项基础上输出逐对映射明细 |
@@ -1119,6 +1120,7 @@ Bailey Edition includes progress narration, streaming, usage and image-delivery 
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
+| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | Set to `1` for Neon instruction envelopes based on normalized protocol roles, independent of client versions; preserves safety rules and tool signatures. `0` restores existing envelopes. |
 | `ANTIGRAVITY_GATEWAY_REQUEST_MEMORY_BYTES` | 402653184 (384 MiB) | Shared estimated HTTP body budget; not an RSS limit |
 | `ANTIGRAVITY_GATEWAY_MEDIA_CONCURRENCY` | 4 | Shared pool for image/video/file input turns and file uploads |
 | `ANTIGRAVITY_GATEWAY_IMAGE_CONCURRENCY` | 4 | Independent pool for image generation/edit requests and native image tool calls |
