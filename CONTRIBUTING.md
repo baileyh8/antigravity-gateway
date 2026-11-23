@@ -5,6 +5,7 @@
 ## 提交变更
 
 - 从本仓库最新维护代码创建 `codex/<topic>` 分支，PR 目标为本仓库 `main`。不要自动向原项目创建 PR。
+- 适配第三方客户端（如 `pi`、`openclaw`、`opencode` 等）请先参考 [第三方客户端适配指南](docs/client-adaptation-guide.md)。
 - 说明问题、行为变化、验证结果和已知限制。接口、环境变量、安装/升级、默认值变化同时更新中英文 README；用户可见变更进入 CHANGELOG。
 - 发布代码版本时同步 `package.json` 与 `package-lock.json` 的版本；纯文档更正不必升级运行版本。版本标签与 Release 只能指向已经通过验证的提交，不能将仅完成的本地测试写成真实部署验收。
 - 保留原作者版权、许可证和历史归属。不要提交账号、Token、订阅 URL、私有部署地址、个人运维台账或真实用量明细。样例使用占位域名和虚构凭据。
@@ -28,4 +29,4 @@ npm pack --dry-run
 
 This is the independently maintained Bailey distribution. Target contributions at this repository’s `main`; the current stability work is on `codex/bailey-stability`. Review upstream changes before integrating them and preserve attribution and the MIT license.
 
-Keep both README languages, user-visible changelog entries and package versions consistent. Describe behavior, validation and limits in each PR. Use isolated test configuration and the commands above; CI covers Linux on Node 20 and 24 without production secrets or live model calls. Deployment acceptance is separate from unit tests. Never commit credentials or private operational records, and retain rollback evidence for authorized deployments.
+Keep both README languages, user-visible changelog entries and package versions consistent. For adapting third-party clients (`pi`, `openclaw`, `opencode`, etc.), see [Client Adaptation Guide](docs/client-adaptation-guide.md). Describe behavior, validation and limits in each PR. Use isolated test configuration and the commands above; CI covers Linux on Node 20 and 24 without production secrets or live model calls. Deployment acceptance is separate from unit tests. Never commit credentials or private operational records, and retain rollback evidence for authorized deployments.

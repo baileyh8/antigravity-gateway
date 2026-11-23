@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/baileyh8/antigravity-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/baileyh8/antigravity-gateway/actions/workflows/ci.yml)
 
-维护仓库 / Maintained repository: [baileyh8/antigravity-gateway](https://github.com/baileyh8/antigravity-gateway) · [更新记录 / Changelog](CHANGELOG.md) · [贡献与维护 / Contributing](CONTRIBUTING.md)
+维护仓库 / Maintained repository: [baileyh8/antigravity-gateway](https://github.com/baileyh8/antigravity-gateway) · [更新记录 / Changelog](CHANGELOG.md) · [贡献与维护 / Contributing](CONTRIBUTING.md) · [客户端适配指南 / Client Adaptation](docs/client-adaptation-guide.md)
 
 > **特别感谢上游作者 LeeFeee 和所有贡献者。** 本项目基于 [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway) 继续维护，是原项目的分支方向；代理协议、原始网关能力和历史贡献来自上游。本分支在此基础上发展“代理基座 + 独立管理后台”的架构，补充账号出口隔离、资源控制和运维功能。感谢上游长期开放源码，为这些工作提供基础。保留上游历史、原作者版权与 [MIT 许可](LICENSE)。
 >
