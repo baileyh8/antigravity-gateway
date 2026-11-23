@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1-bailey.47
+
+- 新增 Neon 通用指令封装开关，按归一化 Responses/Anthropic/Chat 的 system/developer 来源识别，不以客户端 UA、版本或固定框架摘要作为启用门槛。完整保留指令、安全权限、工具契约与生成参数。
+- 封装读取工具及结构化输出适配后的最终客户端指令，避免适配前后文本不同而跳过封装；既有工具映射权限独立保持。
+- 补齐 Neon 四个档位的旧会话无签名历史兼容标记，真实签名优先保留，不从调用 ID 或参数构造签名。
+- 开关 `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE=1` 仅扩大 Neon 的通用封装，默认关闭，其他模型继续既有处理。未改变账号出口、额度保护、会话调度或并发；不将通用 429 误判为已消除的外部容量限制。
+
 ## 1.7.1-bailey.46
 
 - 补齐 Claude Desktop 标题及分支名辅助调用的短 system 模板，支持 SDK 多段文本及 Magpie 合并后相邻的身份句/任务指令。

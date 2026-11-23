@@ -216,7 +216,7 @@ function normalizedMessageParts(message) {
 }
 
 function ensureToolSignatures(contents, model) {
-  if (!/^gemini-(?:3(?:[.-]|$)|4-(?:hydrogen|carbon)(?:[.-]|$)|4-argon(?:-(?:low|medium|high))?$)/i.test(String(model || ''))) return contents;
+  if (!/^gemini-(?:3(?:[.-]|$)|4-(?:hydrogen|carbon|neon)(?:[.-]|$)|4-argon(?:-(?:low|medium|high))?$)/i.test(String(model || ''))) return contents;
   for (const content of contents) {
     const firstCall = content.parts?.find(p => p.functionCall);
     if (firstCall) firstCall.thoughtSignature = readThoughtSignature(firstCall) || THOUGHT_SIGNATURE_SENTINEL;
@@ -372,8 +372,12 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
       if (name) request.toolConfig.functionCallingConfig.allowedFunctionNames = [name];
     }
   }
-  native.clientInstructionEnvelope = envelopeClientInstructions(request, identity.normalized.system,
-    capturedInstructionProfile(identity.normalized) || identity.metadata.profile, model);
+  // Envelope the final client instructions after tool/structured adapters.
+  // Matching the pre-adapter text can silently miss rewritten tool references.
+  const envelopeSource = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE === '1'
+    && /^gemini-4-neon(?:-|$)/.test(model) ? normalized : identity.normalized;
+  native.clientInstructionEnvelope = envelopeClientInstructions(request, envelopeSource.system,
+    capturedInstructionProfile(identity.normalized) || identity.metadata.profile, model, envelopeSource);
   const state = native.state || newState('', '');
   native.context = yield prepareContext(state, request.contents, model, { metadata: native.modelInfo, now: native.now, checkpoint: native.checkpoint, compactionProfile: native.compactionProfile, clientProfile: native.clientProfile, imageStore: native.imageStore,
     restoreStreamRecovery: native.restoreStreamRecovery, toolAdapter: native.toolAdapter });

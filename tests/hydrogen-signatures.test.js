@@ -9,7 +9,7 @@ const { buildDirectRequest, DirectAntigravityProvider } = require('../src/direct
 const { AgySessionStore } = require('../src/agy-session-state');
 const { createResponsesTextEmitter, createChatTextEmitter, emitResponsesStream, emitChatStream } = require('../antigravity-gateway');
 const signature = Buffer.from('synthetic upstream signature + / =').toString('base64');
-const models = ['low', 'medium', 'high', 'xhigh'].map(tier => 'gemini-4-hydrogen-' + tier);
+const models = ['hydrogen', 'neon'].flatMap(family => ['low', 'medium', 'high', 'xhigh'].map(tier => 'gemini-4-' + family + '-' + tier));
 const args = { command: 'literal $() ` text', timeout: 17 };
 const tool = { type: 'function', name: 'execute', description: 'Execute with the client time limit.', parameters: { type: 'object', properties: { command: { type: 'string' }, timeout: { type: 'number' } }, required: ['command'], additionalProperties: false } };
 const user = { role: 'user', content: 'Run the synthetic command.' };
