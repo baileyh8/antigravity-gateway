@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 
+const { ipAllowed, resolveClientIp } = require('./client-ip');
 const keyContext = require('./key-context');
 const { GatewayError } = require('./protocol');
 
@@ -15,34 +16,13 @@ function invalid(message, status = 400, code = 'invalid_key_config') {
   return Object.assign(new Error(message), { status, code });
 }
 
-function normalizedAddress(address) {
-  const value = String(address || '').trim().toLowerCase();
-  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  return mapped ? mapped[1] : value;
-}
-
-function ipAllowed(entries, address) {
-  if (!Array.isArray(entries) || !entries.length) return true;
-  const value = normalizedAddress(address);
-  const family = net.isIP(value);
-  if (!family) return false;
-  for (const entry of entries) {
-    const [ip, prefixSource] = String(entry).split('/');
-    const ipFamily = net.isIP(ip);
-    if (!ipFamily) continue;
-    if (prefixSource === undefined) {
-      if (normalizedAddress(ip) === value) return true;
-      continue;
-    }
-    const prefix = Number(prefixSource);
-    if (!Number.isInteger(prefix) || prefix < 0 || prefix > (ipFamily === 6 ? 128 : 32)) continue;
-    try {
-      const block = new net.BlockList();
-      block.addSubnet(ip, prefix, ipFamily === 6 ? 'ipv6' : 'ipv4');
-      if (block.check(value, family === 6 ? 'ipv6' : 'ipv4')) return true;
-    } catch { /* ignore an invalid stored entry */ }
-  }
-  return false;
+function validateExpiresAt(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) throw invalid('过期时间格式无效。');
+  return new Date(parsed).toISOString();
 }
 
 function validateIpList(value) {
@@ -123,6 +103,7 @@ class KeyStore {
     this.rate = new Map();
     this.dirty = false;
     this.state = this.load();
+    this.byId = new Map(this.state.keys.map((key) => [key.id, key]));
     this.timer = setInterval(() => this.flush(), SAVE_INTERVAL_MS);
     this.timer.unref?.();
   }
@@ -157,7 +138,15 @@ class KeyStore {
     }
   }
 
+  pruneRate() {
+    const currentMinute = Math.floor(this.now() / 60_000);
+    for (const [id, entry] of this.rate) {
+      if (!entry || entry.minute < currentMinute) this.rate.delete(id);
+    }
+  }
+
   flush() {
+    this.pruneRate();
     if (!this.dirty) return;
     try { this.save(); } catch (error) { console.error('[Antigravity Gateway] api-keys.json 保存失败:', error.message); }
   }
@@ -215,7 +204,7 @@ class KeyStore {
     const provided = String(bearer || req.headers['x-api-key'] || '');
     const parsed = /^agy_sk_([a-f0-9]{8})_(.+)$/.exec(provided);
     if (!parsed) return { error: { status: 401, code: 'invalid_api_key', message: 'API key 无效。' } };
-    const key = this.state.keys.find((item) => item.id === parsed[1]);
+    const key = this.byId.get(parsed[1]);
     if (!key) return { error: { status: 401, code: 'invalid_api_key', message: 'API key 无效。' } };
     const expected = Buffer.from(crypto.createHmac('sha256', this.pepper).update(provided).digest('hex'));
     const actual = Buffer.from(key.hash);
@@ -226,8 +215,7 @@ class KeyStore {
     if (key.expiresAt && Date.parse(key.expiresAt) <= this.now()) {
       return { error: { status: 403, code: 'key_expired', message: '该密钥已过期。' } };
     }
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    const address = forwarded || req.socket?.remoteAddress || '';
+    const address = resolveClientIp(req);
     if (!ipAllowed(key.ipAllowlist, address)) {
       return { error: { status: 403, code: 'ip_not_allowed', message: '来源 IP 不在该密钥的白名单内。' } };
     }
@@ -263,7 +251,7 @@ class KeyStore {
   recordRequest() {
     const context = keyContext.current();
     if (!context || context.legacy) return;
-    const key = this.state.keys.find((item) => item.id === context.id);
+    const key = this.byId.get(context.id);
     if (!key) return;
     key.usage.requests += 1;
     const day = dayKey(this.now());
@@ -275,7 +263,7 @@ class KeyStore {
   recordUsage({ usage = {}, model = '' } = {}) {
     const context = keyContext.current();
     if (!context || context.legacy) return;
-    const key = this.state.keys.find((item) => item.id === context.id);
+    const key = this.byId.get(context.id);
     if (!key) return;
     const tokens = Math.max(0, Number(usage.total_tokens) || 0);
     if (!tokens) return;
@@ -292,7 +280,7 @@ class KeyStore {
   }
 
   recordLatency(entry) {
-    const key = this.state.keys.find(item => item.id === entry.keyId);
+    const key = this.byId.get(entry.keyId);
     if (!key) return;
     const bucket = (key.usage.byDay[dayKey(this.now())] ||= { tokens: 0, requests: 0 });
     bucket.latencySamples = (Number(bucket.latencySamples) || 0) + 1;
@@ -306,6 +294,7 @@ class KeyStore {
     if (this.state.keys.length >= MAX_KEYS) throw invalid(`最多 ${MAX_KEYS} 个密钥。`, 409, 'key_limit_reached');
     const cleanName = String(name || '').trim();
     if (!cleanName || cleanName.length > 64) throw invalid('密钥名称必须是 1-64 个字符。');
+    const normalizedExpiresAt = validateExpiresAt(expiresAt);
     const id = crypto.randomBytes(4).toString('hex');
     const secret = `agy_sk_${id}_${crypto.randomBytes(24).toString('base64url')}`;
     const key = normalizedKey({
@@ -316,7 +305,7 @@ class KeyStore {
       enabled: true,
       createdAt: new Date(this.now()).toISOString(),
       createdBy: actor,
-      expiresAt,
+      expiresAt: normalizedExpiresAt,
       models: validateModels(models),
       ipAllowlist: validateIpList(ipAllowlist),
       quota: { tokens: quotaValue(quota.tokens, 'Token 配额'), requests: quotaValue(quota.requests, '请求配额') },
@@ -325,13 +314,14 @@ class KeyStore {
       usage: usageSeed()
     });
     this.state.keys.push(key);
+    this.byId.set(id, key);
     this.dirty = true;
     this.save();
     return { key: this.list().find((item) => item.id === id), secret };
   }
 
   update(id, patch = {}) {
-    const key = this.state.keys.find((item) => item.id === id);
+    const key = this.byId.get(id);
     if (!key) throw invalid('密钥不存在。', 404, 'key_not_found');
     if (patch.name !== undefined) {
       const name = String(patch.name || '').trim();
@@ -339,7 +329,7 @@ class KeyStore {
       key.name = name;
     }
     if (patch.enabled !== undefined) key.enabled = Boolean(patch.enabled);
-    if (patch.expiresAt !== undefined) key.expiresAt = patch.expiresAt ? String(patch.expiresAt) : null;
+    if (patch.expiresAt !== undefined) key.expiresAt = validateExpiresAt(patch.expiresAt);
     if (patch.models !== undefined) key.models = validateModels(patch.models);
     if (patch.ipAllowlist !== undefined) key.ipAllowlist = validateIpList(patch.ipAllowlist);
     if (patch.quota !== undefined) {
@@ -357,7 +347,7 @@ class KeyStore {
 
   roll(id) {
     if (!this.multiKey) throw invalid('多密钥模式未启用。', 409, 'multi_key_disabled');
-    const key = this.state.keys.find((item) => item.id === id);
+    const key = this.byId.get(id);
     if (!key) throw invalid('密钥不存在。', 404, 'key_not_found');
     const secret = `agy_sk_${id}_${crypto.randomBytes(24).toString('base64url')}`;
     key.hash = crypto.createHmac('sha256', this.pepper).update(secret).digest('hex');
@@ -369,7 +359,7 @@ class KeyStore {
   }
 
   resetUsage(id) {
-    const key = this.state.keys.find((item) => item.id === id);
+    const key = this.byId.get(id);
     if (!key) throw invalid('密钥不存在。', 404, 'key_not_found');
     key.usage = usageSeed();
     this.dirty = true;
@@ -381,6 +371,8 @@ class KeyStore {
     const index = this.state.keys.findIndex((item) => item.id === id);
     if (index < 0) throw invalid('密钥不存在。', 404, 'key_not_found');
     const [removed] = this.state.keys.splice(index, 1);
+    this.byId.delete(id);
+    this.rate.delete(id);
     this.dirty = true;
     this.save();
     return { id: removed.id, name: removed.name, deleted: true };
