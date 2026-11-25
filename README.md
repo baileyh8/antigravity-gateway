@@ -8,7 +8,7 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This repository is an independently maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed around a separated proxy core and standalone management service. Original protocol work, project history, copyright attribution, and the [MIT license](LICENSE) are preserved.
 
-**当前版本：`1.7.1-bailey.48`** · 代理基座与独立后台（Proxy core + separate admin）
+**当前版本：`1.7.1-bailey.49`** · 代理基座与独立后台（Proxy core + separate admin）
 
 - **代理基座（根目录）**：承担协议转换、直连传输、账号凭据、API 密钥、出口代理、额度调度与请求日志。npm 安装包仅包含基座。
 - **独立管理后台（`manager/`）**：提供静态前端 `/admin/` 和独立 Node 管理 API，通过回环 `/_admin/v1` 访问基座，涵盖看板、账号启停与额度、代理绑定、用量、日志、模型、密钥和设置。安装部署见 [manager/README.md](manager/README.md)。
@@ -127,6 +127,7 @@ antigravity-gateway service uninstall
 ```bash
 antigravity-gateway stats                              # 在终端输出本地 Token 用量汇总（不启动 Web 服务）
 antigravity-gateway --models                           # 查询当前可用模型列表
+antigravity-gateway --diagnose-request sample.json     # 离线干跑诊断客户端请求兼容情况（不调用上游）
 antigravity-gateway --agy-path "/absolute/path/to/agy" # 指定非默认位置的 agy 路径
 ```
 
@@ -381,7 +382,7 @@ python3 skills/antigravity-video-understanding/scripts/analyze_video.py \
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | 原生生图模型 |
 | `ANTIGRAVITY_TOOL_CONTRACT` | 新合同 | 设为 `legacy` 短期回退历史工具格式 |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | 设为 `off` 关闭未抓包客户端工具语义推导，恢复严格透传 |
-| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | 设为 `1` 为 Neon 启用不依赖客户端版本的通用指令封装 |
+| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | 按协议角色做通用指令封装：`0`/`off` 关闭，`1`/`neon` 仅 Neon，`gemini4` 覆盖全部 Gemini 4，`all` 覆盖全部 Gemini |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | 关闭 | 设为 `1` 在带工具请求的系统指令末尾追加按阶段汇报进度约定（不影响 Auto Mode 与结构化输出） |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | 空 | 设为 `on` 按请求记录 `profile=... mapped=N/M` |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | 空 | 设为 `on` 输出逐工具映射明细 |
@@ -469,7 +470,7 @@ The default `direct` transport talks directly to Cloud Code without the `agy` Ag
 
 > Unofficial project intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional rules, and terms of service always apply. See [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases) for full version history.
 
-Key capabilities in `1.7.1-bailey.48`:
+Key capabilities in `1.7.1-bailey.49`:
 
 - **Full protocol coverage with live streaming**: Exposes Anthropic Messages (`/v1/messages`), OpenAI Responses (`/v1/responses`), and Chat Completions (`/v1/chat/completions`). In direct mode, Anthropic and Responses stream text and thinking deltas live even when tools are declared, emitting thought-signature carriers and tool calls in order before completion.
 - **Native Go transport aligned with agy CLI 1.5.9**: Bundles verified native helper binaries for 6 OS/arch targets (no Go toolchain required for normal installs; `npm run build:native` requires Go 1.27.2). Model RPCs use HTTP/1.1 while OAuth refreshes use HTTP/2, with isolated helper reuse per account proxy. See [docs/agy-1.5.9-compatibility.md](docs/agy-1.5.9-compatibility.md).
@@ -536,6 +537,7 @@ Other CLI helpers:
 ```bash
 antigravity-gateway stats                              # Print local token usage totals in terminal
 antigravity-gateway --models                           # List discovered models
+antigravity-gateway --diagnose-request sample.json     # Offline dry-run client compatibility check
 antigravity-gateway --agy-path "/absolute/path/to/agy" # Custom agy binary path
 ```
 
@@ -715,7 +717,7 @@ Avoid setting `ANTIGRAVITY_ACCESS_TOKEN`, `ANTIGRAVITY_REFRESH_TOKEN`, `ANTIGRAV
 | `ANTIGRAVITY_IMAGE_MODEL` | `gemini-3.1-flash-image` | Native Antigravity image model |
 | `ANTIGRAVITY_TOOL_CONTRACT` | new contract | Set `legacy` to temporarily restore legacy tool formatting |
 | `ANTIGRAVITY_TOOL_SEMANTICS` | `on` | Set `off` to disable semantic tool inference for uncaptured clients |
-| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | `1` enables version-independent semantic envelopes for Neon |
+| `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` | `0` | Protocol-role semantic instruction envelope: `0`/`off`, `1`/`neon`, `gemini4` (all Gemini 4), or `all` (all Gemini) |
 | `ANTIGRAVITY_GATEWAY_TOOL_NARRATION` | off | `1` appends phase-based progress guidance on direct tool requests (skips Auto Mode & structured output) |
 | `ANTIGRAVITY_TOOL_MAPPING_TRACE` | empty | `on` logs `profile=... mapped=N/M` per request |
 | `ANTIGRAVITY_TOOL_MAPPING_DEBUG` | empty | `on` adds per-tool mapping pairs to trace output |
