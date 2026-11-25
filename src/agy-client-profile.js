@@ -30,11 +30,13 @@ function capturedClaude284Client(req, normalized) {
 }
 
 function capturedClaudeGenericClient(req, normalized) {
-  if (normalized.protocol !== 'anthropic') return '';
+  // Relayed Claude Code / Agent SDK requests (e.g. through Magpie) arrive as
+  // OpenAI Chat Completions and without x-claude-code-session-id while keeping
+  // the claude-cli/<semver> User-Agent. Tool mapping still validates every
+  // declaration's exact shape in supported().
+  if (!['anthropic', 'chat'].includes(normalized.protocol)) return '';
   const ua = req?.headers?.['user-agent'] || '';
   if (!CLAUDE_CLI_SEMVER.test(ua)) return '';
-  const sid = req?.headers?.['x-claude-code-session-id'];
-  if (typeof sid !== 'string' || !sid.trim()) return '';
   return CLAUDE_GENERIC_CLIENT_PROFILE;
 }
 

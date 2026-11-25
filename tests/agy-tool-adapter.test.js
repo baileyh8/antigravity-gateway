@@ -258,7 +258,7 @@ test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read wit
   for (const version of ['2.1.284_external_sdk-cli_', '2.1.304evil']) {
     assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/' + version } }, normalized), '');
   }
-  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': ' ' } }, normalized), '');
+  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': ' ' } }, normalized), CLAUDE_GENERIC_CLIENT_PROFILE);
   assert.equal(capturedNativeClient(req, { ...normalized, protocol: 'responses' }), '');
 
   // 3. Cloud Code 路径适配验证
@@ -348,7 +348,7 @@ test('Claude Code 2.1.284 translates all four tools Edit, Bash, Write, Read alig
   assert.equal(detectNativeCompaction(req, normalized), '', '284 不激活 285 自动压缩');
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283' } }, normalized), CLAUDE_GENERIC_CLIENT_PROFILE);
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283bad' } }, normalized), '');
-  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': '' } }, normalized), '');
+  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': '' } }, normalized), CLAUDE_GENERIC_CLIENT_PROFILE);
   assert.equal(capturedNativeClient(req, { ...normalized, protocol: 'responses' }), '');
 
   // 3. Cloud Code 路径适配验证：全部四项工具均成功转译

@@ -70,6 +70,18 @@ test('future Claude Code semver uses generic profile while preserving Read allow
   assert.ok(names.includes('run_command'));
   assert.ok(names.includes('Read'), 'Read with allow_large stays untouched');
   assert.ok(!names.includes('view_file'));
+
+  // Magpie-relayed Claude Agent SDK arrives as OpenAI Chat without x-claude-code-session-id
+  const chatRelayed = normalizeChat({
+    model: 'gemini-4-hydrogen-high',
+    messages: [{ role: 'user', content: 'hi' }],
+    tools: tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }))
+  });
+  const relayedReq = { headers: { 'user-agent': 'claude-cli/2.1.327 (external, t3-code, agent-sdk/0.3.321)' } };
+  assert.equal(capturedNativeClient(relayedReq, chatRelayed), CLAUDE_GENERIC_CLIENT_PROFILE);
+  const relayedAdapter = prepareToolAdapter(chatRelayed, { clientProfile: CLAUDE_GENERIC_CLIENT_PROFILE });
+  assert.ok(relayedAdapter.normalized.tools.some(t => t.name === 'run_command'));
+  assert.ok(relayedAdapter.normalized.tools.some(t => t.name === 'Read'));
 });
 
 test('Claude Desktop billing header accepts future semvers when framework hash matches', () => {

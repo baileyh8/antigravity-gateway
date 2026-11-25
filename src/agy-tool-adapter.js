@@ -129,7 +129,7 @@ const profiles = {
   [CLAUDE_COMPACTION_PROFILE]: { protocol: 'anthropic', rules: claudeRules },
   [CLAUDE_284_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claudeRules },
   [CLAUDE_304_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claude304Rules },
-  [CLAUDE_GENERIC_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claudeGenericRules },
+  [CLAUDE_GENERIC_CLIENT_PROFILE]: { protocols: ['anthropic', 'chat'], rules: claudeGenericRules },
   [CODEX_CLIENT_PROFILE]: { protocol: 'responses', rules: codexRules },
   [HERMES_CLIENT_PROFILE]: { protocol: 'chat', rules: hermesRules },
   [DSH_CLIENT_PROFILE]: { protocol: 'chat', rules: dshRules }
@@ -342,7 +342,10 @@ function providerCall(call, tool, rule, target, validate = validateSchema) {
 function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false, target = 'cloudcode', validator = validateSchema } = {}) {
   const names = new Set((normalized.tools || []).map(t => t.name));
   const profile = profiles[clientProfile];
-  const recognized = !checkpoint && !normalized.autoMode && profile && normalized.protocol === profile.protocol
+  const protocolMatch = profile && (Array.isArray(profile.protocols)
+    ? profile.protocols.includes(normalized.protocol)
+    : normalized.protocol === profile.protocol);
+  const recognized = !checkpoint && !normalized.autoMode && protocolMatch
     && (target !== 'robin' || (![CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE].includes(clientProfile)));
   const candidates = [];
   if (recognized) {
