@@ -77,7 +77,11 @@ test('Hermes named choice, native-name collision and other model paths retain ex
   assert.deepEqual(wire.request.toolConfig.functionCallingConfig.allowedFunctionNames, ['view_file']);assert.doesNotMatch(JSON.stringify(wire), /hermes-0\.21\.7-captured|clientProfile/);
   n.tools.push({ name: 'view_file', schema: { type: 'object' }, description: 'User tool' });
   const a = prepareToolAdapter(n, profile);assert.ok(a.normalized.tools.some(t => t.name === 'read_file'));assert.match(a.normalized.system, /Use read_file\/search_files/);
-  assert.equal(prepareToolAdapter(n, { ...profile, checkpoint: true }).normalized, n);assert.equal(prepareToolAdapter(n).normalized, n);
+  assert.equal(prepareToolAdapter(n, { ...profile, checkpoint: true }).normalized, n);
+  const withoutProfile = prepareToolAdapter(n);
+  assert.equal(withoutProfile.profileName, '');
+  assert.equal(withoutProfile.normalized.system, n.system);
+  assert.ok(withoutProfile.normalized.tools.some(t => t.name === 'read_file'));
 });
 
 test('Hermes Chat tool calls, results and signatures survive persistence and restored agent history', async t => {

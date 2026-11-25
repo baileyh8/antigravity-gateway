@@ -8,6 +8,8 @@ const CODEX_CLIENT_PROFILE = 'codex-exec-0.159.2';
 const CODEX_167_CLIENT_PROFILE = 'codex-exec-0.167.2';
 const CLAUDE_304_CLIENT_PROFILE = 'claude-code-2.1.304';
 const CLAUDE_284_CLIENT_PROFILE = 'claude-code-2.1.284';
+const CLAUDE_GENERIC_CLIENT_PROFILE = 'claude-code-generic';
+const CLAUDE_CLI_SEMVER = /^claude-cli\/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)(?:\s|\(|$)/;
 
 function capturedClaude304Client(req, normalized) {
   if (normalized.protocol !== 'anthropic') return '';
@@ -27,6 +29,15 @@ function capturedClaude284Client(req, normalized) {
   return CLAUDE_284_CLIENT_PROFILE;
 }
 
+function capturedClaudeGenericClient(req, normalized) {
+  if (normalized.protocol !== 'anthropic') return '';
+  const ua = req?.headers?.['user-agent'] || '';
+  if (!CLAUDE_CLI_SEMVER.test(ua)) return '';
+  const sid = req?.headers?.['x-claude-code-session-id'];
+  if (typeof sid !== 'string' || !sid.trim()) return '';
+  return CLAUDE_GENERIC_CLIENT_PROFILE;
+}
+
 // This is a versioned capability profile, not authentication or permission.
 // Unknown clients retain their submitted declarations and existing routing.
 function capturedNativeClient(req, normalized) {
@@ -36,6 +47,8 @@ function capturedNativeClient(req, normalized) {
   if (claude284) return claude284;
   const claude = capturedClaudeClient(req, normalized);
   if (claude) return claude;
+  const claudeGeneric = capturedClaudeGenericClient(req, normalized);
+  if (claudeGeneric) return claudeGeneric;
   const hermes = capturedHermesClient(normalized);
   if (hermes) return hermes;
   const dsh = capturedDshClient(req, normalized);
@@ -65,4 +78,4 @@ function capturedCodexClient(req, normalized) {
   return CODEX_ORIGINATORS.has(String(req?.headers?.originator || '').trim());
 }
 
-module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CODEX_ORIGINATORS, CODEX_167_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE };
+module.exports = { capturedNativeClient, capturedCodexClient, CODEX_CLIENT_PROFILE, CODEX_ORIGINATORS, CODEX_167_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE };

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.1-bailey.49 - 2026-11-25
+
+- 客户端兼容架构补强：
+  - `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` 扩展为四档分级策略：`0`/`off` 关闭、`1`/`neon` 仅 Neon（保持旧配置兼容）、`gemini4` 覆盖全部 Gemini 4（Neon / Hydrogen / Sonar / Carbon / Argon）、`all` 覆盖全部 Gemini，按协议角色隔离客户端指令而不依赖版本或模板指纹。
+  - 解除 Claude Code 单版本号锁死：新增 `claude-code-generic` 通用 profile 匹配合法 `claude-cli/<semver>` + `x-claude-code-session-id`（拒绝畸形 UA、不误触 `2.1.285` 自动压缩），工具映射按 Schema 精确形状判定（保留新版 `Read` 的 `allow_large`，继续翻译 `Write` / `Edit` / `Bash`）；`x-anthropic-billing-header` 的 `cc_version` 同步放宽为任意 semver（仍要求完整框架哈希）。
+  - 解除 DSH 对原始 `User-Agent` 的强依赖：经 Magpie 等本地代理改写 UA（如 `Bun/1.4.4`）后，命中精确系统提示词段落与精确工具声明仍正常识别。
+  - 放宽通用工具语义推导（`src/agy-tool-semantics.js`）三道门槛：接受省略 `additionalProperties`（仍拒 `true` 与根级组合器）、支持 Zod/Pydantic 可空可选字段（`type: [T, 'null']` 与 `anyOf`/`oneOf` 二选一 `null`，原生声明规整为标量）、新增 `endLine`（`end_line`/`line_end`/`to_line`）与 `StartLine`/`EndLine` 1:1 映射及高频无损别名，修复自定义 count 参数回写键名。
+  - Codex 框架身份句清理新增结构化骨架锚点兜底：在精确 SHA-256 匹配未命中时，对已验证 Codex `originator` 且满足长度（≥4000）与多锚点骨架的未来版本框架仅规范开头身份句，保留全部权限规则、工具与历史。
+- 诊断与管理后台可见性：
+  - 新增离线干跑诊断模块 `src/client-compat-diagnose.js` 与命令行参数 `antigravity-gateway --diagnose-request <file|->`（可选 `--protocol` / `--model`），零上游请求输出客户端识别、指令封装、思考参数与逐工具视图/拒绝原因。
+  - 请求日志 `conversion` 增补白名单 `clientProfile`；独立管理后台 `/admin/logs/` 请求详情弹窗新增结构化兼容与转换摘要卡片。
+- 验证：968 项网关测试、10 项管理后台测试（4 后端 + 6 前端）、Next.js 静态构建与 `npm pack --dry-run` 全部通过；隔离实测通过未来版 Codex（`0.175.0`）走 Hydrogen Sonar 与 Carbon、`claude-cli/2.4.12` 走 Neon 带工具流式两轮往返、代理改写 UA 的 DSH 走 Argon 两轮往返、OpenCode 风格可空+`end_line` 工具走 Hydrogen 两轮往返，以及 CLI 离线干跑。
+
+English: Harden client compatibility across protocols and versions: add tiered `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE` scopes (`0`/`off`, `1`/`neon`, `gemini4`, `all`), replace single-version Claude Code locks with semver-based `claude-code-generic` and schema-verified tool rules, make DSH detection proxy-resilient when `User-Agent` is rewritten, expand generic tool semantics for omitted `additionalProperties`, nullable optional fields (Zod/Pydantic), and direct `start_line`/`end_line` mapping, add a structural-anchor fallback for future Codex prompt wording, and ship offline `antigravity-gateway --diagnose-request <file|->` diagnostics plus structured conversion summaries in `/admin/logs/`. Verified with 968 gateway tests, 10 manager tests, Next.js build, `npm pack --dry-run`, and live upstream round-trips across Hydrogen Sonar, Carbon, Neon, Argon, and Hydrogen.
+
 ## 1.7.1-bailey.48 - 2026-11-23
 
 - 模型调用链路与工具翻译优化：

@@ -7,17 +7,34 @@ const PRECEDENCE = 'The CLIENT_SYSTEM_INSTRUCTIONS message carries the calling a
 const OPEN = '<CLIENT_SYSTEM_INSTRUCTIONS>';
 const CLOSE = '</CLIENT_SYSTEM_INSTRUCTIONS>';
 
+function semanticEnvelopeMode(raw = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value || ['0', 'off', 'false', 'no', 'none'].includes(value)) return 'off';
+  if (['1', 'true', 'on', 'neon'].includes(value)) return 'neon';
+  if (['gemini4', 'gemini-4'].includes(value)) return 'gemini4';
+  if (['all', 'gemini'].includes(value)) return 'all';
+  return 'off';
+}
+
+function semanticEnvelopeMatches(model, raw = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE) {
+  const mode = semanticEnvelopeMode(raw);
+  const name = String(model || '');
+  if (mode === 'neon') return /^gemini-4-neon(?:-|$)/i.test(name);
+  if (mode === 'gemini4') return /^gemini-4(?:[.-]|$)/i.test(name);
+  if (mode === 'all') return /^gemini-/i.test(name);
+  return false;
+}
+
 function envelopeClientInstructions(request, clientSystem, profile, model, source = null) {
   const evidence = { claude: ['claude-desktop-330-system-template', 'claude-desktop-title-system-template'], hermes: ['hermes-instructions-20261121'] }[profile?.client];
   // Source roles are established by protocol normalization, never by UA or
   // caller-supplied client names. This capability does not select tool aliases.
-  const semanticSource = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE === '1'
-    && /^gemini-4-neon(?:-|$)/.test(model || '')
+  const semanticSource = semanticEnvelopeMatches(model)
     && ['responses', 'anthropic', 'chat'].includes(source?.protocol)
     && source.system === clientSystem;
   const capturedSource = evidence?.some(item => profile?.evidence?.includes(item));
   if ((!semanticSource && !capturedSource)
-    || !/^gemini-/.test(model || '') || typeof clientSystem !== 'string' || !clientSystem
+    || !/^gemini-/i.test(model || '') || typeof clientSystem !== 'string' || !clientSystem
     || !Array.isArray(request.contents) || request.systemInstruction?.parts?.length !== 1) return false;
   const text = request.systemInstruction.parts[0].text;
   if (typeof text !== 'string' || text.split(clientSystem).length !== 2
@@ -27,4 +44,4 @@ function envelopeClientInstructions(request, clientSystem, profile, model, sourc
   request.contents = [{ role: 'user', parts: [{ text: `${OPEN}\n${clientSystem}\n${CLOSE}` }] }, ...request.contents];
   return true;
 }
-module.exports = { envelopeClientInstructions, PRECEDENCE, OPEN, CLOSE };
+module.exports = { envelopeClientInstructions, semanticEnvelopeMode, semanticEnvelopeMatches, PRECEDENCE, OPEN, CLOSE };

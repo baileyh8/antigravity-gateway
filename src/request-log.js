@@ -96,6 +96,11 @@ function recordUpstreamFailure(response, body, upstreamIndex) {
 }
 
 const KNOWN_IDENTITY_CLIENTS = new Set(['claude', 'codex', 'hermes', 'dsh', 'pi']);
+const KNOWN_CLIENT_PROFILES = new Set([
+  'codex-exec-0.159.2', 'codex-exec-0.167.2',
+  'claude-code-2.1.284', 'claude-code-2.1.285', 'claude-code-2.1.304', 'claude-code-generic',
+  'hermes-0.21.7-captured', 'dsh-0.2.1-captured'
+]);
 
 // Persist counts and bounded protocol values only. Never serialize message text,
 // tool names, schemas, signatures, project identifiers or arbitrary metadata.
@@ -123,6 +128,7 @@ function recordConversionSummary(normalized, request, diagnostics = {}) {
   const thinking = request.generationConfig?.thinkingConfig;
   const rawClient = diagnostics.identityClient;
   const identityProfile = KNOWN_IDENTITY_CLIENTS.has(rawClient) ? rawClient : null;
+  const clientProfile = KNOWN_CLIENT_PROFILES.has(diagnostics.clientProfile) ? diagnostics.clientProfile : null;
   const toolViews = { direct: 0, json: 0, native: 0, service: 0, legacy: 0 };
   for (const record of Array.isArray(diagnostics.toolRecords) ? diagnostics.toolRecords : []) {
     for (const view of Array.isArray(record?.views) ? record.views : []) {
@@ -146,6 +152,7 @@ function recordConversionSummary(normalized, request, diagnostics = {}) {
     thinkingLevel: thinking?.thinkingLevel === 100 || ['LOW', 'MEDIUM', 'HIGH', 'MINIMAL'].includes(thinking?.thinkingLevel) ? thinking.thinkingLevel : null,
     thinkingBudget: Number.isSafeInteger(thinking?.thinkingBudget) ? thinking.thinkingBudget : null,
     identityProfile,
+    clientProfile,
     envelopeApplied: Boolean(diagnostics.envelopeApplied),
     toolViews,
     schemaCache: { hits: Number(entry.schemaCacheHits) || 0, misses: Number(entry.schemaCacheMisses) || 0 },

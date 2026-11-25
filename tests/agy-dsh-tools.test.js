@@ -48,11 +48,11 @@ const payload = (overrides = {}) => ({
 });
 const headers = { 'user-agent': 'deepseek-harness/0.2.1-rc.3 (+https://github.com/deepseek-ai/deepseek-harness)' };
 
-test('dsh identity needs the harness user agent, a captured prompt section and a captured declaration', () => {
+test('dsh identity matches captured prompt section and declaration even when relayed through a proxy', () => {
   const n = normalizeChat(payload());
   assert.equal(capturedNativeClient({ headers }, n), DSH_CLIENT_PROFILE);
-  assert.equal(capturedNativeClient({ headers: { 'user-agent': 'Bun/1.4.4' } }, n), '');
-  assert.equal(capturedNativeClient({ headers: { 'user-agent': 'deepseek-harness' } }, n), '');
+  assert.equal(capturedNativeClient({ headers: { 'user-agent': 'Bun/1.4.4' } }, n), DSH_CLIENT_PROFILE);
+  assert.equal(capturedNativeClient({ headers: {} }, n), DSH_CLIENT_PROFILE);
   assert.equal(capturedNativeClient({ headers }, normalizeChat(payload({ messages: [{ role: 'system', content: 'You are dsh.' }, { role: 'user', content: READ_SECTION }] }))), '');
   assert.equal(capturedNativeClient({ headers }, normalizeChat(payload({ tools: [] }))), '');
   assert.equal(capturedNativeClient({ headers }, normalizeChat(payload({ tools: [tools[0], tools[3]] }))), DSH_CLIENT_PROFILE);

@@ -13,7 +13,7 @@
 | 现象 | 常见原因 | 对应改动入口 |
 | --- | --- | --- |
 | 请求被网关直接返回 `400`：`unsupported_input_item`、`unsupported_content_block`、`unsupported_tool_grammar` | 客户端发了网关尚未认识的协议块类型，或带了新的 `custom` 工具语法（`format.type === 'grammar'`） | `src/protocol.js`、`src/antigravity-tool-contract.js`（`customValidator`） |
-| 上游反复拒绝（`400` / 异常 `429`），或模型无视客户端的 System Prompt / 权限约束 | 客户端的系统提示词夹带强厂商身份声明，或单槽 `systemInstruction` 与网关工具契约混排导致上游冲突 | `src/client-identity.js`、`src/client-instruction-profile.js`、`src/client-instruction-envelope.js`（Neon 模型可先试环境变量 `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE=1`） |
+| 上游反复拒绝（`400` / 异常 `429`），或模型无视客户端的 System Prompt / 权限约束 | 客户端的系统提示词夹带强厂商身份声明，或单槽 `systemInstruction` 与网关工具契约混排导致上游冲突 | `src/client-identity.js`、`src/client-instruction-profile.js`、`src/client-instruction-envelope.js`（可先试 `ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE=gemini4` 或 `all`，并用 `antigravity-gateway --diagnose-request <file>` 离线检查） |
 | 多轮对话频繁掉 `thoughtSignature`、同会话被拆到不同账号，或标题/压缩请求冲乱主会话 | 客户端使用自定义 Session / Thread 请求头，或把无工具辅助请求与主会话混在同一个 Session ID 下 | `src/session-manager.js`（`explicitClientId`、`explicitSessionId`、`auxiliaryScope`） |
 | 常规工具能调通，但希望把文件读/写/编辑工具额外映射为官方 `read_file` / `write_file` / `edit_file` 子集视图 | 客户端文件工具未注册到已验证工具指纹表 | `src/antigravity-tool-contract.js`（`VERSIONS`、`PROFILES`） |
 | 请求返回 `502 empty_upstream_response` 或小 `max_tokens` 输出截断 | 上游静默返回 0-token 空流，或思考模型配额过小 | 先看请求日志 `conversion` 脱敏字段定位模型与参数，再决定是否调整客户端配置 |

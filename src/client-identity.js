@@ -25,11 +25,11 @@ const CLAUDE_TUI_IDENTITY = "You are Claude Code, Anthropic's official CLI for C
 // instructions begin after that exact prefix and are never part of this edit.
 const CLAUDE_TUI_CORE_LENGTH = 2111;
 const CLAUDE_TUI_CORE_HASH = '2fb163696951183b1ef28b34885a5475bc968591c78c24ccb2a85b9de7a27bcd';
-const CLAUDE_CLI_BILLING = /^x-anthropic-billing-header: cc_version=2\.1\.322(?:\.[a-z0-9]+)?; cc_entrypoint=cli;$/;
+const CLAUDE_CLI_BILLING = /^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+(?:\.[a-z0-9]{1,16})?; cc_entrypoint=cli;$/;
 // The same classifier policies were captured from interactive and print mode.
 // Keep this broader entrypoint match scoped to classifier source evidence;
 // the independent interactive search helper still requires its own CLI match.
-const CLAUDE_CLASSIFIER_BILLING = /^x-anthropic-billing-header: cc_version=2\.1\.322(?:\.[a-z0-9]+)?; cc_entrypoint=(?:cli|sdk-cli);$/;
+const CLAUDE_CLASSIFIER_BILLING = /^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+(?:\.[a-z0-9]{1,16})?; cc_entrypoint=(?:cli|sdk-cli);$/;
 // Exact independent classifier captures; keep private policy text out of fixtures.
 // These fingerprints authorize removing only the separate first billing block.
 const CLAUDE_CLASSIFIER_POLICIES = Object.freeze({
@@ -70,7 +70,7 @@ function quotedAt(text, offset) {
 function claudeTuiPrefix(text) {
   const leading = text.length - text.trimStart().length;
   const rest = text.slice(leading);
-  const billing = rest.match(/^x-anthropic-billing-header: cc_version=2\.1\.322(?:\.[a-z0-9]+)?; cc_entrypoint=cli;\n/);
+  const billing = rest.match(/^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+(?:\.[a-z0-9]{1,16})?; cc_entrypoint=cli;\n/);
   if (!billing || !rest.startsWith(CLAUDE_TUI_IDENTITY + '\n', billing[0].length)) return null;
   const end = leading + billing[0].length + CLAUDE_TUI_IDENTITY.length + 1;
   const framework = text.slice(end);
@@ -83,7 +83,7 @@ function claudeTuiPrefix(text) {
 // Only fixed framework bytes qualify; session guidance and safety stay intact.
 function claudeDesktop330Prefix(text) {
   let rest = text.trimStart();
-  const billing = rest.match(/^x-anthropic-billing-header: cc_version=2\.1\.330(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
+  const billing = rest.match(/^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
   if (billing) rest = rest.slice(billing[0].length);
   // Desktop may supply the same framework directly as its custom system
   // prompt, without the SDK's default identity block. Recognition still
@@ -457,6 +457,69 @@ function transformInstruction(message, client, record) {
   return { ...message, text, parts };
 }
 
+const CODEX_STRUCTURAL_MIN_LENGTH = 4000;
+const CODEX_STRUCTURAL_MIN_ANCHORS = 3;
+const CODEX_STRUCTURAL_ANCHORS = [
+  '\n# General\n',
+  '\n# Editing constraints\n',
+  '\n## Editing',
+  '\n# Validation\n',
+  '\n## Validation',
+  '\n# Final answer\n',
+  '\n## Final answer',
+  '\n# Personality\n',
+  '\n# Collaboration',
+  '\n## Presenting your work',
+  'apply_patch',
+  'exec_command',
+  '<permissions instructions>'
+];
+const CODEX_STRUCTURAL_IDENTITIES = [
+  {
+    pattern: /^You are Codex, an agent based on GPT-[0-9A-Za-z._-]+\.(?: You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled\.)?/,
+    replacement: 'You are a coding assistant working with the user in a shared workspace. Help complete their intended task while following their instructions and permissions.'
+  },
+  {
+    pattern: /^You are a coding agent running in the Codex CLI, a terminal-based coding assistant\. Codex CLI is an open source project led by OpenAI\. /,
+    replacement: 'You are a coding assistant helping the user in a shared workspace. '
+  }
+];
+
+function matchCodexStructuralBlock(text) {
+  if (typeof text !== 'string' || text.length < CODEX_STRUCTURAL_MIN_LENGTH) return null;
+  let anchorHits = 0;
+  for (const anchor of CODEX_STRUCTURAL_ANCHORS) {
+    if (text.includes(anchor)) anchorHits += 1;
+    if (anchorHits >= CODEX_STRUCTURAL_MIN_ANCHORS) break;
+  }
+  if (anchorHits < CODEX_STRUCTURAL_MIN_ANCHORS) return null;
+  // Allow either offset 0 or right after a short Codex preamble (<= 256 chars, e.g. personality/wrapper header).
+  for (const entry of CODEX_STRUCTURAL_IDENTITIES) {
+    const direct = text.match(entry.pattern);
+    if (direct) return { offset: 0, length: direct[0].length, replacement: entry.replacement };
+    const head = text.slice(0, 512);
+    const search = head.match(new RegExp(entry.pattern.source.slice(1)));
+    if (search && search.index > 0 && search.index <= 256) {
+      return { offset: search.index, length: search[0].length, replacement: entry.replacement };
+    }
+  }
+  return null;
+}
+
+function codexStructuralTemplate(normalized, { clientProfile } = {}) {
+  if (normalized?.protocol !== 'responses'
+    || ![CODEX_CLIENT_PROFILE, CODEX_167_CLIENT_PROFILE].includes(clientProfile)) return null;
+  const projection = [normalized.instructions, ...(normalized.instructionMessages || []).map(item => item.text)]
+    .filter(Boolean).join('\n\n');
+  if (normalized.system !== projection) return null;
+  const topMatch = typeof normalized.instructions === 'string' ? matchCodexStructuralBlock(normalized.instructions) : null;
+  const devMatches = (normalized.instructionMessages || []).map(msg => (
+    msg?.role === 'developer' && typeof msg.text === 'string' ? matchCodexStructuralBlock(msg.text) : null
+  ));
+  if (!topMatch && !devMatches.some(Boolean)) return null;
+  return { topMatch, devMatches };
+}
+
 function sanitizeClientIdentity(normalized, options = {}) {
   const codex169 = codex169Template(normalized, options);
   if (codex169) {
@@ -487,6 +550,29 @@ function sanitizeClientIdentity(normalized, options = {}) {
       metadata: { profile: inferClientProfile(normalized, options),
         rules: ['codex-169-framework-model-identity'], frameworkVersion: framework.version, editedInstructionBlocks: edits,
         ...(codex169.topLevel ? { editedTopLevelInstructions: true } : {}) }
+    };
+  }
+  const codexStructural = codexStructuralTemplate(normalized, options);
+  if (codexStructural) {
+    const edits = [];
+    const instructions = codexStructural.topMatch
+      ? normalized.instructions.slice(0, codexStructural.topMatch.offset)
+        + codexStructural.topMatch.replacement
+        + normalized.instructions.slice(codexStructural.topMatch.offset + codexStructural.topMatch.length)
+      : normalized.instructions;
+    const instructionMessages = (normalized.instructionMessages || []).map((message, index) => {
+      const match = codexStructural.devMatches[index];
+      if (!match) return message;
+      edits.push(index);
+      return { ...message, text: message.text.slice(0, match.offset) + match.replacement
+        + message.text.slice(match.offset + match.length) };
+    });
+    return {
+      normalized: { ...normalized, instructions, instructionMessages,
+        system: [instructions, ...instructionMessages.map(item => item.text)].filter(Boolean).join('\n\n') },
+      metadata: { profile: inferClientProfile(normalized, options),
+        rules: ['codex-structural-framework-identity'], editedInstructionBlocks: edits,
+        ...(codexStructural.topMatch ? { editedTopLevelInstructions: true } : {}) }
     };
   }
   const classifier = classifierBillingPrefix(normalized);
