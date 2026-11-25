@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { envelopeClientInstructions } = require('./client-instruction-envelope');
+const { envelopeClientInstructions, semanticEnvelopeMatches } = require('./client-instruction-envelope');
 const { capturedInstructionProfile } = require('./client-instruction-profile');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -383,14 +383,14 @@ function* buildDirectRequestSteps(normalized, model, projectId, sessionId, repai
   // Envelope the final client instructions after native context/signature
   // preparation so dynamic system prompt updates never break the session's
   // historyPrefix chain or double-wrap CLIENT_SYSTEM_INSTRUCTIONS in USER_REQUEST.
-  const envelopeSource = process.env.ANTIGRAVITY_SEMANTIC_INSTRUCTION_ENVELOPE === '1'
-    && /^gemini-4-neon(?:-|$)/.test(model) ? normalized : identity.normalized;
+  const envelopeSource = semanticEnvelopeMatches(model) ? normalized : identity.normalized;
   const envelopeProfile = capturedInstructionProfile(identity.normalized) || identity.metadata.profile;
   native.clientInstructionEnvelope = envelopeClientInstructions(request, envelopeSource.system,
     envelopeProfile, model, envelopeSource);
   if (native.clientInstructionEnvelope) native.context.contents = request.contents;
   recordConversionSummary(normalized, request, {
     identityClient: identity.metadata.profile?.client || envelopeProfile?.client || null,
+    clientProfile: native.clientProfile || native.identityClientProfile || null,
     envelopeApplied: native.clientInstructionEnvelope,
     toolRecords: native.toolAdapter?.records
   });

@@ -13,7 +13,7 @@ function desktopTitleProfile(normalized) {
   if (typeof normalized?.system !== 'string' || !Array.isArray(normalized.tools)
     || normalized.tools.some(tool => !tool.internal)) return null;
   let rest = normalized.system.trimStart();
-  const billing = rest.match(/^x-anthropic-billing-header: cc_version=2\.1\.330(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
+  const billing = rest.match(/^x-anthropic-billing-header: cc_version=\d+\.\d+\.\d+(?:\.[a-z0-9]{1,16})?; cc_entrypoint=claude-desktop-3p;\s*/);
   if (billing) rest = rest.slice(billing[0].length);
   const identity = desktopTitle.identities.find(text => rest.startsWith(text));
   if (identity) rest = rest.slice(identity.length).trimStart();
