@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1-bailey.50 - 2026-11-25
+
+- 代理转发下的 Claude CLI / Agent SDK 识别修复：
+  - `capturedClaudeGenericClient()` 改为同时支持 `anthropic` 与 `chat` 协议，并不再强要求 `x-claude-code-session-id`（仍严格校验 `claude-cli/<semver>`，`2.1.285` 自动压缩精确门禁保持不动），解决经 Magpie 等本地代理改写协议为 `/v1/chat/completions` 并剥离会话头后 `clientProfile` 记为 `null` 的问题。
+  - `claude-code-generic` 工具适配规则同步支持 `['anthropic', 'chat']`，继续按精确 Schema 形状校验每项工具声明。
+- 验证：968 项网关测试通过（含 `claude-cli/2.1.327` 经代理转发 Chat 协议与缺失会话头的回归测试），`npm pack --dry-run` 通过。
+
+English: Fix `claude-code-generic` detection for proxy-relayed Claude CLI / Agent SDK traffic (e.g. via Magpie) that arrives on OpenAI Chat Completions without `x-claude-code-session-id` while preserving the `claude-cli/<semver>` User-Agent. Tool mapping remains strictly schema-verified, and `2.1.285` compaction gates stay unchanged. All 968 gateway tests pass.
+
 ## 1.7.1-bailey.49 - 2026-11-25
 
 - 客户端兼容架构补强：
