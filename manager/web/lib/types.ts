@@ -153,6 +153,26 @@ export type ApiKey = {
 
 export type KeysResponse = { keys: ApiKey[]; multiKey: boolean };
 
+export type RequestLogConversion = {
+  roles?: { user: number; assistant: number; other: number };
+  instructionBlocks?: number;
+  hasTopLevelInstructions?: boolean;
+  hasWireSystemInstruction?: boolean;
+  wireSystemChars?: number;
+  maxOutputTokens?: number | null;
+  clientTools?: number;
+  wireDeclarations?: number;
+  toolMode?: string | null;
+  thinkingLevel?: string | number | null;
+  thinkingBudget?: number | null;
+  identityProfile?: string | null;
+  clientProfile?: string | null;
+  envelopeApplied?: boolean;
+  toolViews?: { direct: number; json: number; native: number; service: number; legacy: number };
+  schemaCache?: { hits: number; misses: number };
+  wire?: { messages: number; parts: number; calls: number; signedCalls: number; results: number; media: number };
+};
+
 export type RequestLogEntry = {
   accountLabel?: string;
   ts: number;
@@ -175,6 +195,10 @@ export type RequestLogEntry = {
   ip: string;
   ua: string;
   bytes: number;
+  tools?: number;
+  mapped?: number;
+  emptyUpstreamResponse?: boolean;
+  conversion?: RequestLogConversion;
 };
 
 export type DiagnosticEntry = {

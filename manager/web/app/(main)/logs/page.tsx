@@ -24,6 +24,33 @@ function timeOf(value: string | number) {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
+function formatToolViews(views?: NonNullable<RequestLogEntry['conversion']>['toolViews']) {
+  if (!views) return '—';
+  const parts: string[] = [];
+  if (views.native) parts.push(`原生 ${views.native}`);
+  if (views.direct) parts.push(`直接 ${views.direct}`);
+  if (views.json) parts.push(`JSON兼容 ${views.json}`);
+  if (views.service) parts.push(`服务 ${views.service}`);
+  if (views.legacy) parts.push(`旧版 ${views.legacy}`);
+  return parts.length ? parts.join(' · ') : '无工具';
+}
+
+function formatThinking(conversion?: RequestLogEntry['conversion']) {
+  if (!conversion) return '—';
+  const parts: string[] = [];
+  if (conversion.thinkingLevel !== null && conversion.thinkingLevel !== undefined) parts.push(`档位 ${conversion.thinkingLevel}`);
+  if (conversion.thinkingBudget !== null && conversion.thinkingBudget !== undefined) parts.push(`预算 ${conversion.thinkingBudget}`);
+  if (conversion.maxOutputTokens) parts.push(`上限 ${fmtNumber(conversion.maxOutputTokens)}`);
+  return parts.length ? parts.join(' / ') : '默认';
+}
+
+function formatSchemaCache(cache?: NonNullable<RequestLogEntry['conversion']>['schemaCache']) {
+  if (!cache) return '—';
+  const total = cache.hits + cache.misses;
+  if (!total) return '无';
+  return `命中 ${cache.hits}/${total} (${Math.round((cache.hits / total) * 100)}%)`;
+}
+
 export default function LogsPage() {
   const [tab, setTab] = useState<Tab>('requests');
   const [days, setDays] = useState('7');
@@ -222,6 +249,40 @@ export default function LogsPage() {
 
       {detail ? (
         <Modal title="请求详情" description={`${detail.id} · ${detail.model || '未知模型'}`} onClose={() => setDetail(null)}>
+          {detail.conversion ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginBottom: 12, padding: 12, borderRadius: 10, background: 'var(--bg-soft, rgba(127,127,127,0.08))', fontSize: 12 }}>
+              <div>
+                <div className="muted tiny">识别客户端</div>
+                <div style={{ fontWeight: 600, marginTop: 2 }}>
+                  {detail.conversion.clientProfile || detail.conversion.identityProfile || '通用 / 未匹配'}
+                </div>
+              </div>
+              <div>
+                <div className="muted tiny">指令封装</div>
+                <div style={{ marginTop: 2 }}>
+                  {detail.conversion.envelopeApplied ? <span className="badge green">已封装</span> : <span className="badge">未封装</span>}
+                </div>
+              </div>
+              <div>
+                <div className="muted tiny">工具视图（{detail.conversion.clientTools ?? detail.tools ?? 0} 声明）</div>
+                <div style={{ fontWeight: 500, marginTop: 2 }}>{formatToolViews(detail.conversion.toolViews)}</div>
+              </div>
+              <div>
+                <div className="muted tiny">思考与输出上限</div>
+                <div style={{ fontWeight: 500, marginTop: 2 }}>{formatThinking(detail.conversion)}</div>
+              </div>
+              <div>
+                <div className="muted tiny">Schema 缓存</div>
+                <div style={{ fontWeight: 500, marginTop: 2 }}>{formatSchemaCache(detail.conversion.schemaCache)}</div>
+              </div>
+              <div>
+                <div className="muted tiny">工具调用签名</div>
+                <div style={{ fontWeight: 500, marginTop: 2 }}>
+                  {detail.conversion.wire ? `${detail.conversion.wire.signedCalls}/${detail.conversion.wire.calls} 已签名` : '—'}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <pre className="log-detail">{JSON.stringify(detail, null, 2)}</pre>
         </Modal>
       ) : null}

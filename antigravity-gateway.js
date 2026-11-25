@@ -106,6 +106,8 @@ function parseArgs(argv) {
     else if (arg === '--claude-config-path') result.claudeConfigPath = true;
     else if (arg === '--claude-config') result.claudeConfig = true;
     else if (arg === '--models') result.models = true;
+    else if (arg === '--diagnose-request') result.diagnoseRequest = argv[++index] || '';
+    else if (arg === '--protocol') result.protocol = argv[++index] || '';
     else if (arg === 'stats') result.stats = true;
     else if (arg === 'service') {
       result.serviceRequested = true;
@@ -487,6 +489,8 @@ function printHelp() {
   --codex-catalog-path    显示自动生成的 Codex 模型目录绝对路径
   --claude-config-path    显示自动生成的 Claude Code 模型配置路径
   --claude-config         输出 Claude Code modelPicker 配置 JSON
+  --diagnose-request <file> 本地干跑诊断客户端请求兼容情况（不调用上游；支持 - 读 stdin）
+  --protocol <type>       配合 --diagnose-request 指定协议（anthropic / responses / chat）
   stats                   输出本地 Token 用量统计
 
 后台保活:
@@ -1476,6 +1480,20 @@ if (require.main === module) {
   if (CLI_ARGS.stats) { console.log(renderUsageSummary(USAGE_STORE, ACCOUNT_POOL, QUOTA_MANAGER)); return; }
   if (CLI_ARGS.codexCatalogPath) { console.log(codexCatalogPath()); return; }
   if (CLI_ARGS.claudeConfigPath) { console.log(claudeConfigPath()); return; }
+  if (CLI_ARGS.diagnoseRequest) {
+    try {
+      const { diagnoseRequestFile } = require('./src/client-compat-diagnose');
+      const report = diagnoseRequestFile(CLI_ARGS.diagnoseRequest, {
+        protocol: CLI_ARGS.protocol || '',
+        model: CLI_ARGS.model || ''
+      });
+      console.log(JSON.stringify(report, null, 2));
+    } catch (error) {
+      console.error(`[Antigravity Gateway Error] 请求诊断失败：${error.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (CLI_ARGS.models || CLI_ARGS.claudeConfig) {
     void availableModels(true).then((models) => {
       console.log(CLI_ARGS.models ? displayModels(models).join('\n') : JSON.stringify(claudeConfigBody(models), null, 2));
@@ -1660,7 +1678,7 @@ module.exports = {
 
 const daemonStart = require.main === module && ![
   'help', 'version', 'serviceRequested', 'stats', 'codexCatalogPath',
-  'claudeConfigPath', 'models', 'claudeConfig'
+  'claudeConfigPath', 'models', 'claudeConfig', 'diagnoseRequest'
 ].some(key => CLI_ARGS[key]);
 if (daemonStart) {
   void acquireDirectoryGuard(CONFIG_DIR).then(guard => {
