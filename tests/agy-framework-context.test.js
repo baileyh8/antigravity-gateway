@@ -42,7 +42,11 @@ test('only the adjacent captured coding brief is rewritten, not quoted examples 
 
 test('unknown framework blocks, duplicate copies and malformed boundaries never guess ownership', () => {
   for (const changed of [system.replace('# Parallel tool calls', '# Other parallel strategy'), system + '\n\n' + fixture.framework, system.replace('\n\n' + fixture.framework, '\n' + fixture.framework), system.replace(fixture.framework + '\n\n', fixture.framework + 'extra\n\n')]) {
-    const n = normalize(changed);assert.equal(capturedNativeClient({}, n), '');assert.equal(adapter(n).normalized, n);
+    const n = normalize(changed);
+    assert.equal(capturedNativeClient({}, n), '');
+    const out = adapter(n);
+    assert.equal(out.profileName, '');
+    assert.equal(out.normalized.system, n.system);
   }
 });
 

@@ -236,7 +236,7 @@ test('default policy ignores old hidden recovery and terminal veto state, retain
 test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read with allow_large intact', async (t) => {
   const fixture304 = require('./fixtures/claude-code-2.1.304-tools.json');
   const tools304 = Array.isArray(fixture304) ? fixture304 : fixture304.tools;
-  const { capturedNativeClient, CLAUDE_304_CLIENT_PROFILE } = require('../src/agy-client-profile');
+  const { capturedNativeClient, CLAUDE_304_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE } = require('../src/agy-client-profile');
   const { detectNativeCompaction } = require('../src/agy-client-compaction');
   const userMsg = { role: 'user', content: 'test message' };
   const req = {
@@ -250,7 +250,12 @@ test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read wit
   // 1. 门禁正例与反例验证
   assert.equal(capturedNativeClient(req, normalized), CLAUDE_304_CLIENT_PROFILE);
   assert.equal(detectNativeCompaction(req, normalized), '', '304 绝不激活 285 自动压缩');
-  for (const version of ['2.1.284_external_sdk-cli_', '2.1.303', '2.1.305', '2.1.304evil']) {
+  for (const version of ['2.1.303', '2.1.305', '2.1.330']) {
+    const genericReq = { headers: { ...req.headers, 'user-agent': 'claude-cli/' + version } };
+    assert.equal(capturedNativeClient(genericReq, normalized), CLAUDE_GENERIC_CLIENT_PROFILE);
+    assert.equal(detectNativeCompaction(genericReq, normalized), '', '通用 Claude Code 版本不激活 285 自动压缩');
+  }
+  for (const version of ['2.1.284_external_sdk-cli_', '2.1.304evil']) {
     assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/' + version } }, normalized), '');
   }
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': ' ' } }, normalized), '');
@@ -327,7 +332,7 @@ test('Claude Code 2.1.304 translates Edit, Bash, Write while preserving Read wit
 test('Claude Code 2.1.284 translates all four tools Edit, Bash, Write, Read aligning with 285', async (t) => {
   const fixture284 = require('./fixtures/claude-code-2.1.284-tools.json');
   const tools284 = Array.isArray(fixture284) ? fixture284 : fixture284.tools;
-  const { capturedNativeClient, CLAUDE_284_CLIENT_PROFILE } = require('../src/agy-client-profile');
+  const { capturedNativeClient, CLAUDE_284_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE } = require('../src/agy-client-profile');
   const { detectNativeCompaction } = require('../src/agy-client-compaction');
   const userMsg = { role: 'user', content: 'test message' };
   const req = {
@@ -341,7 +346,8 @@ test('Claude Code 2.1.284 translates all four tools Edit, Bash, Write, Read alig
   // 1. 门禁正例与反例验证
   assert.equal(capturedNativeClient(req, normalized), CLAUDE_284_CLIENT_PROFILE);
   assert.equal(detectNativeCompaction(req, normalized), '', '284 不激活 285 自动压缩');
-  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283' } }, normalized), '');
+  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283' } }, normalized), CLAUDE_GENERIC_CLIENT_PROFILE);
+  assert.equal(capturedNativeClient({ headers: { ...req.headers, 'user-agent': 'claude-cli/2.1.283bad' } }, normalized), '');
   assert.equal(capturedNativeClient({ headers: { ...req.headers, 'x-claude-code-session-id': '' } }, normalized), '');
   assert.equal(capturedNativeClient(req, { ...normalized, protocol: 'responses' }), '');
 

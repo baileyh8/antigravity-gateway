@@ -3,11 +3,11 @@
 const { GatewayError, validateSchema } = require('./protocol');
 const { isDeepStrictEqual } = require('node:util');
 const { CLAUDE_COMPACTION_PROFILE } = require('./agy-client-compaction');
-const { CODEX_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE } = require('./agy-client-profile');
+const { CODEX_CLIENT_PROFILE, CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE } = require('./agy-client-profile');
 const { FINISH_METADATA } = require('./agy-structured-output');
 const { HERMES_CLIENT_PROFILE, capturedHermesTool, hermesSystemText, toolReferences } = require('./agy-hermes-profile');
 const { DSH_CLIENT_PROFILE, capturedDshBash, capturedDshTool, dshSystemText } = require('./agy-dsh-profile');
-const { classifyTool, buildRule } = require('./agy-tool-semantics');
+const { classifyTool, buildRule, extractScalarType } = require('./agy-tool-semantics');
 const { arbitrate } = require('./agy-tool-mapping');
 
 // Semantic mapping is opt-out rather than opt-in: an unrecognized client gains
@@ -118,10 +118,18 @@ const claude304Rules = {
   }
 };
 
+const claudeGenericRules = {
+  Read: claudeRules.Read,
+  Write: { ...claudeRules.Write, descriptions: [claudeRules.Write.description, claude304Rules.Write.description] },
+  Edit: { ...claudeRules.Edit, descriptions: [claudeRules.Edit.description, claude304Rules.Edit.description] },
+  Bash: { ...claudeRules.Bash, descriptions: [claudeRules.Bash.description, claude304Rules.Bash.description] }
+};
+
 const profiles = {
   [CLAUDE_COMPACTION_PROFILE]: { protocol: 'anthropic', rules: claudeRules },
   [CLAUDE_284_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claudeRules },
   [CLAUDE_304_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claude304Rules },
+  [CLAUDE_GENERIC_CLIENT_PROFILE]: { protocol: 'anthropic', rules: claudeGenericRules },
   [CODEX_CLIENT_PROFILE]: { protocol: 'responses', rules: codexRules },
   [HERMES_CLIENT_PROFILE]: { protocol: 'chat', rules: hermesRules },
   [DSH_CLIENT_PROFILE]: { protocol: 'chat', rules: dshRules }
@@ -131,8 +139,12 @@ function supported(tool, rule) {
   if (rule.hermes) return capturedHermesTool(tool);
   if (rule.dsh) return tool.name === 'bash' ? capturedDshBash(tool) : capturedDshTool(tool);
   const s = tool.schema;
+  const firstLine = String(tool.description || '').split('\n')[0];
+  const descriptionOk = Array.isArray(rule.descriptions)
+    ? rule.descriptions.includes(firstLine)
+    : firstLine === rule.description;
   return !tool.internal && (!tool.kind || tool.kind === 'function') && s?.type === 'object'
-    && String(tool.description || '').split('\n')[0] === rule.description
+    && descriptionOk
     && s.additionalProperties === false && s.properties && !['allOf', 'anyOf', 'oneOf', '$ref', 'not', 'enum', 'const', 'if', 'then', 'else'].some(k => k in s)
     && Object.keys(s.properties).every(k => rule.fields[k] && s.properties[k]?.type === rule.fields[k])
     && rule.required.every(k => s.properties[k] && s.required?.includes(k))
@@ -181,9 +193,19 @@ function declaration(tool, rule, mappings, target) {
     required.splice(0, 1, 'TargetFile', 'CodeContent');
     description = 'Write a file to the local filesystem, creating it or overwriting an existing file. Existing files must have been read first; otherwise execution will fail. Use this for new files or complete replacement; use an available editing tool for partial changes. This tool does not offer append or no-overwrite modes.';
   } else {
-    properties = Object.fromEntries(Object.entries(p).map(([name, schema]) => [rule.parameters[name], {
-      ...schema, ...(schema.description === undefined ? {} : { description: parameterReferences(schema.description, rule.parameters) })
-    }]));
+    properties = Object.fromEntries(Object.entries(p).map(([name, schema]) => {
+      let normalizedProp = schema;
+      if (rule.semantic) {
+        const extracted = extractScalarType(schema);
+        if (extracted?.nullable) {
+          normalizedProp = { type: extracted.type, ...(schema.description === undefined ? {} : { description: schema.description }) };
+        }
+      }
+      return [rule.parameters[name], {
+        ...normalizedProp,
+        ...(normalizedProp.description === undefined ? {} : { description: parameterReferences(normalizedProp.description, rule.parameters) })
+      }];
+    }));
     required = tool.schema.required.map(name => rule.parameters[name]);
     description = parameterReferences(tool.description, rule.parameters);
     if (rule.hermes) {
@@ -199,7 +221,7 @@ function declaration(tool, rule, mappings, target) {
     // position. A declaration with offset but no limit has no field to map an
     // EndLine back onto, so advertising it lets the model produce a call the
     // reverse translation must reject.
-    if (rule.lineRange && Object.values(rule.parameters || {}).includes('EndLine')) {
+    if ((rule.lineRange || rule.directEndLine) && Object.values(rule.parameters || {}).includes('EndLine')) {
       properties.EndLine = { type: 'integer', description: 'Optional inclusive ending line. StartLine defaults to 1; at most 2000 lines may be requested. Omit to read up to 2000 lines. The text budget and next_offset continuation still apply.' };
       description = description.replace('Use offset and limit for large files.', 'Use StartLine and inclusive EndLine for large files.')
         .replace('continue with offset to read the rest.', 'continue with StartLine to read the rest.');
@@ -252,8 +274,13 @@ function clientCall(call, tool, rule, target, validate = validateSchema) {
     if (args.EndLine !== undefined) {
       const limit = args.EndLine - (args.StartLine ?? 1) + 1;
       if (!Number.isSafeInteger(args.EndLine) || limit < 1 || limit > 2000) return fail();
-      input.limit = limit;
+      const limitKey = Object.entries(rule.parameters || {}).find(([, alias]) => alias === 'EndLine')?.[0] || 'limit';
+      input[limitKey] = limit;
     }
+  }
+  if (rule.directEndLine) {
+    if (args.StartLine !== undefined && (!Number.isSafeInteger(args.StartLine) || args.StartLine < 1)) return fail();
+    if (args.EndLine !== undefined && (!Number.isSafeInteger(args.EndLine) || args.EndLine < (args.StartLine ?? 1))) return fail();
   }
   if (rule.hermes && tool.name === 'terminal'
       && ((input.timeout !== undefined && input.timeout < 1) || (input.heartbeat !== undefined && input.heartbeat < 0))) return fail();
@@ -299,7 +326,9 @@ function providerCall(call, tool, rule, target, validate = validateSchema) {
     : { file_path: 'TargetFile', content: 'CodeContent' });
   const args = Object.fromEntries(Object.entries(input).map(([name, value]) => [parameters[name], value]));
   if (rule.lineRange || tool.name === 'Read') {
-    if (Object.hasOwn(input, 'limit')) args.EndLine = (input.offset ?? 1) + input.limit - 1;
+    const offsetKey = Object.entries(parameters).find(([, alias]) => alias === 'StartLine')?.[0] || 'offset';
+    const limitKey = Object.entries(parameters).find(([, alias]) => alias === 'EndLine')?.[0] || 'limit';
+    if (Object.hasOwn(input, limitKey)) args.EndLine = (input[offsetKey] ?? 1) + input[limitKey] - 1;
   }
   if (tool.name === 'exec_command' && Object.hasOwn(input, 'sandbox_permissions')) args.BypassSandbox = input.sandbox_permissions === 'require_escalated';
   if (rule.escalation && Object.hasOwn(input, 'sandbox_permissions')) args.sandbox_permissions = input.sandbox_permissions === 'danger-full-access';
@@ -314,7 +343,7 @@ function prepareToolAdapter(normalized, { clientProfile = '', checkpoint = false
   const names = new Set((normalized.tools || []).map(t => t.name));
   const profile = profiles[clientProfile];
   const recognized = !checkpoint && !normalized.autoMode && profile && normalized.protocol === profile.protocol
-    && (target !== 'robin' || (![CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE].includes(clientProfile)));
+    && (target !== 'robin' || (![CLAUDE_304_CLIENT_PROFILE, CLAUDE_284_CLIENT_PROFILE, CLAUDE_GENERIC_CLIENT_PROFILE].includes(clientProfile)));
   const candidates = [];
   if (recognized) {
     for (const tool of normalized.tools || []) {

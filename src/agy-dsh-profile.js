@@ -76,8 +76,10 @@ function hasSection(system) {
 
 function capturedDshClient(req, normalized) {
   if (normalized.protocol !== 'chat') return '';
-  if (!DSH_USER_AGENT.test(req?.headers?.['user-agent'] || '')) return '';
   if (!hasSection(String(normalized.system || ''))) return '';
+  // Local provider proxies (such as Magpie) rewrite User-Agent to the proxy
+  // runtime's own string. The captured multi-sentence prompt section plus exact
+  // tool declaration shape is already DSH-specific without requiring the raw UA.
   return capturedDshDeclarations(normalized).length ? DSH_CLIENT_PROFILE : '';
 }
 
