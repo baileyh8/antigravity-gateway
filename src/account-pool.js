@@ -237,9 +237,9 @@ class AccountPool {
             modelCooldowns: new Map(),
             supportedModels: null,
             modelCatalogChecked: false,
-            lastSuccessAt: '',
-            lastFailureAt: '',
-            lastError: ''
+            lastSuccessAt: account.lastSuccessAt || '',
+            lastFailureAt: account.lastFailureAt || '',
+            lastError: account.lastError || ''
           };
       entry.account = { ...account, grantGeneration: generation };
       entry.healthState = activeHealth?.state || 'available';
@@ -937,6 +937,10 @@ class AccountPool {
       email: entry.account.email,
       enabled: entry.account.enabled !== false,
       weight: entry.account.weight,
+      healthState: entry.healthState,
+      healthCheckedAt: entry.account.healthCheckedAt || entry.healthSince || entry.lastSuccessAt || '',
+      healthCheckStatus: entry.account.healthCheckStatus || '',
+      planName: entry.account.planName || '',
       state: entry.account.enabled === false
         ? 'disabled'
         : entry.healthState !== 'available'

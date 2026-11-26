@@ -63,7 +63,7 @@ export function EditAccountDialog({
       <div className="form-grid">
         <div className="switch-row">
           <span>参与调度</span>
-          <button className={`switch${enabled ? ' on' : ''}`} type="button" role="switch" aria-checked={enabled} onClick={() => setEnabled(!enabled)} />
+          <button className={`switch${enabled ? ' on' : ''}`} type="button" role="switch" aria-label="参与调度" aria-checked={enabled} onClick={() => setEnabled(!enabled)} />
         </div>
         <div className="form-row">
           <div className="field">
@@ -72,10 +72,11 @@ export function EditAccountDialog({
           </div>
           <div className="field">
             <label htmlFor="proxy">出口代理</label>
-            <select id="proxy" value={proxyId} onChange={(event) => setProxyId(event.target.value)}>
+            <select id="proxy" value={proxyId} disabled={!proxies} onChange={(event) => setProxyId(event.target.value)}>
               <option value="">默认出口</option>
               {(proxies?.proxies || []).map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name} · {proxy.endpoint}</option>)}
             </select>
+            {!proxies ? <span className="muted tiny">代理信息暂不可用，保持原绑定</span> : null}
           </div>
         </div>
         <div className="field">

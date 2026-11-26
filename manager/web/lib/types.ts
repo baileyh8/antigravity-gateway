@@ -29,6 +29,9 @@ export type QuotaGroup = {
 };
 
 export type Quota = {
+  plan?: string;
+  observedAt?: string;
+  stale?: boolean;
   groups?: QuotaGroup[];
   credits?: { creditAmount: number | null; minimumCreditAmountForUsage: number | null; available: boolean | null };
   updatedAt?: string;
@@ -42,6 +45,10 @@ export type Account = {
   accountType: string;
   enabled: boolean;
   state: string;
+  healthState?: string;
+  healthCheckedAt?: string;
+  healthCheckStatus?: string;
+  planName?: string;
   weight: number;
   healthReason: string;
   healthMessage: string;

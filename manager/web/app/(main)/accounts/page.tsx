@@ -4,30 +4,26 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '@/components/page-header';
 import { AlertIcon, PlusIcon, RefreshIcon, SearchIcon } from '@/components/icons';
 import { Modal } from '@/components/modal';
-import { QuotaChips } from '@/components/quota-chips';
-import { QuotaGroupCell, QuotaLowest } from '@/components/quota-cell';
 import { AddAccountDialog } from '@/components/accounts/add-account-dialog';
 import { EditAccountDialog } from '@/components/accounts/edit-account-dialog';
-import { ProxyPanel } from '@/components/accounts/proxy-panel';
+import { AccountCard } from '@/components/accounts/account-card';
 import { api, ApiError } from '@/lib/api';
-import { accountStateLabel, applyAccountEnabledPatch, matchesAccountStateFilter } from '@/lib/account-state';
-import { fmtRelative } from '@/lib/format';
-import { lowestByKind, lowestOverall, poolSummary, quotaMatrix } from '@/lib/quota';
+import { applyAccountEnabledPatch } from '@/lib/account-state';
+import { accountPlan, matchesAccountFilter } from '@/lib/account-presentation';
+import { useAuth } from '@/lib/auth';
 import type { Account, AccountsResponse, ProxySnapshot } from '@/lib/types';
 
-function StateBadge({ state, title }: { state: string; title?: string }) {
-  if (state === 'available') return <span className="badge green"><span className="dot" />可用</span>;
-  if (state === 'cooldown') return <span className="badge amber"><span className="dot amber" />冷却</span>;
-  if (state === 'disabled') return <span className="badge"><span className="dot gray" />已暂停</span>;
-  return <span className="badge red" title={title || ''}><span className="dot red" />{accountStateLabel(state)}</span>;
-}
+const FILTERS = [{ id: 'all', label: '全部' }, { id: 'healthy', label: '健康' }, { id: 'tos', label: 'TOS' }, { id: 'error', label: '异常' }, { id: 'cooldown', label: '冷却' }, { id: 'unknown', label: '待核验' }, { id: 'enabled', label: '已启用' }, { id: 'disabled', label: '已暂停' }];
 
 export default function AccountsPage() {
   const [data, setData] = useState<AccountsResponse | null>(null);
   const [proxies, setProxies] = useState<ProxySnapshot | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'accounts' | 'quota' | 'proxies'>('accounts');
+  const { me } = useAuth();
+  const canEdit = me?.role === 'admin';
+  const [proxyError, setProxyError] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [query, setQuery] = useState('');
   const [state, setState] = useState('all');
   const [editing, setEditing] = useState<Account | null>(null);
@@ -59,21 +55,28 @@ export default function AccountsPage() {
     } else {
       setError(accountResult.reason instanceof ApiError ? accountResult.reason.message : '无法读取账号列表');
     }
+    setProxyError(proxyResult.status === 'rejected');
     if (proxyResult.status === 'fulfilled') setProxies(proxyResult.value);
     setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const items = useMemo(() => {
     const list = data?.items || [];
     const needle = query.trim().toLowerCase();
     return list.filter((account) => {
-      if (!matchesAccountStateFilter(account.state, state)) return false;
+      if (!matchesAccountFilter(account, state)) return false;
       if (!needle) return true;
-      return `${account.emailMasked} ${account.id} ${account.note || ''}`.toLowerCase().includes(needle);
+      const key = account.providerType === 'robin' ? `robin:${account.id}` : account.id;
+      const proxyName = proxies?.proxies.find((proxy) => proxy.id === proxies.bindings[key])?.name || '';
+      return `${account.emailMasked} ${account.id} ${account.note || ''} ${accountPlan(account)} ${proxyName}`.toLowerCase().includes(needle);
     });
-  }, [data, query, state]);
+  }, [data, query, state, proxies]);
 
   const handleSaved = useCallback((message: string) => {
     notify(message);
@@ -116,7 +119,7 @@ export default function AccountsPage() {
   }
 
   async function batchRecheck() {
-    const list = [...(data?.items || [])];
+    const list = (data?.items || []).filter((account) => account.enabled);
     if (!list.length) return;
     setBatch({ done: 0, total: list.length });
     const queue = [...list];
@@ -162,144 +165,42 @@ export default function AccountsPage() {
     <>
       <PageHeader
         title="账号"
-        description="账号启停、权重、备注、代理与 OAuth 添加 · 写操作全部审计"
+        description="每个账号的状态、套餐、额度与出口，一页查看"
         actions={<>
-          <button className="btn" type="button" onClick={() => setAdding(true)}><PlusIcon size={14} />添加账号</button>
-          <button className="btn ghost" type="button" onClick={batchRecheck} disabled={Boolean(batch) || !data?.items.length}>
-            <RefreshIcon size={14} />{batch ? `重检 ${batch.done}/${batch.total}` : '批量重检'}
-          </button>
+          {canEdit ? <button className="btn" type="button" onClick={() => setAdding(true)}><PlusIcon size={14} />添加账号</button> : null}
+          {canEdit ? <button className="btn ghost" type="button" onClick={batchRecheck} disabled={Boolean(batch) || Boolean(busyId) || !data?.items.some((account) => account.enabled)}>
+            <RefreshIcon size={14} />{batch ? `重检 ${batch.done}/${batch.total}` : '重检启用账号'}
+          </button> : null}
           <button className="btn ghost" type="button" onClick={() => void load()}><RefreshIcon size={14} />刷新</button>
         </>}
       />
 
       {error ? <div className="notice bad" style={{ marginBottom: 12 }}><AlertIcon size={16} /><span>{error}</span></div> : null}
 
-      <div className="tabs">
-        <button className={tab === 'accounts' ? 'on' : ''} type="button" onClick={() => setTab('accounts')}>账号</button>
-        <button className={tab === 'quota' ? 'on' : ''} type="button" onClick={() => setTab('quota')}>额度</button>
-        <button className={tab === 'proxies' ? 'on' : ''} type="button" onClick={() => setTab('proxies')}>代理</button>
-      </div>
-
-      {tab === 'accounts' ? (
-        <>
-          <div className="panel" style={{ padding: '10px 12px', marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-              <SearchIcon size={14} style={{ position: 'absolute', left: 11, top: 10, color: 'var(--muted)' }} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索邮箱、账号 ID 或备注"
-                style={{ width: '100%', height: 34, border: '1px solid rgba(24,24,27,.1)', borderRadius: 10, padding: '0 10px 0 32px', background: '#fff', fontSize: 12, outline: 'none' }}
-              />
-            </div>
-            <select value={state} onChange={(event) => setState(event.target.value)} style={{ height: 34, border: '1px solid rgba(24,24,27,.1)', borderRadius: 10, padding: '0 10px', background: '#fff', fontSize: 12 }}>
-              <option value="all">全部状态</option>
-              <option value="available">可用</option>
-              <option value="cooldown">冷却</option>
-              <option value="disabled">已暂停</option>
-              <option value="error">异常</option>
-            </select>
-          </div>
-
-          <div className="panel" style={{ padding: '8px 12px 4px' }}>
-            {loading && !data ? (
-              <div className="skeleton" style={{ height: 220 }} />
-            ) : (
-              <table className="table">
-                <thead><tr><th>账号</th><th>启停</th><th>状态</th><th>权重</th><th>来源</th><th>最近成功</th><th>额度</th><th>备注</th><th>操作</th></tr></thead>
-                <tbody>
-                  {items.map((account) => {
-                    const toggling = togglingIds.includes(account.id);
-                    return (
-                      <tr key={account.id}>
-                        <td><div className="strong">{account.emailMasked || account.id}</div></td>
-                        <td>
-                          <button
-                            className={`switch compact${account.enabled ? ' on' : ''}`}
-                            type="button"
-                            role="switch"
-                            aria-checked={account.enabled}
-                            aria-label={`${account.enabled ? '暂停' : '启用'} ${account.emailMasked || account.id}`}
-                            title={account.enabled ? '点击暂停调度' : '点击启用调度'}
-                            disabled={toggling || busyId === account.id}
-                            onClick={() => void toggleEnabled(account)}
-                          />
-                        </td>
-                        <td><StateBadge state={account.state} title={account.healthMessage || account.lastError} /></td>
-                        <td>{account.weight}</td>
-                        <td className="muted">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</td>
-                        <td className="muted">{fmtRelative(account.lastSuccessAt)}</td>
-                        <td><QuotaChips account={account} /></td>
-                        <td className="note-cell" title={account.note || ''}>{account.note || '—'}</td>
-                        <td>
-                          <div className="table-actions">
-                            <button className="btn ghost small" type="button" onClick={() => void recheck(account)} disabled={Boolean(busyId) || toggling || !account.enabled}>{busyId === account.id ? '检测中…' : '重检'}</button>
-                            <button className="btn ghost small" type="button" onClick={() => setEditing(account)}>编辑</button>
-                            <button className="btn danger small" type="button" onClick={() => { setDeleting(account); setConfirm(''); }}>删除</button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!items.length ? (
-                    <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有匹配的账号</td></tr>
-                  ) : null}
-                </tbody>
-              </table>
-            )}
-          </div>
-          <div className="footer"><span>邮箱默认脱敏 · 备注只保存在管理后台 · 删除需输入脱敏邮箱确认</span><span>共 {items.length} 条</span></div>
-        </>
-      ) : tab === 'quota' ? (
-        <div className="panel">
-          <div className="panel-head">
-            <div><h2>账号额度池</h2><p>按模型组展开：Gemini、Claude / GPT、Argon，显示每组最低的周 / 5h 额度。</p></div>
-            <span className="badge">{items.length} 个账号</span>
-          </div>
-          <div className="quota-summary">
-            {poolSummary(items).map(({ kind, label, best }) => {
-              const covered = items.filter((account) => Boolean(lowestByKind(account)[kind])).length;
-              return (
-                <div className="quota-summary-item" key={kind}>
-                  <span>{label}</span>
-                  <b>{best ? `${Math.round(best.cell.fraction * 100)}%` : '—'}</b>
-                  <small>{best ? `${best.account.emailMasked} · ${covered} 个账号` : '无数据'}</small>
-                </div>
-              );
-            })}
-            <div className="quota-summary-note">低于 20%：{items.filter((account) => Object.values(lowestByKind(account)).some((cell) => cell && cell.fraction < 0.2)).length} 个账号</div>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table quota-table" style={{ minWidth: 700 }}>
-              <thead><tr><th>账号</th><th>Gemini</th><th>Claude / GPT</th><th>Argon</th><th>最低</th></tr></thead>
-              <tbody>
-                {items.map((account) => {
-                  const matrix = quotaMatrix(account);
-                  const lowest = lowestOverall(account);
-                  return (
-                    <tr key={account.id}>
-                      <td>
-                        <div className="flex" style={{ gap: 6 }}>
-                          <span className="strong">{account.emailMasked || account.id}</span>
-                          {!account.enabled ? <span className="badge"><span className="dot gray" />已暂停</span> : null}
-                        </div>
-                        <div className="muted tiny">{account.providerType === 'robin' ? 'Gemini App' : 'Antigravity'}</div>
-                      </td>
-                      <td><QuotaGroupCell fiveHour={matrix.gemini5h} weekly={matrix.geminiWeek} /></td>
-                      <td><QuotaGroupCell fiveHour={matrix.claude5h} weekly={matrix.claudeWeek} /></td>
-                      <td><QuotaGroupCell fiveHour={null} weekly={matrix.argonWeek} /></td>
-                      <td><QuotaLowest cell={lowest} /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="footer"><span>额度来自上游 quota 分组 · 周 / 5h 为剩余比例</span><span>{items.length} 个账号</span></div>
+      <section className="account-toolbar" aria-label="账号筛选">
+        <div className="account-search">
+          <SearchIcon size={16} />
+          <input aria-label="搜索账号" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索邮箱、ID、套餐、代理或备注" />
         </div>
-      ) : (
-        <ProxyPanel snapshot={proxies} onChanged={(message) => { notify(message); void load(); }} />
-      )}
+        <div className="account-filters" role="group" aria-label="筛选账号状态">
+          {FILTERS.map((filter) => <button key={filter.id} type="button" aria-pressed={state === filter.id}
+            className={`account-filter${state === filter.id ? ' on' : ''}`} onClick={() => setState(filter.id)}>
+            {filter.label}<span>{(data?.items || []).filter((account) => matchesAccountFilter(account, filter.id)).length}</span>
+          </button>)}
+        </div>
+      </section>
+      {proxyError ? <div className="notice warn" role="status">代理信息读取失败，暂不能确认绑定出口。请刷新后重试。</div> : null}
+      {loading && !data ? <div className="account-grid" aria-label="正在加载账号" aria-busy="true">{[0, 1, 2, 3].map((index) => <div className="skeleton account-card-skeleton" key={index} />)}</div>
+        : items.length ? <div className="account-grid">
+          {items.map((account) => <AccountCard key={account.id} account={account} proxies={proxies} proxyError={proxyError} now={now} canEdit={canEdit}
+            toggling={togglingIds.includes(account.id)} checking={busyId === account.id} recheckBlocked={Boolean(busyId) || Boolean(batch)}
+            onToggle={() => void toggleEnabled(account)} onEdit={() => setEditing(account)} onRecheck={() => void recheck(account)}
+            onDelete={() => { setDeleting(account); setConfirm(''); }} />)}
+        </div> : <div className="panel account-empty"><h2>{error ? '暂时无法读取账号' : data?.items.length ? '没有匹配的账号' : '还没有账号'}</h2>
+          <p>{error ? '请刷新后重试。' : data?.items.length ? '试试其他筛选条件，或清空搜索。' : '添加账号后，可在这里查看状态与额度。'}</p>
+          {query || state !== 'all' ? <button className="btn ghost" type="button" onClick={() => { setQuery(''); setState('all'); }}>清除筛选</button> : null}
+        </div>}
+      <div className="footer"><span>健康状态与启停分别显示 · 代理管理位于设置 · 额度按上游分组展示</span><span>显示 {items.length} / {data?.items.length || 0} 个账号</span></div>
 
       {editing ? <EditAccountDialog account={editing} proxies={proxies} onClose={() => setEditing(null)} onSaved={handleSaved} /> : null}
       {adding ? <AddAccountDialog proxies={proxies} onClose={() => setAdding(false)} onAdded={handleSaved} /> : null}

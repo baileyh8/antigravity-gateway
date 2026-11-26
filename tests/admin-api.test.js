@@ -220,3 +220,16 @@ test('account pool persists weight and enabled changes', (t) => {
   assert.equal(persisted.enabled, false);
   pool.updateAccount(saved.id, { weight: 1, enabled: true });
 });
+
+test('admin snapshot exposes health independently of a paused scheduling state', () => {
+  const dependencies = deps();
+  dependencies.accountPool.status = () => [{ id: 'paused', email: 'paused@example.com', enabled: false,
+    state: 'disabled', healthState: 'access_denied', healthReason: 'account_access_denied', healthMessage: 'Access denied', healthCheckedAt: '2030-01-01T00:00:00Z', planName: 'g1-pro-tier' }];
+  const account = overview(dependencies).accounts.items[0];
+  assert.equal(account.enabled, false);
+  assert.equal(account.state, 'disabled');
+  assert.equal(account.healthState, 'access_denied');
+  assert.equal(account.healthReason, 'account_access_denied');
+  assert.equal(account.healthCheckedAt, '2030-01-01T00:00:00Z');
+  assert.equal(account.planName, 'g1-pro-tier');
+});

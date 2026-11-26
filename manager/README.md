@@ -17,9 +17,11 @@
 | --- | --- |
 | 代理基座 | 推理、流式输出、账号凭据、调用密钥、代理出口、调度、额度、模型配置与请求日志 |
 | 管理 API | 登录、会话、CSRF/Origin 校验、操作审计、备注、转发与短时缓存 |
-| 静态前端 | 看板、账号/代理/额度、用量、日志、模型、密钥与设置 |
+| 静态前端 | 看板、账号卡片（含额度与代理绑定）、用量、日志、模型、密钥与设置（含代理管理） |
 
-额度展示包含 Gemini、Claude / GPT 和 Argon；5h 与周额度在同组上下排列。图表使用细柱、平滑曲线和悬停/点击明细；数量以 K/M/B 保留两位小数。账号在日志与用量中统一为脱敏邮箱。
+账号页使用紧凑卡片，桌面三列、窄屏自适应单列；健康 / TOS、套餐、启停、分组额度、各窗口重置时间、代理绑定与备注同卡显示。5h / 周额度并排，完整备注、最近成功与重检等操作在详情展开；筛选使用平铺按钮。代理新增、检测与删除位于「设置 → 代理设置」，单个账号的出口仍可在编辑账号时选择。
+
+额度展示包含 Gemini、Claude / GPT 和 Argon；5h 与周额度在同组上下排列，过期快照标为历史数据。暂停与健康状态独立；仅有明确条款违规证据才显示 TOS，普通访问拒绝、429 限流和缺失状态分别显示访问受限、限流、待核验。核验结果及时间持久化，详情可查看最近的健康核验时间。图表使用细柱、平滑曲线和悬停/点击明细；数量以 K/M/B 保留两位小数。账号在日志与用量中统一为脱敏邮箱。
 
 前端运行时无需 Next.js 服务，管理进程与基座独立。请求日志由基座异步写入，保留 30 天、总量上限 500MB；查询通过 worker 分块扫描，最多 20,000 行。内存实际占用随账号数、请求和原生 helper 数量变化，不承诺固定值。
 
@@ -92,4 +94,4 @@ location ^~ /dashboard/ { return 404; }
 
 With sincere thanks to LeeFeee and all upstream contributors. This is a maintained fork direction based on the original gateway. Original copyright, history and MIT licensing are preserved.
 
-The proxy core owns inference, credentials, keys, proxies, scheduling and request logs. This directory contains a separate Node management API and a static Next.js frontend at `/admin/`. Install the two dependency sets independently, build `manager/web`, and start `manager/server` with a private shared admin-token file. Use Node 24, TLS, a persistent session secret and an explicit production origin. Keep the core admin API loopback-only and block `/_admin` at the public reverse proxy. The npm core package intentionally excludes the manager and its frontend dependencies. All published screenshots contain synthetic demo data.
+The proxy core owns inference, credentials, keys, proxies, scheduling and request logs. This directory contains a separate Node management API and a static Next.js frontend at `/admin/`. Compact account cards use three desktop columns and stack on narrow screens. They combine health/TOS evidence, plan, scheduling switch, side-by-side 5h/weekly quota and reset times, proxy binding and notes, with flat filter buttons. Full metadata and secondary actions expand in Details. Proxy management lives under Settings; per-account binding remains in the account editor. Stale quota is marked as historical, and pausing never implies a TOS restriction. Install the two dependency sets independently, build `manager/web`, and start `manager/server` with a private shared admin-token file. Use Node 24, TLS, a persistent session secret and an explicit production origin. Keep the core admin API loopback-only and block `/_admin` at the public reverse proxy. The npm core package intentionally excludes the manager and its frontend dependencies. All published screenshots contain synthetic demo data.

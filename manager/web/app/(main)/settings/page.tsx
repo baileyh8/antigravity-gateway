@@ -4,10 +4,18 @@ import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/page-header';
 import { api } from '@/lib/api';
 import { fmtTime } from '@/lib/format';
+import { ProxyPanel } from '@/components/accounts/proxy-panel';
+import { RefreshIcon } from '@/components/icons';
+import { useAuth } from '@/lib/auth';
+import type { ProxySnapshot } from '@/lib/types';
 
 type Settings = { user: { username: string; role: string }; managerVersion: string; gateway: { ok: boolean; version?: string }; requestLogRetentionDays: number; auditRetentionDays: number; initialPasswordPending: boolean; passwordChangedAt: string | null };
 
 export default function SettingsPage() {
+  const { me } = useAuth();
+  const [proxies, setProxies] = useState<ProxySnapshot | null>(null);
+  const [proxyError, setProxyError] = useState('');
+  const [proxyMessage, setProxyMessage] = useState('');
   const [data, setData] = useState<Settings | null>(null);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -17,6 +25,11 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   async function load() { try { setData(await api<Settings>('/settings')); } catch (err) { setError(err instanceof Error ? err.message : '设置读取失败'); } }
   useEffect(() => { void load(); }, []);
+  async function loadProxies() {
+    try { setProxies(await api<ProxySnapshot>('/proxies')); setProxyError(''); }
+    catch (err) { setProxyError(err instanceof Error ? err.message : '代理读取失败'); }
+  }
+  useEffect(() => { void loadProxies(); }, []);
   async function save(event: React.FormEvent) {
     event.preventDefault(); setError(''); setMessage('');
     if (next !== confirm) { setError('两次新密码不一致。'); return; }
@@ -26,7 +39,7 @@ export default function SettingsPage() {
     finally { setBusy(false); }
   }
   return <>
-    <PageHeader title="设置" description="账户安全与网关信息" />
+    <PageHeader title="设置" description="账户安全、出口代理与网关信息" />
     {error ? <div className="notice bad" role="alert">{error}</div> : null}{message ? <div className="notice info" role="status">{message}</div> : null}
     <div className="row r11">
       <section className="panel"><div className="panel-head"><div><h2>账户安全</h2><p>{data?.user.username || '—'} · {data?.user.role === 'admin' ? '管理员' : '只读用户'}</p></div></div>
@@ -42,5 +55,12 @@ export default function SettingsPage() {
         <table className="table"><tbody>{[['管理后台', data?.managerVersion], ['代理基座', data?.gateway.version], ['请求日志', `${data?.requestLogRetentionDays || 30} 天`], ['操作审计', `${data?.auditRetentionDays || 180} 天`], ['管理入口', '/admin/'], ['旧看板', '/dashboard → 301 /admin/']].map(([key, value]) => <tr key={key}><td className="muted">{key}</td><td>{value || '—'}</td></tr>)}</tbody></table>
       </section>
     </div>
+    <section id="proxies" className="settings-proxies" aria-label="代理设置">
+      <div className="settings-section-head"><h2>代理设置</h2><button className="btn ghost small" type="button" onClick={() => void loadProxies()}><RefreshIcon size={14} />刷新代理</button></div>
+      {proxyError ? <div className="notice bad" role="alert">{proxyError}</div> : null}
+      {proxyMessage ? <div className="notice info" role="status">{proxyMessage}</div> : null}
+      {!proxies && !proxyError ? <div className="skeleton proxy-loading" aria-label="正在读取代理" />
+        : proxies ? <ProxyPanel snapshot={proxies} readOnly={me?.role !== 'admin'} onChanged={(text) => { setProxyMessage(text); void loadProxies(); }} /> : null}
+    </section>
   </>;
 }

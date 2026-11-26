@@ -67,6 +67,8 @@ function normalizeAccount(raw) {
     createdAt: firstString(raw.createdAt) || now,
     updatedAt: firstString(raw.updatedAt) || now,
     lastSuccessAt: firstString(raw.lastSuccessAt),
+    healthCheckedAt: firstString(raw.healthCheckedAt),
+    healthCheckStatus: firstString(raw.healthCheckStatus),
     lastFailureAt: firstString(raw.lastFailureAt),
     lastError: firstString(raw.lastError),
     planName: firstString(raw.planName, raw.plan_name),

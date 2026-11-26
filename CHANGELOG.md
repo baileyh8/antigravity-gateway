@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- 账号套餐、健康核验结果及时间可持久化并在重启后恢复，常规 OAuth 续期保留这些元数据；429 核验结果单独显示为限流，不误标为 TOS 或健康。
+- Persist checked account plans and health observations across restarts and token renewal; show HTTP 429 separately from health success and TOS restrictions.
+
+- 管理后台账号页改为桌面三列的紧凑卡片，5h/周额度并排、完整信息和低频操作折叠进详情：健康/TOS、套餐、启停、各组额度与重置时间、代理绑定、编辑和备注同页显示，筛选改为平铺按钮。代理管理迁至设置，保留逐账号出口编辑。过期额度明确标为历史数据；暂停与健康状态独立，普通403不误判为TOS。
+- Admin account cards now combine health, plan, scheduling, quota/reset windows, proxy binding and notes. Filters are flat buttons; proxy management moves to Settings. Account health remains distinct from scheduling, with explicit TOS evidence and stale-quota labels.
+
 ## 1.7.1-bailey.50 - 2026-11-25
 
 本版本汇总 `1.7.1-bailey.49` 与 `1.7.1-bailey.50` 的全部客户端兼容补强与诊断更新：

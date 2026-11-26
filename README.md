@@ -11,7 +11,7 @@
 **当前版本：`1.7.1-bailey.50`** · 代理基座与独立后台（Proxy core + separate admin）
 
 - **代理基座（根目录）**：承担协议转换、直连传输、账号凭据、API 密钥、出口代理、额度调度与请求日志。npm 安装包仅包含基座。
-- **独立管理后台（`manager/`）**：提供静态前端 `/admin/` 和独立 Node 管理 API，通过回环 `/_admin/v1` 访问基座，涵盖看板、账号启停与额度、代理绑定、用量、日志、模型、密钥和设置。安装部署见 [manager/README.md](manager/README.md)。
+- **独立管理后台（`manager/`）**：提供静态前端 `/admin/` 和独立 Node 管理 API，通过回环 `/_admin/v1` 访问基座，涵盖看板、账号卡片（健康/TOS、套餐、启停、额度与重置时间、代理绑定、备注）、用量、日志、模型、密钥和设置（含代理管理）。账号筛选为平铺按钮。安装部署见 [manager/README.md](manager/README.md)。
 
 ### 新后台预览 / Admin preview
 
@@ -32,9 +32,9 @@
 | ![日志](docs/images/admin/logs.png) | ![移动端](docs/images/admin/mobile.png) |
 
 <details>
-<summary>更多截图：分组额度与图表明细 / Quota groups and chart details</summary>
+<summary>更多截图：代理设置与图表明细 / Proxy settings and chart details</summary>
 
-![Gemini、Claude-GPT、Argon 分组额度](docs/images/admin/quota.png)
+![设置中的代理管理 / Proxy management in Settings](docs/images/admin/settings.png)
 ![图表悬停明细](docs/images/admin/usage-details.png)
 
 </details>
