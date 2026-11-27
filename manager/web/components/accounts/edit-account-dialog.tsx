@@ -53,7 +53,7 @@ export function EditAccountDialog({
   return (
     <Modal
       title="编辑账号"
-      description={account.emailMasked || account.id}
+      description={account.email || account.id}
       onClose={onClose}
       footer={<>
         <button className="btn ghost" type="button" onClick={onClose}>取消</button>

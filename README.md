@@ -8,10 +8,10 @@
 >
 > **With sincere thanks to LeeFeee and every upstream contributor.** This repository is an independently maintained fork of [LeeFeee/antigravity-gateway](https://github.com/LeeFeee/antigravity-gateway), developed around a separated proxy core and standalone management service. Original protocol work, project history, copyright attribution, and the [MIT license](LICENSE) are preserved.
 
-**当前版本：`1.7.1-bailey.50`** · 代理基座与独立后台（Proxy core + separate admin）
+**当前版本：`1.7.1-bailey.51`** · 代理基座与独立后台（Proxy core + separate admin）
 
 - **代理基座（根目录）**：承担协议转换、直连传输、账号凭据、API 密钥、出口代理、额度调度与请求日志。npm 安装包仅包含基座。
-- **独立管理后台（`manager/`）**：提供静态前端 `/admin/` 和独立 Node 管理 API，通过回环 `/_admin/v1` 访问基座，涵盖看板、账号卡片（健康/TOS、套餐、启停、额度与重置时间、代理绑定、备注）、用量、日志、模型、密钥和设置（含代理管理）。账号筛选为平铺按钮。安装部署见 [manager/README.md](manager/README.md)。
+- **独立管理后台（`manager/`）**：提供静态前端 `/admin/` 和独立 Node 管理 API，通过回环 `/_admin/v1` 访问基座，涵盖看板、账号卡片（完整邮箱、健康/TOS、套餐、启停、额度与重置时间、代理绑定、备注）、用量、日志、模型、密钥和设置（含代理管理）。账号筛选为平铺按钮。安装部署见 [manager/README.md](manager/README.md)。
 
 ### 新后台预览 / Admin preview
 
@@ -470,12 +470,12 @@ The default `direct` transport talks directly to Cloud Code without the `agy` Ag
 
 > Unofficial project intended for learning, compatibility research, and personal testing. Upstream plans, quotas, regional rules, and terms of service always apply. See [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/baileyh8/antigravity-gateway/releases) for full version history.
 
-Key capabilities in `1.7.1-bailey.50`:
+Key capabilities in `1.7.1-bailey.51`:
 
 - **Full protocol coverage with live streaming**: Exposes Anthropic Messages (`/v1/messages`), OpenAI Responses (`/v1/responses`), and Chat Completions (`/v1/chat/completions`). In direct mode, Anthropic and Responses stream text and thinking deltas live even when tools are declared, emitting thought-signature carriers and tool calls in order before completion.
 - **Native Go transport aligned with agy CLI 1.5.9**: Bundles verified native helper binaries for 6 OS/arch targets (no Go toolchain required for normal installs; `npm run build:native` requires Go 1.27.2). Model RPCs use HTTP/1.1 while OAuth refreshes use HTTP/2, with isolated helper reuse per account proxy. See [docs/agy-1.5.9-compatibility.md](docs/agy-1.5.9-compatibility.md).
 - **Managed account pool & group-aware quota scheduling**: Argon, Hydrogen, Gemini, and Claude/GPT share one Cloud Code pool filtered by each account's live model catalog. Scheduling compares usable headroom per quota group (Gemini, Claude/GPT, Argon) with a 10% five-hour / 5% weekly reserve, 20/5-turn and 5-hour sticky affinity, model-scoped capacity 503 cooldowns, and automatic quarantine on auth/challenge failures.
-- **Per-account proxies & standalone admin**: Bind an HTTP/HTTPS CONNECT proxy per account so auth refreshes, quota probes, model discovery, chat, and image requests all share the same egress without falling back to direct access. The standalone `/admin/` UI also provides an inline enable/pause switch per account with audit logging.
+- **Per-account proxies & standalone admin**: Bind an HTTP/HTTPS CONNECT proxy per account so auth refreshes, quota probes, model discovery, chat, and image requests all share the same egress without falling back to direct access. The standalone `/admin/` UI shows full account emails across account cards, dashboard, usage and logs, with inline enable/pause switches and audit logging.
 - **Client & tool compatibility**: Built-in adapters for Claude Code / Claude Desktop SDK, Codex / OpenCodex, DSH, and Hermes, plus semantic tool inference and custom tool round-tripping for unknown clients. JSON Schema validation runs in 2 bounded workers with a 2,048-entry compiled LRU cache off the main thread. For adapting other clients (such as Pi, OpenClaw, or OpenCode), see [docs/client-adaptation-guide.md](docs/client-adaptation-guide.md).
 - **Multimodal, images & safeguards**: Supports OpenAI Images/Files APIs, native reference-image editing, and image/video/audio/PDF/file inputs, alongside request/media memory budgets, separate 4+4 media/image pools, multi-key auth (`AGY_MULTI_KEY=1`), trusted-proxy IP resolution (`ANTIGRAVITY_TRUST_PROXY`), and graceful shutdown draining.
 

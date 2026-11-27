@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { maskEmail } = require('./account-format');
 class AccountLabels {
   constructor({configDir}) {
     this.file = path.join(configDir, 'account-labels.json');
@@ -22,7 +21,7 @@ class AccountLabels {
     this.refresh();
     let changed = false;
     for (const account of accounts) {
-      const label = account.emailMasked || account.email ? maskEmail(account.emailMasked || account.email) : '';
+      const label = String(account.email || account.emailMasked || '');
       if (!account.id || !label.includes('@') || this.labels[account.id] === label) continue;
       this.labels[account.id] = label; changed = true;
     }

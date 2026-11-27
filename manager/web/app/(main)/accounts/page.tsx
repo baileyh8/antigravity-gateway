@@ -74,7 +74,7 @@ export default function AccountsPage() {
       if (!needle) return true;
       const key = account.providerType === 'robin' ? `robin:${account.id}` : account.id;
       const proxyName = proxies?.proxies.find((proxy) => proxy.id === proxies.bindings[key])?.name || '';
-      return `${account.emailMasked} ${account.id} ${account.note || ''} ${accountPlan(account)} ${proxyName}`.toLowerCase().includes(needle);
+      return `${account.email} ${account.id} ${account.note || ''} ${accountPlan(account)} ${proxyName}`.toLowerCase().includes(needle);
     });
   }, [data, query, state, proxies]);
 
@@ -93,7 +93,7 @@ export default function AccountsPage() {
         body: JSON.stringify({ enabled: nextEnabled, provider: account.providerType })
       });
       setData((current) => current ? { ...current, items: applyAccountEnabledPatch(current.items, account.id, nextEnabled) } : current);
-      notify(`${nextEnabled ? '已启用' : '已暂停'} ${account.emailMasked || account.id}`);
+      notify(`${nextEnabled ? '已启用' : '已暂停'} ${account.email || account.id}`);
       await load();
     } catch (err) {
       notify(err instanceof ApiError || err instanceof Error ? err.message : `${nextEnabled ? '启用' : '暂停'}失败`, true);
@@ -208,7 +208,7 @@ export default function AccountsPage() {
       {deleting ? (
         <Modal
           title="删除账号"
-          description={`这会删除 ${deleting.emailMasked || deleting.id} 的本地凭据，并立即停止调度。不可撤销。`}
+          description={`这会删除 ${deleting.email || deleting.id} 的本地凭据，并立即停止调度。不可撤销。`}
           onClose={() => { if (!deletingBusy) setDeleting(null); }}
           footer={<>
             <button className="btn ghost" type="button" onClick={() => setDeleting(null)} disabled={deletingBusy}>取消</button>
@@ -217,7 +217,7 @@ export default function AccountsPage() {
         >
           <div className="form-grid">
             <div className="field">
-              <label htmlFor="delete-confirm">输入 <b>{deleting.emailMasked || deleting.id}</b> 确认</label>
+              <label htmlFor="delete-confirm">输入 <b>{deleting.email || deleting.id}</b> 确认</label>
               <input id="delete-confirm" value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="off" />
             </div>
           </div>

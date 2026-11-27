@@ -159,7 +159,7 @@ export function AddAccountDialog({
           {flow.state === 'checking' ? <div className="notice info"><span>正在验证授权并保存账号，请稍候…</span></div> : null}
           {flow.state === 'complete' ? (
             <div className="notice" style={{ background: 'rgba(5,150,105,.1)', color: '#047857' }}>
-              <span>账号已保存{flow.account?.emailMasked ? `：${flow.account.emailMasked}` : ''}。列表会自动刷新。</span>
+              <span>账号已保存{flow.account?.email ? `：${flow.account.email}` : ''}。列表会自动刷新。</span>
             </div>
           ) : null}
           {flow.state === 'failed' || flow.state === 'cancelled' ? (

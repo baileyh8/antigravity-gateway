@@ -102,6 +102,7 @@ function dailyTrend(history, days, now = Date.now()) {
 function accountSnapshot(account, { providerType, accountType, quota }) {
   return {
     id: account.id,
+    email: account.email || '',
     emailMasked: maskEmail(account.email),
     tokenUsageKnown: typeof account.tokenUsageKnown === 'boolean' ? account.tokenUsageKnown : true,
     models: Array.isArray(account.models) ? account.models.map(String) : [],
@@ -329,7 +330,7 @@ function usageSummary(deps, { days = 7, groupBy = 'model', grain = 'day', now = 
     const knownRequests = [...items.values()].reduce((n, row) => n + row.requests, 0);
     items.set('unattributed', { id: 'unattributed', name: '未归属（主密钥 / 历史 / 已删除或重置）', tokens: Math.max(0, totals.totalTokens - knownTokens), requests: Math.max(0, totals.clientRequests - knownRequests), inputTokens: null, outputTokens: null, cachedTokens: null, successRate: null });
   } else {
-    const labels = groupBy === 'account' ? new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.emailMasked])]) : new Map();
+    const labels = groupBy === 'account' ? new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.email])]) : new Map();
     const buckets = groupBy === 'account' ? summary.hourlyByAccount : summary.hourlyByModel;
     for (const [hour, groups] of Object.entries(buckets || {})) {
       const at = Date.parse(hour);
@@ -448,7 +449,7 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
     }
     if (route === `${PREFIX}/logs/requests/export` && req.method === 'GET') {
       const params = requestUrl?.searchParams;
-      await deps.requestLog.streamCsv(res, { accountLabels: {...deps.accountLabels?.all(), ...Object.fromEntries(accountList(deps).map(row => [row.id, row.emailMasked]))}, days: queryNumber(params?.get('days'), 7, 1, 31), key: params?.get('key') || '', model: params?.get('model') || '', status: params?.get('status') || '', ip: params?.get('ip') || '' });
+      await deps.requestLog.streamCsv(res, { accountLabels: {...deps.accountLabels?.all(), ...Object.fromEntries(accountList(deps).map(row => [row.id, row.email]))}, days: queryNumber(params?.get('days'), 7, 1, 31), key: params?.get('key') || '', model: params?.get('model') || '', status: params?.get('status') || '', ip: params?.get('ip') || '' });
       return;
     }
     if (route === `${PREFIX}/logs/requests` && req.method === 'GET') {
@@ -463,8 +464,8 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
         page: queryNumber(params?.get('page'), 1, 1, 100000),
         size: queryNumber(params?.get('size'), 20, 1, 200)
       });
-      const labels = new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.emailMasked])]);
-      data.items = data.items.map(row => ({ ...row, accountLabel: labels.get(row.account) || (String(row.account || '').includes('@') ? maskEmail(row.account) : row.account ? '已移除账号' : '—') }));
+      const labels = new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.email])]);
+      data.items = data.items.map(row => ({ ...row, accountLabel: labels.get(row.account) || (String(row.account || '').includes('@') ? row.account : row.account ? '已移除账号' : '—') }));
       sendJson(res, 200, { ok: true, data });
       return;
     }
@@ -485,8 +486,8 @@ async function handleAdminRequest({ req, res, route, requestUrl, deps }) {
         page: queryNumber(params?.get('page'), 1, 1, 100000),
         size: queryNumber(params?.get('size'), 20, 1, 200)
       });
-      const labels = new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.emailMasked])]);
-      data.items = data.items.map(row => { const id = String(row.account || row.accountId || ''); return { ...row, accountLabel: labels.get(id) || (id.includes('@') ? maskEmail(id) : id ? '已移除账号' : '—') }; });
+      const labels = new Map([...Object.entries(deps.accountLabels?.all() || {}), ...accountList(deps).map(row => [row.id, row.email])]);
+      data.items = data.items.map(row => { const id = String(row.accountId || row.account || ''); return { ...row, accountLabel: labels.get(id) || (id.includes('@') ? id : id ? '已移除账号' : '—') }; });
       sendJson(res, 200, { ok: true, data });
       return;
     }

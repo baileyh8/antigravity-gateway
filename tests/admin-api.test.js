@@ -71,7 +71,7 @@ test('admin api overview reports account counts and today totals', () => {
   assert.equal(data.accounts.available, 1);
   assert.equal(data.accounts.cooldown, 1);
   assert.equal(data.accounts.items[0].emailMasked, 'b***y@example.com');
-  assert.equal('email' in data.accounts.items[0], false);
+  assert.equal(data.accounts.items[0].email, 'bailey@example.com');
   assert.equal(data.usage.today.totalTokens > 0, true);
   assert.equal(data.trend.length, 14);
   assert.deepEqual(data.affinityPolicy, { maxTurns: 20, lowQuotaMaxTurns: 5, lowQuotaPercent: 20, ttlSeconds: 18000 });

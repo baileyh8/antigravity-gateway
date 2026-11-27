@@ -85,7 +85,7 @@ class AdminOAuth {
       this.accountPool.reload();
       void this.quotaManager?.refreshAccount?.(saved.id, { force: true, summaryOnly: false })?.catch?.(() => {});
       current.state = 'complete';
-      current.account = { id: saved.id, emailMasked: maskEmail(saved.email) };
+      current.account = { id: saved.id, email: saved.email || '', emailMasked: maskEmail(saved.email) };
       current.url = '';
     }).catch((error) => {
       if (current.state === 'cancelled') return;

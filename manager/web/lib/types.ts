@@ -40,7 +40,7 @@ export type Quota = {
 
 export type Account = {
   id: string;
-  emailMasked: string;
+  email: string;
   providerType: string;
   accountType: string;
   enabled: boolean;
@@ -129,7 +129,7 @@ export type OAuthStatus = {
   state: 'starting' | 'waiting' | 'checking' | 'complete' | 'failed' | 'cancelled' | 'idle';
   url: string;
   proxyId: string;
-  account: { id: string; emailMasked: string } | null;
+  account: { id: string; email: string } | null;
   error: string;
   startedAt: string;
 };

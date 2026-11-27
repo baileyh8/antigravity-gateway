@@ -42,11 +42,11 @@ export function AccountCard({ account, proxies, proxyError, now, canEdit, toggli
   const updateText = !groups.length && healthUpdatedAt ? `${fmtRelative(healthUpdatedAt)}核验` : stale ? '历史数据' : updatedAt ? `${fmtRelative(updatedAt)}更新` : '未刷新';
   const detailId = `account-detail-${account.providerType}-${account.id}`;
 
-  return <article className={`account-card${!account.enabled ? ' paused' : ''}`} aria-label={account.emailMasked || account.id}>
+  return <article className={`account-card${!account.enabled ? ' paused' : ''}`} aria-label={account.email || account.id}>
     <header className="account-card-head">
-      <h2 title={account.id}>{account.emailMasked || account.id}</h2>
+      <h2 title={account.id}>{account.email || account.id}</h2>
       <button className={`switch compact${account.enabled ? ' on' : ''}`} type="button" role="switch"
-        aria-checked={account.enabled} aria-label={`${account.enabled ? '暂停' : '启用'} ${account.emailMasked || account.id}`}
+        aria-checked={account.enabled} aria-label={`${account.enabled ? '暂停' : '启用'} ${account.email || account.id}`}
         title={toggling ? '保存中…' : account.enabled ? '点击暂停调度' : '点击启用调度'}
         disabled={!canEdit || toggling || checking} onClick={onToggle} />
     </header>

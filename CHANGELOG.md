@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.7.1-bailey.51 - 2026-11-27
+
+- 管理后台统一显示完整账号邮箱，覆盖账号卡片、仪表盘、编辑与删除确认、授权完成提示、用量、请求/诊断日志及 CSV 导出；搜索可匹配完整邮箱。管理 API 增加 `email` 字段，保留旧 `emailMasked` 字段兼容既有调用方，运行诊断文件仍使用脱敏标识。
+- Show full account emails across the admin UI, confirmation dialogs, OAuth completion, usage, request/diagnostic log views and CSV exports. Search accepts full emails. The admin API adds `email` while retaining `emailMasked` for compatibility; diagnostic files keep masked labels.
 
 - 账号套餐、健康核验结果及时间可持久化并在重启后恢复，常规 OAuth 续期保留这些元数据；429 核验结果单独显示为限流，不误标为 TOS 或健康。
 - Persist checked account plans and health observations across restarts and token renewal; show HTTP 429 separately from health success and TOS restrictions.

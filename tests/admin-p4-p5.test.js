@@ -97,7 +97,7 @@ test('CSV worker exports filtered results beyond one UI page and removes tempora
   fs.rmSync(file);
 });
 
-test('request log account column resolves IDs to masked account email', async () => {
+test('request log account column resolves IDs to full account email', async () => {
   const { handleAdminRequest } = require('../src/admin-api');
   let status, body;
   await handleAdminRequest({
@@ -108,7 +108,7 @@ test('request log account column resolves IDs to masked account email', async ()
       requestLog:{queryAsync:async()=>({items:[{account:'a1'},{account:'removed'},{account:''}],total:3})} }
   });
   assert.equal(status,200);
-  assert.equal(body.data.items[0].accountLabel,'a***e@example.com');
+  assert.equal(body.data.items[0].accountLabel,'alice@example.com');
   assert.equal(body.data.items[0].account,'a1');
   assert.equal(body.data.items[1].accountLabel,'已移除账号');
   assert.equal(body.data.items[2].accountLabel,'—');
@@ -117,17 +117,18 @@ test('request log account column resolves IDs to masked account email', async ()
 test('account email registry persists labels without credentials and names historical usage', t => {
   const {AccountLabels}=require('../src/account-labels');
   const configDir=fixture(t);const labels=new AccountLabels({configDir});
+  fs.writeFileSync(labels.file, JSON.stringify({old:'a***d@example.com'}));
   labels.capture([{id:'old',email:'archived@example.com',refreshToken:'must-never-save'}]);
   const saved=fs.readFileSync(labels.file,'utf8');
-  assert.equal(saved.includes('must-never-save'),false);assert.equal(saved.includes('archived@example.com'),false);
+  assert.equal(saved.includes('must-never-save'),false);assert.equal(saved.includes('archived@example.com'),true);
   const restored=new AccountLabels({configDir});
   fs.writeFileSync(labels.file, JSON.stringify({...JSON.parse(saved), external: 'h***l@example.com'}));
   restored.capture([{id:'new',email:'current@example.com'}]);
   assert.equal(new AccountLabels({configDir}).all().external,'h***l@example.com');
   const now=Date.now();const hour=new Date(Math.floor(now/3600000)*3600000).toISOString();
   const result=usageSummary({accountLabels:restored,accountPool:{status:()=>[]},usageStore:{summary:()=>({history:[{at:hour,totalTokens:10}],hourlyByAccount:{[hour]:{old:{totalTokens:10}}}})}},{days:1,groupBy:'account',now});
-  assert.equal(result.items[0].name,'a***d@example.com');
-  assert.equal(result.series[0].name,'a***d@example.com');
+  assert.equal(result.items[0].name,'archived@example.com');
+  assert.equal(result.series[0].name,'archived@example.com');
 });
 
 
@@ -137,4 +138,19 @@ test('internal models stay out of all public catalogs after discovery', () => {
   const input=['gemini-3.8-flash-low',...internal,'claude-sonnet-5-5-low'];
   assert.deepEqual(publicModels(input),['gemini-3.8-flash-low','claude-sonnet-5-5-low']);
   assert.equal(input.length,7);
+});
+
+test('diagnostic display resolves account IDs before the masked file label', async t => {
+  const { handleAdminRequest } = require('../src/admin-api');
+  const file = path.join(fixture(t), 'diagnostics.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), accountId: 'a1', account: 'a***e@e***.com', event: 'test' }) + '\n');
+  let body;
+  await handleAdminRequest({
+    req: { method: 'GET', socket: {remoteAddress:'127.0.0.1'}, headers:{'x-agy-admin-token':'synthetic-admin'} },
+    res: { writeHead: () => {}, end: text => {body=JSON.parse(text);} },
+    route:'/_admin/v1/logs/diagnostics', requestUrl:new URL('http://localhost/_admin/v1/logs/diagnostics'),
+    deps: { token:'synthetic-admin', accountPool:{status:()=>[{id:'a1',email:'alice@example.com'}]}, diagnosticLog:{file} }
+  });
+  assert.equal(body.data.items[0].accountLabel, 'alice@example.com');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).account, 'a***e@e***.com');
 });

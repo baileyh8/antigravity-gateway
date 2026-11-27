@@ -137,7 +137,7 @@ export default function DashboardPage() {
           label="额度最紧"
           icon={<GaugeIcon size={14} />}
           value={tightest?.cell ? `${Math.round(tightest.cell.fraction * 100)}%` : '—'}
-          hint={tightest?.cell ? `${tightest.cell.groupLabel} · ${tightest.account.emailMasked}` : data ? '没有额度数据' : '等待基座恢复'}
+          hint={tightest?.cell ? `${tightest.cell.groupLabel} · ${tightest.account.email}` : data ? '没有额度数据' : '等待基座恢复'}
           hintTone={tightest?.cell && tightest.cell.fraction < 0.2 ? 'bad' : tightest?.cell && tightest.cell.fraction < 0.5 ? 'warn' : undefined}
         />
         <StatCard
@@ -182,7 +182,7 @@ export default function DashboardPage() {
             {healthAccounts.length ? healthAccounts.map((account) => (
               <div className="health-row" key={account.id}>
                 <div className="health-name">
-                  <span>{account.emailMasked || account.id}</span>
+                  <span>{account.email || account.id}</span>
                   {stateBadge(account)}
                 </div>
                 <QuotaChips account={account} />
@@ -194,7 +194,7 @@ export default function DashboardPage() {
           <div className="panel">
             <div className="panel-head"><div><h2>需要关注</h2><p>冷却与异常账号</p></div><span className="badge">{data ? problemAccounts.length : '—'}</span></div>
             {problemAccounts.length ? problemAccounts.map((account) => (
-              <div className="kv" key={account.id}><span>{account.emailMasked || account.id}</span><b>{account.state === 'cooldown' ? '冷却中' : accountStateLabel(account.state)}</b></div>
+              <div className="kv" key={account.id}><span>{account.email || account.id}</span><b>{account.state === 'cooldown' ? '冷却中' : accountStateLabel(account.state)}</b></div>
             )) : <div className="muted small">{data ? '没有需要处理的账号' : '等待基座恢复'}</div>}
           </div>
           <div className="panel">

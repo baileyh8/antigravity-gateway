@@ -103,8 +103,8 @@ function registerAccountRoutes(app, ctx) {
       const account = (data.items || []).find((item) => item.id === id && (!provider || item.providerType === provider));
       if (!account) return fail(reply, 404, 'account_not_found', '账号不存在或已被删除。');
       const confirm = String(body.confirm || '').trim();
-      if (confirm !== account.emailMasked && confirm !== account.id) {
-        return fail(reply, 400, 'confirm_mismatch', '请输入账号的脱敏邮箱或账号 ID 确认删除。');
+      if (confirm !== account.email && confirm !== account.emailMasked && confirm !== account.id) {
+        return fail(reply, 400, 'confirm_mismatch', '请输入账号的完整邮箱或账号 ID 确认删除。');
       }
       auditWrite(req, user, 'account.delete', id, started, 'pending', JSON.stringify({ provider }));
       const result = await gateway.adminRequest('DELETE', `/_admin/v1/accounts/${encodeURIComponent(id)}${providerQuery(provider)}`);
